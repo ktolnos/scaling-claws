@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80" width="80" height="80">
+  <defs>
+    <radialGradient id="sunGrad" cx="50%" cy="50%">
+      <stop offset="0%" stop-color="#fff8e0"/>
+      <stop offset="40%" stop-color="#ffcc33"/>
+      <stop offset="70%" stop-color="#ff8800"/>
+      <stop offset="100%" stop-color="#cc4400"/>
+    </radialGradient>
+    <radialGradient id="coronaGrad" cx="50%" cy="50%">
+      <stop offset="60%" stop-color="transparent"/>
+      <stop offset="80%" stop-color="#ffaa33" stop-opacity="0.1"/>
+      <stop offset="100%" stop-color="#ff6600" stop-opacity="0.05"/>
+    </radialGradient>
+  </defs>
+  <!-- Corona glow -->
+  <circle cx="40" cy="40" r="38" fill="url(#coronaGrad)">
+    <animate attributeName="r" values="36;40;36" dur="4s" repeatCount="indefinite"/>
+  </circle>
+  <!-- Corona rays -->
+  <circle cx="40" cy="40" r="34" fill="none" stroke="#ffaa33" stroke-width="0.5" opacity="0.15">
+    <animate attributeName="r" values="32;36;32" dur="5s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values="0.1;0.2;0.1" dur="5s" repeatCount="indefinite"/>
+  </circle>
+  <!-- Sun body -->
+  <circle cx="40" cy="40" r="28" fill="url(#sunGrad)"/>
+  <!-- Surface details (granulation) -->
+  <circle cx="34" cy="34" r="4" fill="#ffe066" opacity="0.3"/>
+  <circle cx="46" cy="36" r="3" fill="#ffdd44" opacity="0.25"/>
+  <circle cx="38" cy="46" r="5" fill="#ffcc33" opacity="0.2"/>
+  <circle cx="44" cy="44" r="2.5" fill="#ffe066" opacity="0.3"/>
+  <!-- Sunspot -->
+  <circle cx="42" cy="38" r="2" fill="#cc6600" opacity="0.3"/>
+  <!-- Bright center -->
+  <circle cx="38" cy="36" r="8" fill="white" opacity="0.1"/>
+</svg>

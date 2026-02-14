@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 56 80" width="56" height="80">
+  <!-- Rack frame -->
+  <rect x="2" y="2" width="52" height="76" rx="2" fill="#1a1a24" stroke="#333" stroke-width="1"/>
+  <!-- Rack rails -->
+  <rect x="4" y="2" width="2" height="76" fill="#2a2a3a"/>
+  <rect x="50" y="2" width="2" height="76" fill="#2a2a3a"/>
+  
+  <!-- Server unit 1 (top) - occupied -->
+  <rect x="7" y="5" width="42" height="8" rx="1" fill="#252535" stroke="#3a3a4a" stroke-width="0.5"/>
+  <circle cx="12" cy="9" r="1.2" fill="#4ecca3" opacity="0.8">
+    <animate attributeName="opacity" values="0.8;0.3;0.8" dur="1.8s" repeatCount="indefinite"/>
+  </circle>
+  <rect x="16" y="7" width="20" height="1" rx="0.3" fill="#333"/>
+  <rect x="16" y="9.5" width="20" height="1" rx="0.3" fill="#333"/>
+  <circle cx="44" cy="9" r="1" fill="#e94560" opacity="0.5">
+    <animate attributeName="opacity" values="0.5;0.1;0.7;0.2;0.5" dur="0.4s" repeatCount="indefinite"/>
+  </circle>
+  
+  <!-- Server unit 2 -->
+  <rect x="7" y="15" width="42" height="8" rx="1" fill="#252535" stroke="#3a3a4a" stroke-width="0.5"/>
+  <circle cx="12" cy="19" r="1.2" fill="#4ecca3" opacity="0.8">
+    <animate attributeName="opacity" values="0.8;0.3;0.8" dur="2.1s" repeatCount="indefinite"/>
+  </circle>
+  <rect x="16" y="17" width="20" height="1" rx="0.3" fill="#333"/>
+  <rect x="16" y="19.5" width="20" height="1" rx="0.3" fill="#333"/>
+  <circle cx="44" cy="19" r="1" fill="#e94560" opacity="0.5">
+    <animate attributeName="opacity" values="0.2;0.8;0.3;0.9;0.2" dur="0.35s" repeatCount="indefinite"/>
+  </circle>
+  
+  <!-- Server unit 3 -->
+  <rect x="7" y="25" width="42" height="8" rx="1" fill="#252535" stroke="#3a3a4a" stroke-width="0.5"/>
+  <circle cx="12" cy="29" r="1.2" fill="#4ecca3" opacity="0.8">
+    <animate attributeName="opacity" values="0.8;0.3;0.8" dur="1.5s" repeatCount="indefinite"/>
+  </circle>
+  <rect x="16" y="27" width="20" height="1" rx="0.3" fill="#333"/>
+  <rect x="16" y="29.5" width="20" height="1" rx="0.3" fill="#333"/>
+  
+  <!-- Server unit 4 -->
+  <rect x="7" y="35" width="42" height="8" rx="1" fill="#252535" stroke="#3a3a4a" stroke-width="0.5"/>
+  <circle cx="12" cy="39" r="1.2" fill="#4ecca3" opacity="0.8">
+    <animate attributeName="opacity" values="0.8;0.3;0.8" dur="2.4s" repeatCount="indefinite"/>
+  </circle>
+  <rect x="16" y="37" width="20" height="1" rx="0.3" fill="#333"/>
+  <rect x="16" y="39.5" width="20" height="1" rx="0.3" fill="#333"/>
+
+  <!-- Empty slot 5 -->
+  <rect x="7" y="45" width="42" height="8" rx="1" fill="#111118" stroke="#2a2a3a" stroke-width="0.3" stroke-dasharray="2,2"/>
+  
+  <!-- Empty slot 6 -->
+  <rect x="7" y="55" width="42" height="8" rx="1" fill="#111118" stroke="#2a2a3a" stroke-width="0.3" stroke-dasharray="2,2"/>
+  
+  <!-- Empty slot 7 -->
+  <rect x="7" y="65" width="42" height="8" rx="1" fill="#111118" stroke="#2a2a3a" stroke-width="0.3" stroke-dasharray="2,2"/>
+  
+  <!-- Rack screws -->
+  <circle cx="5" cy="9" r="0.8" fill="#555"/>
+  <circle cx="5" cy="19" r="0.8" fill="#555"/>
+  <circle cx="5" cy="29" r="0.8" fill="#555"/>
+  <circle cx="5" cy="39" r="0.8" fill="#555"/>
+  <circle cx="51" cy="9" r="0.8" fill="#555"/>
+  <circle cx="51" cy="19" r="0.8" fill="#555"/>
+  <circle cx="51" cy="29" r="0.8" fill="#555"/>
+  <circle cx="51" cy="39" r="0.8" fill="#555"/>
+</svg>

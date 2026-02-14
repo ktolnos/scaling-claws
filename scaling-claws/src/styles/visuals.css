@@ -1,0 +1,237 @@
+/* Visual panel containers */
+.visual-panel {
+  position: absolute;
+  inset: 0;
+  transition: opacity 1.5s ease;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: var(--spacing-md);
+}
+
+.visual-panel.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Datacenter Interior Visual */
+.dc-interior {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: var(--spacing-md);
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+
+.dc-interior .laptop-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+
+.dc-interior .laptop-container svg {
+  width: 96px;
+  height: 72px;
+}
+
+.dc-interior .laptop-label {
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.dc-interior .mic-mini-stack {
+  display: flex;
+  gap: 6px;
+  align-items: flex-end;
+}
+
+.dc-interior .mic-mini-unit {
+  animation: mic-mini-appear 0.4s ease-out;
+}
+
+.dc-interior .mic-mini-unit svg {
+  width: 32px;
+  height: 54px;
+}
+
+@keyframes mic-mini-appear {
+  from { transform: scaleY(0.3); opacity: 0; }
+  to { transform: scaleY(1); opacity: 1; }
+}
+
+/* Server rack stage */
+.dc-interior .rack-area {
+  display: flex;
+  gap: var(--spacing-sm);
+  align-items: flex-end;
+}
+
+.dc-interior .rack-unit {
+  animation: rack-appear 0.6s ease-out;
+}
+
+.dc-interior .rack-unit svg {
+  width: 56px;
+  height: 80px;
+}
+
+@keyframes rack-appear {
+  from { transform: scaleY(0.5); opacity: 0; }
+  to { transform: scaleY(1); opacity: 1; }
+}
+
+/* Visual stage crossfade */
+.visual-stage {
+  transition: opacity 1.5s ease;
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: var(--spacing-md);
+}
+
+.visual-stage.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Desk surface for laptop stage */
+.desk-surface {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 40px;
+  background: linear-gradient(180deg, #1a1820 0%, #13111a 100%);
+  border-top: 1px solid #2a2830;
+}
+
+/* Coffee cup easter egg */
+.coffee-cup {
+  position: absolute;
+  bottom: 42px;
+  right: 30%;
+  width: 16px;
+  height: 18px;
+  opacity: 0.5;
+}
+
+/* LED glow effects */
+.led-glow-green {
+  box-shadow: 0 0 4px 1px rgba(78, 204, 163, 0.3);
+}
+
+.led-glow-red {
+  box-shadow: 0 0 4px 1px rgba(233, 69, 96, 0.3);
+}
+
+/* Earth Surface Visual */
+.earth-surface-container {
+  transform-origin: center bottom;
+  transition: transform 1s ease-out;
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.earth-surface-container.zoom-2 { transform: scale(0.7); }
+.earth-surface-container.zoom-3 { transform: scale(0.45); }
+.earth-surface-container.zoom-4 { transform: scale(0.3); }
+
+.building-enter {
+  animation: build-up 1s ease-out;
+  transform-origin: bottom center;
+}
+
+@keyframes build-up {
+  from { transform: scaleY(0.3); opacity: 0; }
+  to { transform: scaleY(1); opacity: 1; }
+}
+
+/* Earth-Moon Space Visual */
+.satellite {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--accent-green);
+  box-shadow: 0 0 4px 1px rgba(78, 204, 163, 0.5);
+  position: absolute;
+}
+
+@keyframes orbit {
+  to { offset-distance: 100%; }
+}
+
+.transfer-craft {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--accent-gold);
+  position: absolute;
+}
+
+/* Launch animation */
+.launch-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #ff8844;
+  box-shadow: 0 0 6px 2px rgba(255, 136, 68, 0.6);
+  position: absolute;
+  animation: launch-arc 2s ease-out forwards;
+}
+
+@keyframes launch-arc {
+  0% { opacity: 1; }
+  80% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* Mass driver streak */
+.mass-driver-streak {
+  position: absolute;
+  width: 20px;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent-gold), transparent);
+  animation: mass-driver-fire 0.5s ease-out forwards;
+}
+
+@keyframes mass-driver-fire {
+  0% { transform: scaleX(0); opacity: 1; }
+  60% { transform: scaleX(1); opacity: 1; }
+  100% { transform: scaleX(1); opacity: 0; }
+}
+
+/* Progress bar component */
+.progress-bar {
+  height: 12px;
+  background: var(--bg-input);
+  border-radius: 2px;
+  overflow: hidden;
+  flex: 1;
+  min-width: 80px;
+  border: 1px solid var(--border-subtle);
+}
+
+.progress-bar-fill {
+  height: 100%;
+  background: var(--accent-green);
+  border-radius: 1px;
+  transition: width 0.15s linear;
+}
+
+.progress-bar-fill.stuck {
+  background: var(--accent-red);
+  animation: stuck-pulse 1s ease-in-out infinite;
+}
+
+@keyframes stuck-pulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}

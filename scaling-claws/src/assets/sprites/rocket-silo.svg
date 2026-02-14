@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 56" width="32" height="56">
+  <!-- Launch pad base -->
+  <rect x="4" y="44" width="24" height="8" rx="1" fill="#4a4a4a" stroke="#333" stroke-width="0.5"/>
+  <!-- Service tower (gantry) -->
+  <rect x="22" y="12" width="4" height="34" fill="none" stroke="#666" stroke-width="0.8"/>
+  <!-- Gantry cross beams -->
+  <line x1="22" y1="18" x2="26" y2="18" stroke="#666" stroke-width="0.5"/>
+  <line x1="22" y1="24" x2="26" y2="24" stroke="#666" stroke-width="0.5"/>
+  <line x1="22" y1="30" x2="26" y2="30" stroke="#666" stroke-width="0.5"/>
+  <line x1="22" y1="36" x2="26" y2="36" stroke="#666" stroke-width="0.5"/>
+  <!-- Gantry arm connecting to rocket -->
+  <line x1="18" y1="24" x2="22" y2="24" stroke="#777" stroke-width="0.8"/>
+  <!-- Rocket body -->
+  <rect x="10" y="16" width="8" height="28" rx="1" fill="#e8e8e8" stroke="#ccc" stroke-width="0.5"/>
+  <!-- Rocket nose cone -->
+  <path d="M10,16 L14,4 L18,16 Z" fill="#e94560" stroke="#cc3050" stroke-width="0.3"/>
+  <!-- Rocket body stripe -->
+  <rect x="10" y="26" width="8" height="3" fill="#2a5aaa"/>
+  <!-- Rocket engine bells -->
+  <path d="M11,44 L10,48 L13,48 Z" fill="#555"/>
+  <path d="M15,44 L14,48 L18,48 Z" fill="#555"/>
+  <!-- Exhaust flame (idle) -->
+  <ellipse cx="11.5" cy="49" rx="1.5" ry="2" fill="#ff8833" opacity="0.4">
+    <animate attributeName="ry" values="1.5;3;1.5" dur="0.3s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values="0.3;0.6;0.3" dur="0.3s" repeatCount="indefinite"/>
+  </ellipse>
+  <ellipse cx="16" cy="49" rx="1.5" ry="2" fill="#ff8833" opacity="0.4">
+    <animate attributeName="ry" values="2;3.5;2" dur="0.25s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values="0.3;0.6;0.3" dur="0.25s" repeatCount="indefinite"/>
+  </ellipse>
+  <!-- Warning lights on pad -->
+  <circle cx="6" cy="44" r="1" fill="#e94560">
+    <animate attributeName="opacity" values="1;0.2;1" dur="1s" repeatCount="indefinite"/>
+  </circle>
+  <circle cx="26" cy="44" r="1" fill="#e94560">
+    <animate attributeName="opacity" values="0.2;1;0.2" dur="1s" repeatCount="indefinite"/>
+  </circle>
+  <!-- Ground -->
+  <rect x="0" y="52" width="32" height="4" fill="#4a4a3a"/>
+</svg>

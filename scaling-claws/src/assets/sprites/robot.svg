@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 20" width="16" height="20">
+  <!-- Antenna -->
+  <line x1="8" y1="0" x2="8" y2="3" stroke="#888" stroke-width="0.5"/>
+  <circle cx="8" cy="0" r="1" fill="#4ecca3">
+    <animate attributeName="opacity" values="1;0.3;1" dur="2s" repeatCount="indefinite"/>
+  </circle>
+  <!-- Head -->
+  <rect x="4" y="3" width="8" height="5" rx="1.5" fill="#7a8a9a" stroke="#6a7a8a" stroke-width="0.3"/>
+  <!-- Eyes -->
+  <circle cx="6.5" cy="5.5" r="1" fill="#1a2a3a"/>
+  <circle cx="6.5" cy="5.5" r="0.5" fill="#4ecca3"/>
+  <circle cx="9.5" cy="5.5" r="1" fill="#1a2a3a"/>
+  <circle cx="9.5" cy="5.5" r="0.5" fill="#4ecca3"/>
+  <!-- Neck -->
+  <rect x="6.5" y="8" width="3" height="1.5" fill="#555"/>
+  <!-- Body -->
+  <rect x="3" y="9.5" width="10" height="6" rx="1" fill="#6a7a8a" stroke="#5a6a7a" stroke-width="0.3"/>
+  <!-- Chest plate -->
+  <rect x="5" y="10.5" width="6" height="3.5" rx="0.5" fill="#5a6a7a"/>
+  <!-- Chest light -->
+  <circle cx="8" cy="12.5" r="1" fill="#4ecca3" opacity="0.7">
+    <animate attributeName="opacity" values="0.5;1;0.5" dur="1.5s" repeatCount="indefinite"/>
+  </circle>
+  <!-- Arms -->
+  <rect x="0.5" y="10" width="2.5" height="5" rx="1" fill="#7a8a9a"/>
+  <rect x="13" y="10" width="2.5" height="5" rx="1" fill="#7a8a9a"/>
+  <!-- Legs -->
+  <rect x="4" y="15.5" width="3" height="4" rx="0.5" fill="#5a6a7a"/>
+  <rect x="9" y="15.5" width="3" height="4" rx="0.5" fill="#5a6a7a"/>
+  <!-- Feet -->
+  <rect x="3.5" y="18.5" width="4" height="1.5" rx="0.5" fill="#4a5a6a"/>
+  <rect x="8.5" y="18.5" width="4" height="1.5" rx="0.5" fill="#4a5a6a"/>
+</svg>

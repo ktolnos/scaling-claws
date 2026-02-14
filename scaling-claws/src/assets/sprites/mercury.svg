@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <defs>
+    <radialGradient id="mercGrad" cx="40%" cy="40%">
+      <stop offset="0%" stop-color="#9a9088"/>
+      <stop offset="100%" stop-color="#5a5048"/>
+    </radialGradient>
+  </defs>
+  <!-- Mercury body -->
+  <circle cx="12" cy="12" r="10" fill="url(#mercGrad)"/>
+  <!-- Craters -->
+  <circle cx="8" cy="8" r="2.5" fill="#706860" opacity="0.5"/>
+  <circle cx="8" cy="8" r="2" fill="#807870" opacity="0.3"/>
+  <circle cx="15" cy="10" r="1.8" fill="#706860" opacity="0.4"/>
+  <circle cx="12" cy="16" r="3" fill="#706860" opacity="0.4"/>
+  <circle cx="12" cy="16" r="2.2" fill="#807870" opacity="0.3"/>
+  <circle cx="6" cy="14" r="1.2" fill="#706860" opacity="0.4"/>
+  <circle cx="16" cy="6" r="1" fill="#706860" opacity="0.3"/>
+  <circle cx="18" cy="14" r="1.5" fill="#706860" opacity="0.4"/>
+  <!-- Highlight -->
+  <circle cx="9" cy="8" r="5" fill="white" opacity="0.06"/>
+</svg>

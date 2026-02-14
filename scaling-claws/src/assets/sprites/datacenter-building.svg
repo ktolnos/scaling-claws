@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 40" width="48" height="40">
+  <!-- Building body -->
+  <rect x="4" y="10" width="40" height="26" rx="1" fill="#2a3040" stroke="#1a2030" stroke-width="0.5"/>
+  <!-- Roof -->
+  <rect x="2" y="8" width="44" height="4" rx="1" fill="#3a4050"/>
+  <!-- HVAC units on roof -->
+  <rect x="8" y="4" width="8" height="5" rx="1" fill="#445" stroke="#556" stroke-width="0.3"/>
+  <rect x="20" y="5" width="6" height="4" rx="1" fill="#445" stroke="#556" stroke-width="0.3"/>
+  <!-- Fan spinning on HVAC -->
+  <circle cx="12" cy="6.5" r="1.8" fill="none" stroke="#6a7a8a" stroke-width="0.5">
+    <animateTransform attributeName="transform" type="rotate" values="0 12 6.5;360 12 6.5" dur="1s" repeatCount="indefinite"/>
+  </circle>
+  <line x1="12" y1="4.7" x2="12" y2="8.3" stroke="#6a7a8a" stroke-width="0.4">
+    <animateTransform attributeName="transform" type="rotate" values="0 12 6.5;360 12 6.5" dur="1s" repeatCount="indefinite"/>
+  </line>
+  <!-- Windows (server room glow) -->
+  <rect x="8" y="14" width="6" height="4" rx="0.5" fill="#1a3a5a" opacity="0.8"/>
+  <rect x="17" y="14" width="6" height="4" rx="0.5" fill="#1a3a5a" opacity="0.8"/>
+  <rect x="26" y="14" width="6" height="4" rx="0.5" fill="#1a4a3a" opacity="0.8">
+    <animate attributeName="fill" values="#1a4a3a;#1a6a4a;#1a4a3a" dur="3s" repeatCount="indefinite"/>
+  </rect>
+  <rect x="35" y="14" width="6" height="4" rx="0.5" fill="#1a3a5a" opacity="0.8"/>
+  <!-- Loading dock door -->
+  <rect x="18" y="24" width="12" height="12" rx="1" fill="#1a1a28" stroke="#333" stroke-width="0.5"/>
+  <line x1="18" y1="27" x2="30" y2="27" stroke="#333" stroke-width="0.3"/>
+  <line x1="18" y1="30" x2="30" y2="30" stroke="#333" stroke-width="0.3"/>
+  <line x1="18" y1="33" x2="30" y2="33" stroke="#333" stroke-width="0.3"/>
+  <!-- Side door -->
+  <rect x="7" y="28" width="5" height="8" rx="0.5" fill="#1a1a28" stroke="#333" stroke-width="0.3"/>
+  <!-- Status lights on building -->
+  <circle cx="40" cy="13" r="1" fill="#4ecca3" opacity="0.9">
+    <animate attributeName="opacity" values="0.9;0.4;0.9" dur="2s" repeatCount="indefinite"/>
+  </circle>
+  <!-- Ground -->
+  <rect x="0" y="36" width="48" height="4" fill="#2a3a2a"/>
+  <!-- Parking lines -->
+  <line x1="34" y1="37" x2="34" y2="40" stroke="#445" stroke-width="0.3"/>
+  <line x1="38" y1="37" x2="38" y2="40" stroke="#445" stroke-width="0.3"/>
+  <line x1="42" y1="37" x2="42" y2="40" stroke="#445" stroke-width="0.3"/>
+</svg>

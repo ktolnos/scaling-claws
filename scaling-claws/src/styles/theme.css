@@ -1,0 +1,106 @@
+:root {
+  --bg-primary: #0a0a14;
+  --bg-panel: #12121e;
+  --bg-panel-header: #1a1a2e;
+  --bg-input: #0e0e18;
+  --border-panel: #2a2a3e;
+  --border-subtle: #1e1e30;
+
+  --text-primary: #d8d8e0;
+  --text-secondary: #7a7a90;
+  --text-muted: #4a4a60;
+
+  --accent-green: #4ecca3;
+  --accent-red: #e94560;
+  --accent-gold: #ffcc33;
+  --accent-blue: #3388ff;
+  --accent-purple: #9966ff;
+
+  --font-main: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'Courier New', 'Consolas', monospace;
+
+  --panel-radius: 8px;
+  --btn-radius: 4px;
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 12px;
+  --spacing-lg: 16px;
+  --spacing-xl: 24px;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  font-family: var(--font-main);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 0 var(--spacing-md);
+}
+
+button {
+  cursor: pointer;
+  font-family: var(--font-main);
+  font-size: 0.85rem;
+  border: 1px solid var(--border-panel);
+  border-radius: var(--btn-radius);
+  background: var(--bg-panel-header);
+  color: var(--text-primary);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  transition: background 0.15s, border-color 0.15s, opacity 0.15s;
+}
+
+button:hover:not(:disabled) {
+  background: #222240;
+  border-color: var(--accent-green);
+}
+
+button:active:not(:disabled) {
+  background: #1a1a35;
+}
+
+button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+button.btn-primary {
+  background: var(--accent-green);
+  color: #0a0a14;
+  border-color: var(--accent-green);
+  font-weight: 600;
+}
+
+button.btn-primary:hover:not(:disabled) {
+  background: #5fe0b4;
+}
+
+button.btn-danger {
+  border-color: var(--accent-red);
+  color: var(--accent-red);
+}
+
+button.btn-danger:hover:not(:disabled) {
+  background: rgba(233, 69, 96, 0.15);
+}
