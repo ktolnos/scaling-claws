@@ -59,7 +59,7 @@ npm run preview  # Preview production build
 Deleted starter files, created directory structure, moved SVGs, configured Vite, created CLAUDE.md, index.html, sprite barrel file, CSS files.
 
 ### Milestone 1: Playable Phase 1–2 ✅
-Core game loop, GameState, JobSystem, ComputeSystem, SaveManager. UI: TopBar, PanelManager, JobsPanel, AgentsPanel, DatacenterInterior (laptop + mic-mini stages), Ticker. Player can earn money, buy subs, nudge stuck agents, buy Mic-minis.
+Core game loop, GameState, JobSystem, ComputeSystem, SaveManager. UI: TopBar, PanelManager, JobsPanel, AgentsPanel, DatacenterInterior (laptop + mic-mini stages), Ticker. Player can earn money, hire agents (one-time cost), nudge stuck agents, buy Mic-minis.
 
 ### Milestone 2: GPU Transition + Energy ✅
 "Go Self-Hosted" button, GPU purchasing, DeepKick model upgrades, datacenter buying, engineer hiring. EnergySystem with grid/gas/nuclear/solar. ComputePanel, EnergyPanel. DatacenterInterior stages 3-5 (rack → datacenter → fullroom).
@@ -67,10 +67,13 @@ Core game loop, GameState, JobSystem, ComputeSystem, SaveManager. UI: TopBar, Pa
 ### Milestone 3: Training & Code ✅
 TrainingSystem (fine-tune sequence, Aries models, training allocation, data purchasing). Software devs (human + AI), AI researchers. Code + Science resources. TrainingPanel with model display, progress bars, staff hiring. TopBar shows Code/Science when unlocked.
 
+### Milestone: Job System & UI Refactor ✅
+Refactored job assignments to be manual. Replaced recurring per-agent subscriptions with **One-Time Upfront Payments** (managed in AgentsPanel). Implemented **upfront cost** for both hiring agents and tier upgrades. Redesigned **JobsPanel** with horizontal layout, mini 2x4 agent progress grids, Engineers now are a regular job with hiring rules (Robotics II).
+
 ### Milestone 4: Research + Supply Chain 🔧 (IN PROGRESS)
 
 **Done so far:**
-- GameState extended: `completedResearch[]`, `synthDataUnlocked`, `synthDataRate`, `synthDataAllocPflops`, `algoEfficiencyBonus`, `gpuFlopsBonus`, `lithoMachines`, `waferFabs`, `siliconMines`, `robotFactories`, `robots`, `gpuProductionPerMin`, `waferBatches`, `subSellingUnlocked`, `subscriberCount`, `subscriberPrice`, `subscriberDemand`, `subscriberAwareness`, `subscriberReservedPflops`, `subscriberIncomePerMin`, `aiCoderCount`, milestones `supplyChainUnlocked` + `subSellingUnlocked`
+- GameState extended: `completedResearch[]`, `synthDataUnlocked`, `synthDataRate`, `synthDataAllocPflops`, `algoEfficiencyBonus`, `gpuFlopsBonus`, `lithoMachines`, `waferFabs`, `siliconMines`, `robotFactories`, `robots`, `gpuProductionPerMin`, `waferBatches`, `subSellingUnlocked`, `subscriberCount`, `subscriberPrice`, `subscriberDemand`, `subscriberAwareness`, `subscriberReservedPflops`, `subscriberIncomePerMin`, `softwareDevCount`, milestones `supplyChainUnlocked` + `subSellingUnlocked`
 - BalanceConfig extended: `ResearchId` type + `ResearchIds` const, `ResearchConfig` interface, full research tree (25 entries), AI Coder job type ($2K/120s/Intel 15), supply chain costs (litho, wafer, fab, mine, robot factory, robot), subscription selling config (price, PFLOPS/sub, ads, growth rate), synth data config
 - All compiles clean with `npx tsc --noEmit`
 

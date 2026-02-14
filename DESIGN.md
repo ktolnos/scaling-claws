@@ -21,7 +21,7 @@ The UI evolves continuously — panels gain new rows, buttons swap out, old metr
 - UI evolves in place — panels update, they don't get replaced by strangers
 - Target pace: ~1 meaningful click every 1–2 seconds. More when clicking the same button repeatedly (bulk buying)
 - No dead time: if the player is playing optimally, there is always something to click or a decision to make. Waiting = design bug
-- For each ongoing expense: player can always reduce or cancel it. Auto-cancels if funds hit $0
+- For each ongoing expense (Engineers, Power): player can always reduce or cancel it. Auto-cancels if funds hit $0
 
 ---
 
@@ -93,17 +93,16 @@ After the GPU transition, CPU cores become irrelevant — GPU instances replace 
 
 | Job | Reward | Time | Intel Req. | Unlocked When |
 |-----|--------|------|------------|---------------|
-| Sixxer Basic | $6/task | 20s | 0.5 | Start |
-| Sixxer Standard | $18/task | 30s | 1.0 | Intel 1.0 |
-| Sixxer Advanced | $45/task | 40s | 2.0 | Intel 2.0 |
-| Sixxer Enterprise | $120/task | 55s | 2.5 | Intel 2.5 |
-| Manager Agent | (manages agents) | ongoing | 2.0 | First Ultra sub |
-| Manager² Agent | (manages Managers) | ongoing | 2.5 | First Ultra Pro Max sub |
-| Engineer | $0 (staff role) | ongoing | 3.0 | First datacenter |
-| Software Dev | +Code | ongoing | 4.0 | Intel 4.0 |
-| AI Researcher | +Science | ongoing | 12.0 | Intel 12.0 |
-| AI Coder | $2,000/task | 120s | 15.0 | Intel 15.0 |
-| Robot Operator | (controls robots) | ongoing | 4.0 | Robotics I research |
+| Sixxer Basic | $6/task | 2s | 1.0 | Start |
+| Sixxer Standard | $18/task | 3s | 1.5 | Intel 1.5 |
+| Sixxer Advanced | $50/task | 4s | 2.0 | Intel 2.0 |
+| Sixxer Enterprise | $1000/task | 5.5s | 2.5 | Intel 2.5 |
+| Engineer | $0 (staff) | — | 1.0 | Datacenter Unlocked |
+| softwareDev | $2,000/task | 120s | 15.0 | Intel 15.0 |
+
+**Engineers** can be either human (hired for $/min) or AI agents. 
+- **Humans**: Available as soon as job unlocks.
+- **Agents**: Require Intel 15.0 and Robotics II research.
 
 **Engineers and Software Devs** can be either human (hired for $/min) or AI agents (requires sufficient Intelligence, costs compute). Robots can fill physical staff roles after Robotics II.
 
@@ -154,13 +153,17 @@ Human Engineers: $200/min each. AI Engineer agents: Intel 3.0+, costs compute. R
 Early:
 ```
 ┌─ JOBS ──────────────────────────────────────────┐
-│  Sixxer Basic     $6/task   20s  Intel 0.5      │
-│    [▓▓▓▓▓▓░░░░░░] Agent 1                      │
-│    [▓▓░░░░░░░░░░] Agent 2                      │
-│  CPU Cores: 4/6 free  |  Completed: 3           │
-│  Job income: $0.90/min                [Nudge]   │
+│  Sixxer Basic   $6/2s   [ ░░░░ ]  Agents: 5 [-][+]│
+│  Sixxer Standard $18/3s [ ░░░░ ]  Agents: 1 [-][+]│
+│                                                 │
+│  [All running]                          [Nudge] │
 └──────────────────────────────────────────────────┘
 ```
+
+**Job Row Structure (Horizontal):**
+- **Title + Req**: (25%) Name and intelligence requirement warning.
+- **Progress Grid**: (40%) 2x4 grid displaying mini progress bars for up to 8 agents. Over 7 shows `+N`.
+- **Controls**: (35%) Left-aligned "Agents" and "Humans" labels with `[-]` `[+]` count controls.
 
 Late:
 ```
@@ -185,38 +188,39 @@ Starts as subscription management. Transforms into GPU/compute management via an
 ```
 ┌─ AGENTS ────────────────────────────────────────┐
 │                                                  │
-│  Free           Intel 0.5  10 tasks/day limit   │
-│    Agents: 1  (1 core each)                      │
-│  Pro     $20/min Intel 1.0  50 tasks/day limit  │
-│    Agents: 0  [+1]  (1 core each)               │
-│  Ultra   $50/min Intel 2.0  no limits            │
-│    Agents: 0  [+1]  (1 core each)               │
-│  Ultra Max    $120/min Intel 2.5  no limits     │
-│    Agents: 0  [+1]  (2 cores each)              │
-│  Ultra Pro Max $200/min Intel 2.5  no limits    │
-│    Agents: 0  [+1]  (2 cores each)              │
+│  Subscription Tier: Ultra                        │
+│  Intel 2.0  $500 upfront cost                    │
 │                                                  │
-│  CPU Cores: 5/6 free                             │
-│  Mic-mini PCs: 0  [Buy $80] (+8 cores)          │
+│  [Upgrade to Ultra Max ($XX, Intel 2.5)]         │
 │                                                  │
-│  Total agents: 1 | Sub cost: $0/min             │
-│  ⚠️ Paid subs cancel if funds reach $0.         │
+│  Active Agents: 5          [Hire ($500)]         │
+│                                                  │
+│  CPU Cores: 1/6 free                             │
+│  Mic-mini PCs: 0  [Buy $80]                       │
+│                                                  │
+│  Total agents: 5 | Income potential: $250/min    │
 └──────────────────────────────────────────────────┘
 ```
 
+**Global Subscription Tier:**
+- Instead of per-agent subscriptions, the entire agency operates on a single Subscription Tier.
+- Upgrading to a new tier requires an **upfront payment** equal to 1 minute of the new tier's cost for all current agents.
+- Tier intelligence is the primary gate for job visibility.
+- Agent assignment to specific jobs (like Engineers) may have additional local requirements.
+
 **Subscription tiers:**
 
-| Tier | Cost/min | Intel | Limit | Cores/Agent | Unlocked |
-|------|----------|-------|-------|-------------|----------|
+| Tier | Cost | Intel | Limit | Cores/Agent | Unlocked |
+|------|------|-------|-------|-------------|----------|
 | Free | $0 | 0.5 | 10 tasks/day | 1 | Start |
-| Pro | $20/min | 1.0 | 50 tasks/day | 1 | Start |
-| Ultra | $50/min | 2.0 | No limit | 1 | Start |
-| Ultra Max | $120/min | 2.5 | No limit | 2 | Start |
-| Ultra Pro Max | $200/min | 2.5 | No limit | 2 | Start |
+| Pro | $100 | 1.0 | 50 tasks/day | 1 | Start |
+| Ultra | $500 | 2.0 | No limit | 1 | Start |
+| Ultra Max | $2000 | 2.5 | No limit | 2 | Start |
+| Ultra Pro Max | $5000 | 2.5 | No limit | 2 | Start |
 
 All tiers are available from the start — the only gate is money. The laptop's 6 cores let you immediately run up to 6 agents (or 3 at Ultra Max/UPM tier). Ultra Max and Ultra Pro Max have the same Intelligence (2.5) but Ultra Pro Max unlocks Manager² agents.
 
-**Cancellation:** If funds reach $0, all paid subscriptions are cancelled instantly. Agents go idle. The Free agent keeps working.
+**Wait logic:** Agents are purchased upfront. If funds reach $0, existing agents keep working, but you cannot hire new ones or upgrade tiers. Paid tiers do not cancel.
 
 **Why Ultra Pro Max at same Intel as Ultra Max?** Ultra Pro Max unlocks Manager² (the self-healing management layer). That's the premium you pay — not raw intelligence, but automation capability.
 
@@ -231,7 +235,7 @@ When the player has enough funds (and has seen enough of the subscription grind)
 │  DeepKick-405B (Intel 2.5)                       │
 │  Cost: [N] GPUs × $3,000 = $[total]             │
 │  (1 GPU per active agent)                        │
-│  Eliminates all subscription costs!              │
+│  Eliminates all hiring costs!                    │
 │  [Go Self-Hosted]                                │
 └──────────────────────────────────────────────────┘
 ```

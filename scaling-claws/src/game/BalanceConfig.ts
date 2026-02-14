@@ -1,5 +1,5 @@
 export const SubscriptionTiers = {
-  free: 'free',
+  basic: 'basic',
   pro: 'pro',
   ultra: 'ultra',
   ultraMax: 'ultraMax',
@@ -9,7 +9,7 @@ export const SubscriptionTiers = {
 export type SubscriptionTier = typeof SubscriptionTiers[keyof typeof SubscriptionTiers];
 
 export const TIER_ORDER: SubscriptionTier[] = [
-  'ultraProMax', 'ultraMax', 'ultra', 'pro', 'free',
+  'ultraProMax', 'ultraMax', 'ultra', 'pro', 'basic',
 ];
 
 export const JobTypes = {
@@ -17,13 +17,16 @@ export const JobTypes = {
   sixxerStandard: 'sixxerStandard',
   sixxerAdvanced: 'sixxerAdvanced',
   sixxerEnterprise: 'sixxerEnterprise',
-  aiCoder: 'aiCoder',
+  downWork: 'downWork',
+  softwareDev: 'softwareDev',
+  engineer: 'engineer',
+  unassigned: 'unassigned',
 } as const;
 
 export type JobType = typeof JobTypes[keyof typeof JobTypes];
 
 export const JOB_ORDER: JobType[] = [
-  'sixxerBasic', 'sixxerStandard', 'sixxerAdvanced', 'sixxerEnterprise', 'aiCoder',
+  'sixxerBasic', 'sixxerStandard', 'sixxerAdvanced', 'sixxerEnterprise', 'downWork', 'softwareDev', 'engineer',
 ];
 
 // Research IDs
@@ -66,9 +69,8 @@ export interface ResearchConfig {
 }
 
 export interface TierConfig {
-  costPerMin: number;
+  cost: number;
   intel: number;
-  taskLimitPerDay: number | null;
   coresPerAgent: number;
   displayName: string;
 }
@@ -78,6 +80,9 @@ export interface JobConfig {
   timeMs: number;
   intelReq: number;
   displayName: string;
+  canHireHumans?: boolean;
+  agentIntelReq?: number;    // NEW
+  agentResearchReq?: ResearchId[]; // NEW
 }
 
 export interface ModelConfig {
@@ -102,30 +107,55 @@ export interface PowerPlantConfig {
 }
 
 export const BALANCE = {
-  startingFunds: 0,
-  startingCpuCores: 6,
-  tickIntervalMs: 100,
-  uiUpdateIntervalMs: 500,
+  startingFunds: 10,
+  startingCpuCores: 4,
+  homePowerMW: 0.002, // 2 KW
+  tickIntervalMs: 50,
+  uiUpdateIntervalMs: 200,
   autoSaveIntervalMs: 30000,
 
   tiers: {
-    free:         { costPerMin: 0,   intel: 1.0, taskLimitPerDay: 10,   coresPerAgent: 1, displayName: 'Free' } as TierConfig,
-    pro:          { costPerMin: 20,  intel: 1.0, taskLimitPerDay: 50,   coresPerAgent: 1, displayName: 'Pro' } as TierConfig,
-    ultra:        { costPerMin: 50,  intel: 1.5, taskLimitPerDay: null,  coresPerAgent: 2, displayName: 'Ultra' } as TierConfig,
-    ultraMax:     { costPerMin: 120, intel: 2.0, taskLimitPerDay: null,  coresPerAgent: 4, displayName: 'Ultra Max' } as TierConfig,
-    ultraProMax:  { costPerMin: 200, intel: 2.5, taskLimitPerDay: null,  coresPerAgent: 8, displayName: 'Ultra Pro Max' } as TierConfig,
+    basic:         { cost: 10,    intel: 0.5,  coresPerAgent: 1, displayName: 'Basic' } as TierConfig,
+    pro:          { cost: 30,  intel: 1.0, coresPerAgent: 1, displayName: 'Pro' } as TierConfig,
+    ultra:        { cost: 50,  intel: 1.5, coresPerAgent: 1, displayName: 'Ultra' } as TierConfig,
+    ultraMax:     { cost: 100, intel: 2.0, coresPerAgent: 1, displayName: 'Ultra Max' } as TierConfig,
+    ultraProMax:  { cost: 200, intel: 2.5, coresPerAgent: 1, displayName: 'Ultra Pro Max' } as TierConfig,
   } as Record<SubscriptionTier, TierConfig>,
 
   jobs: {
-    sixxerBasic:      { reward: 6,     timeMs: 2000,   intelReq: 1.0,  displayName: 'Sixxer Basic' } as JobConfig,
-    sixxerStandard:   { reward: 18,    timeMs: 3000,  intelReq: 1.5,  displayName: 'Sixxer Standard' } as JobConfig,
-    sixxerAdvanced:   { reward: 50,    timeMs: 4000,  intelReq: 2.0,  displayName: 'Sixxer Advanced' } as JobConfig,
+    sixxerBasic:      { reward: 6,     timeMs: 2000,   intelReq: 0.5,  displayName: 'Sixxer Basic' } as JobConfig,
+    sixxerStandard:   { reward: 18,    timeMs: 3000,  intelReq: 1,  displayName: 'Sixxer Standard' } as JobConfig,
+    sixxerAdvanced:   { reward: 50,    timeMs: 4000,  intelReq: 1.5,  displayName: 'Sixxer Advanced' } as JobConfig,
     sixxerEnterprise: { reward: 1000,   timeMs: 5500,  intelReq: 2.5,  displayName: 'Sixxer Enterprise' } as JobConfig,
-    aiCoder:          { reward: 2000,  timeMs: 12000, intelReq: 15.0, displayName: 'AI Coder' } as JobConfig,
+    downWork:         { reward: 2000,   timeMs: 5500,  intelReq: 3.0,  displayName: 'Downwork' } as JobConfig,
+    softwareDev:      {
+      reward: 0,
+      timeMs: 0,
+      intelReq: 15.0,
+      displayName: 'Software Dev',
+      canHireHumans: true,
+      agentIntelReq: 15.0,
+      agentResearchReq: []
+    } as JobConfig,
+    engineer:         { 
+      reward: 0, 
+      timeMs: 0, 
+      intelReq: 2,
+      displayName: 'Engineers', 
+      canHireHumans: true,
+      agentIntelReq: 15.0,
+      agentResearchReq: ['robotics2']
+    } as JobConfig,
+    unassigned: {
+      reward: 0,
+      timeMs: 0,
+      intelReq: 0,
+      displayName: 'Unassigned',
+    } as JobConfig,
   } as Record<JobType, JobConfig>,
 
   micMini: {
-    cost: 800,
+    cost: 500,
     coresAdded: 8,
     displayName: 'Mic-mini PC',
   },
@@ -141,14 +171,14 @@ export const BALANCE = {
   gpuPowerMW: 0.0004, // 400W per GPU = 0.0004 MW
 
   models: [
-    { name: 'DeepKick-405B',  intel: 2.5,  pflopsPerInstance: 2.0,  minGpus: 1 },
-    { name: 'DeepKick-647B',  intel: 3.5,  pflopsPerInstance: 4.0,  minGpus: 16 },
-    { name: 'DeepKick-1.2T',  intel: 5.0,  pflopsPerInstance: 8.0,  minGpus: 48 },
-    { name: 'DeepKick-2.8T',  intel: 7.0,  pflopsPerInstance: 16.0, minGpus: 128 },
+    { name: 'DeepKick-405B',  intel: 3.0,  pflopsPerInstance: 2.0,  minGpus: 1 },
+    { name: 'DeepKick-647B',  intel: 5.0,  pflopsPerInstance: 4.0,  minGpus: 64 },
+    { name: 'DeepKick-1.2T',  intel: 7.0,  pflopsPerInstance: 8.0,  minGpus: 128 },
+    { name: 'DeepKick-2.8T',  intel: 9.0,  pflopsPerInstance: 16.0, minGpus: 256 },
   ] as ModelConfig[],
 
   // Datacenters
-  datacenterThreshold: 32, // GPUs that trigger datacenter requirement
+  datacenterThreshold: 128, // GPUs that trigger datacenter requirement
   datacenters: [
     { name: 'Small Datacenter',  cost: 100_000,     gpuCapacity: 256,    engineersRequired: 2 },
     { name: 'Medium Datacenter', cost: 2_000_000,   gpuCapacity: 4_096,  engineersRequired: 5 },
@@ -291,16 +321,23 @@ export function getBestJobType(intel: number): JobType {
 }
 
 /**
- * Get the current intelligence from the best subscription tier owned.
+ * Get the intelligence for a given subscription tier.
  */
-export function getIntelFromSubscriptions(subscriptions: Record<SubscriptionTier, number>): number {
-  let best = 0;
-  for (const tier of TIER_ORDER) {
-    if (subscriptions[tier] > 0) {
-      best = Math.max(best, BALANCE.tiers[tier].intel);
-    }
+export function getIntelFromTier(tier: SubscriptionTier): number {
+  return BALANCE.tiers[tier].intel;
+}
+
+/**
+ * Get the next tier in the sequence, or null if maxed.
+ */
+export function getNextTier(current: SubscriptionTier): SubscriptionTier | null {
+  // TIER_ORDER is descending: ultraProMax -> basic
+  // We want to find current, then go to index-1
+  const idx = TIER_ORDER.indexOf(current);
+  if (idx > 0) {
+    return TIER_ORDER[idx - 1];
   }
-  return best;
+  return null;
 }
 
 /**

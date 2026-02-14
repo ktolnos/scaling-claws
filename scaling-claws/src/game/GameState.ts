@@ -1,8 +1,9 @@
+import { BALANCE } from './BalanceConfig.ts';
 import type { SubscriptionTier, JobType, ResearchId } from './BalanceConfig.ts';
 
 export interface AgentState {
   id: number;
-  tier: SubscriptionTier;
+  assignedJob: JobType;
   progress: number;       // 0..1
   isStuck: boolean;
   isIdle: boolean;        // no CPU core / GPU instance available
@@ -23,8 +24,8 @@ export interface GameState {
   agents: AgentState[];
   nextAgentId: number;
 
-  // Subscriptions (count per tier)
-  subscriptions: Record<SubscriptionTier, number>;
+  // Global Subscription Tier
+  subscriptionTier: SubscriptionTier;
 
   // Hardware (pre-GPU)
   cpuCoresTotal: number;
@@ -106,8 +107,8 @@ export interface GameState {
 
   // Job tracking
   completedTasks: number;
-  bestJobType: JobType;
-  aiCoderCount: number;           // agents doing AI Coder jobs
+  unlockedJobs: JobType[];
+  softwareDevCount: number;           // agents doing AI Coder jobs
 
   // Manager tracking
   managerCount: number;
@@ -117,6 +118,7 @@ export interface GameState {
   incomePerMin: number;
   expensePerMin: number;
   intelligence: number;
+  agentEfficiency: number;
   stuckCount: number;
   activeAgentCount: number;
   usedCores: number;
@@ -150,7 +152,7 @@ export interface GameState {
 export function createInitialState(): GameState {
   const now = Date.now();
   return {
-    funds: 50,
+    funds: BALANCE.startingFunds,
     totalEarned: 0,
 
     tickCount: 0,
@@ -159,7 +161,7 @@ export function createInitialState(): GameState {
 
     agents: [{
       id: 0,
-      tier: 'free',
+      assignedJob: 'unassigned',
       progress: 0,
       isStuck: false,
       isIdle: false,
@@ -167,15 +169,9 @@ export function createInitialState(): GameState {
     }],
     nextAgentId: 1,
 
-    subscriptions: {
-      free: 1,
-      pro: 0,
-      ultra: 0,
-      ultraMax: 0,
-      ultraProMax: 0,
-    },
+    subscriptionTier: 'basic',
 
-    cpuCoresTotal: 6,
+    cpuCoresTotal: BALANCE.startingCpuCores,
     micMiniCount: 0,
 
     // GPU & Compute
@@ -253,15 +249,16 @@ export function createInitialState(): GameState {
     subscriberIncomePerMin: 0,
 
     completedTasks: 0,
-    bestJobType: 'sixxerBasic',
-    aiCoderCount: 0,
+    unlockedJobs: ['unassigned', 'sixxerBasic'],
+    softwareDevCount: 0,
 
     managerCount: 0,
     managerSquaredCount: 0,
 
     incomePerMin: 0,
     expensePerMin: 0,
-    intelligence: 0.5,
+    intelligence: BALANCE.tiers.basic.intel,
+    agentEfficiency: 1,
     stuckCount: 0,
     activeAgentCount: 1,
     usedCores: 1,

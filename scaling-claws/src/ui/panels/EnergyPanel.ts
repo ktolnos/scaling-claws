@@ -198,7 +198,11 @@ export class EnergyPanel implements Panel {
     const info = document.createElement('span');
     info.className = 'label';
     const mwText = config.outputMW > 0 ? '+' + config.outputMW + ' MW' : '+panels MW';
-    info.textContent = name + ': ' + count + '  ' + mwText + '  ' + config.engineersRequired + ' Eng';
+    
+    const engMet = engAvailable >= config.engineersRequired;
+    const engText = `<span style="color: ${engMet ? 'inherit' : 'var(--accent-red)'}">(requires ${config.engineersRequired} engineers)</span>`;
+    
+    info.innerHTML = `${name}: ${count}  ${mwText}  ${engText}`;
     row.appendChild(info);
 
     const btn = document.createElement('button');

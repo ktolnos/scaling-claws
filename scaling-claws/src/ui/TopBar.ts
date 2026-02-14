@@ -1,11 +1,13 @@
 import type { GameState } from '../game/GameState.ts';
 import { formatMoney, formatRate, formatFlops, formatNumber } from '../game/utils.ts';
+import { deleteSave } from '../game/SaveManager.ts';
 
 export class TopBar {
   private container: HTMLElement;
   private fundsValueEl!: HTMLSpanElement;
   private fundsRateEl!: HTMLSpanElement;
   private intelValueEl!: HTMLSpanElement;
+  private efficiencyItem!: HTMLDivElement;
   private flopsItem!: HTMLDivElement;
   private codeItem!: HTMLDivElement;
   private scienceItem!: HTMLDivElement;
@@ -32,12 +34,17 @@ export class TopBar {
     intelItem.querySelector('.rate')!.remove();
     this.container.appendChild(intelItem);
 
+    // Efficiency (hidden initially)
+    this.efficiencyItem = this.createItem('Efficiency');
+    this.efficiencyItem.classList.add('hidden');
+    this.container.appendChild(this.efficiencyItem);
+
     // FLOPS (hidden initially)
     this.flopsItem = this.createItem('FLOPS');
     this.flopsItem.classList.add('hidden');
     this.container.appendChild(this.flopsItem);
 
-    // Code (hidden initially)
+    // Science (hidden initially)
     this.codeItem = this.createItem('Code');
     this.codeItem.classList.add('hidden');
     this.container.appendChild(this.codeItem);
@@ -46,6 +53,23 @@ export class TopBar {
     this.scienceItem = this.createItem('Science');
     this.scienceItem.classList.add('hidden');
     this.container.appendChild(this.scienceItem);
+
+    // Spacer to push restart button to the right
+    const spacer = document.createElement('div');
+    spacer.style.flex = '1';
+    this.container.appendChild(spacer);
+
+    // Restart Button
+    const restartBtn = document.createElement('button');
+    restartBtn.className = 'btn-danger btn-restart';
+    restartBtn.textContent = 'Restart Game';
+    restartBtn.onclick = () => {
+      if (confirm('Are you sure you want to RESTART? All progress will be lost forever.')) {
+        deleteSave();
+        window.location.reload();
+      }
+    };
+    this.container.appendChild(restartBtn);
   }
 
   private createItem(label: string): HTMLDivElement {
@@ -83,6 +107,15 @@ export class TopBar {
     this.fundsRateEl.className = netRate >= 0 ? 'rate' : 'rate negative';
 
     this.intelValueEl.textContent = state.intelligence.toFixed(1);
+
+    // Efficiency: show after GPU transition
+    if (state.isPostGpuTransition) {
+      this.efficiencyItem.classList.remove('hidden');
+      const eff = Math.round(state.agentEfficiency * 100);
+      const valueEl = this.efficiencyItem.querySelector('.value')!;
+      valueEl.textContent = eff + '%';
+      valueEl.className = eff < 100 ? 'value negative' : 'value';
+    }
 
     // FLOPS: show after GPU transition
     if (state.isPostGpuTransition) {

@@ -7,8 +7,9 @@ export function tickEnergy(state: GameState, _dtMs: number): void {
   // Power demand: GPUs
   state.powerDemandMW = state.gpuCount * BALANCE.gpuPowerMW;
 
-  // Power supply: grid + plants + solar
-  let supply = state.gridBlocksOwned * BALANCE.gridBlockMW;
+  // Power supply: grid + plants + solar + home
+  let supply = BALANCE.homePowerMW; 
+  supply += state.gridBlocksOwned * BALANCE.gridBlockMW;
   supply += state.gasPlants * BALANCE.powerPlants.gas.outputMW;
   supply += state.nuclearPlants * BALANCE.powerPlants.nuclear.outputMW;
   supply += state.solarPanels * BALANCE.solarPanelMW;

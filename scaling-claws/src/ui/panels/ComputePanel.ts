@@ -2,7 +2,7 @@ import type { GameState } from '../../game/GameState.ts';
 import type { Panel } from '../PanelManager.ts';
 import { BALANCE } from '../../game/BalanceConfig.ts';
 import { formatMoney, formatNumber, formatFlops } from '../../game/utils.ts';
-import { buyGpu, upgradeModel, buyDatacenter, hireEngineer } from '../../game/systems/ComputeSystem.ts';
+import { buyGpu, upgradeModel, buyDatacenter } from '../../game/systems/ComputeSystem.ts';
 
 export class ComputePanel implements Panel {
   readonly el: HTMLElement;
@@ -11,15 +11,18 @@ export class ComputePanel implements Panel {
   private modelNameEl!: HTMLSpanElement;
   private modelIntelEl!: HTMLSpanElement;
   private gpuCountEl!: HTMLSpanElement;
-  private totalFlopsEl!: HTMLSpanElement;
-  private instancesEl!: HTMLSpanElement;
+  private unassignedCountEl!: HTMLSpanElement;
+  private unassignedLabelEl!: HTMLSpanElement;
   private freeComputeEl!: HTMLSpanElement;
 
   private buyGpuBtns!: HTMLDivElement;
   private upgradeSection!: HTMLDivElement;
   private datacenterSection!: HTMLDivElement;
-  private engineerSection!: HTMLDivElement;
   private datacenterHintEl!: HTMLDivElement;
+
+  private upgradeBtn?: HTMLButtonElement;
+  private upgradeInfo?: HTMLElement;
+  private datacenterRows: HTMLElement[] = [];
 
   constructor(state: GameState) {
     this.state = state;
@@ -75,29 +78,26 @@ export class ComputePanel implements Panel {
     gpuRow.appendChild(this.gpuCountEl);
     body.appendChild(gpuRow);
 
-    // Total FLOPS
-    const flopsRow = document.createElement('div');
-    flopsRow.className = 'panel-row';
-    const flopsLabel = document.createElement('span');
-    flopsLabel.className = 'label';
-    flopsLabel.textContent = 'Total compute:';
-    this.totalFlopsEl = document.createElement('span');
-    this.totalFlopsEl.className = 'value';
-    flopsRow.appendChild(flopsLabel);
-    flopsRow.appendChild(this.totalFlopsEl);
-    body.appendChild(flopsRow);
 
-    // Instances
-    const instRow = document.createElement('div');
-    instRow.className = 'panel-row';
-    const instLabel = document.createElement('span');
-    instLabel.className = 'label';
-    instLabel.textContent = 'Instances:';
-    this.instancesEl = document.createElement('span');
-    this.instancesEl.className = 'value';
-    instRow.appendChild(instLabel);
-    instRow.appendChild(this.instancesEl);
-    body.appendChild(instRow);
+    // Unassigned Agents
+    const unassignedRow = document.createElement('div');
+    unassignedRow.className = 'panel-row';
+    this.unassignedLabelEl = document.createElement('span');
+    this.unassignedLabelEl.className = 'label';
+    this.unassignedLabelEl.textContent = 'Unassigned Agents:';
+    this.unassignedCountEl = document.createElement('span');
+    this.unassignedCountEl.className = 'value';
+    this.unassignedCountEl.style.fontWeight = '600';
+    unassignedRow.appendChild(this.unassignedLabelEl);
+    unassignedRow.appendChild(this.unassignedCountEl);
+    body.appendChild(unassignedRow);
+
+    // Flash listener
+    document.addEventListener('flash-unassigned', () => {
+      this.unassignedCountEl.classList.remove('flash-red');
+      void this.unassignedCountEl.offsetWidth; // trigger reflow
+      this.unassignedCountEl.classList.add('flash-red');
+    });
 
     // Free compute
     const freeRow = document.createElement('div');
@@ -138,6 +138,24 @@ export class ComputePanel implements Panel {
     this.upgradeSection.className = 'panel-section';
     body.appendChild(this.upgradeSection);
 
+    // PRE-BUILD UPGRADE ROW
+    const uRow = document.createElement('div');
+    uRow.className = 'panel-row';
+    uRow.style.padding = '4px 0';
+    this.upgradeInfo = document.createElement('span');
+    this.upgradeInfo.className = 'label';
+    uRow.appendChild(this.upgradeInfo);
+    this.upgradeBtn = document.createElement('button');
+    this.upgradeBtn.textContent = 'Upgrade';
+    this.upgradeBtn.addEventListener('click', () => {
+      const nextIdx = this.state.currentModelIndex + 1;
+      if (nextIdx < BALANCE.models.length) {
+        upgradeModel(this.state, nextIdx);
+      }
+    });
+    uRow.appendChild(this.upgradeBtn);
+    this.upgradeSection.appendChild(uRow);
+
     body.appendChild(this.createDivider());
 
     // Datacenter hint / buy section
@@ -150,10 +168,35 @@ export class ComputePanel implements Panel {
     this.datacenterSection.className = 'panel-section';
     body.appendChild(this.datacenterSection);
 
-    // Engineer section
-    this.engineerSection = document.createElement('div');
-    this.engineerSection.className = 'panel-section';
-    body.appendChild(this.engineerSection);
+    // PRE-BUILD DATACENTER ROWS
+    for (let i = 0; i < BALANCE.datacenters.length; i++) {
+        const row = document.createElement('div');
+        row.className = 'panel-row';
+        row.style.fontSize = '0.82rem';
+        row.style.display = 'none'; // hidden by default
+
+        const info = document.createElement('span');
+        info.className = 'label';
+        row.appendChild(info);
+
+        const right = document.createElement('span');
+        right.style.display = 'flex';
+        right.style.gap = '4px';
+        right.style.alignItems = 'center';
+
+        const countSpan = document.createElement('span');
+        countSpan.className = 'value';
+        right.appendChild(countSpan);
+
+        const btn = document.createElement('button');
+        btn.style.fontSize = '0.75rem';
+        btn.addEventListener('click', () => buyDatacenter(this.state, i));
+        right.appendChild(btn);
+
+        row.appendChild(right);
+        this.datacenterSection.appendChild(row);
+        this.datacenterRows[i] = row;
+    }
 
     this.el.appendChild(body);
   }
@@ -172,8 +215,28 @@ export class ComputePanel implements Panel {
     this.modelNameEl.textContent = model.name + ' (Intel ' + model.intel + ')';
     this.modelIntelEl.textContent = model.intel.toFixed(1);
     this.gpuCountEl.textContent = state.gpuCount + ' / ' + state.gpuCapacity + ' capacity';
-    this.totalFlopsEl.textContent = formatFlops(state.totalPflops);
-    this.instancesEl.textContent = state.instanceCount + ' (' + formatFlops(model.pflopsPerInstance) + '/inst)';
+    
+    if (state.isPostGpuTransition) {
+      this.unassignedLabelEl.textContent = 'Available Agents:';
+      const agentsOnJobs = state.agents.filter(a => a.assignedJob !== 'unassigned').length;
+      const available = Math.max(0, state.instanceCount - agentsOnJobs);
+      this.unassignedCountEl.textContent = available.toString();
+      if (available > 0) {
+        this.unassignedCountEl.style.color = 'var(--accent-green)';
+      } else {
+        this.unassignedCountEl.style.color = '';
+      }
+    } else {
+      this.unassignedLabelEl.textContent = 'Unassigned Agents:';
+      const unassignedCount = state.agents.filter(a => a.assignedJob === 'unassigned').length;
+      this.unassignedCountEl.textContent = unassignedCount.toString();
+      if (unassignedCount > 0) {
+        this.unassignedCountEl.style.color = 'var(--accent-green)';
+      } else {
+        this.unassignedCountEl.style.color = '';
+      }
+    }
+
     this.freeComputeEl.textContent = formatFlops(state.freeCompute);
 
     // GPU buy buttons enable/disable
@@ -184,27 +247,20 @@ export class ComputePanel implements Panel {
     });
 
     // Model upgrade
-    this.upgradeSection.innerHTML = '';
     const nextModelIdx = state.currentModelIndex + 1;
     if (nextModelIdx < BALANCE.models.length) {
+      this.upgradeSection.style.display = 'block';
       const nextModel = BALANCE.models[nextModelIdx];
-      const row = document.createElement('div');
-      row.className = 'panel-row';
-      row.style.padding = '4px 0';
-
-      const info = document.createElement('span');
-      info.className = 'label';
-      info.innerHTML = 'Upgrade: <strong style="color:var(--accent-green)">' + nextModel.name +
-        '</strong> (Intel ' + nextModel.intel + ') — Requires ' + nextModel.minGpus + ' GPUs';
-      row.appendChild(info);
-
-      const btn = document.createElement('button');
-      btn.textContent = 'Upgrade';
-      btn.disabled = state.gpuCount < nextModel.minGpus;
-      btn.addEventListener('click', () => upgradeModel(this.state, nextModelIdx));
-      row.appendChild(btn);
-
-      this.upgradeSection.appendChild(row);
+      if (this.upgradeInfo) {
+          this.upgradeInfo.innerHTML = 'Upgrade: <strong style="color:var(--accent-green)">' + nextModel.name +
+            '</strong> (Intel ' + nextModel.intel + ')';
+      }
+      if (this.upgradeBtn) {
+          this.upgradeBtn.textContent = `Upgrade (Requires ${nextModel.minGpus} GPUs)`;
+          this.upgradeBtn.disabled = state.gpuCount < nextModel.minGpus;
+      }
+    } else {
+      this.upgradeSection.style.display = 'none';
     }
 
     // Datacenter hint
@@ -219,62 +275,28 @@ export class ComputePanel implements Panel {
     }
 
     // Datacenter purchase
-    this.datacenterSection.innerHTML = '';
-    // Show next purchasable datacenter tier
     for (let i = 0; i < BALANCE.datacenters.length; i++) {
-      const dc = BALANCE.datacenters[i];
-      // Only show if player is near needing it or already has previous tiers
-      if (i === 0 || state.datacenters[i] > 0 || state.datacenters[Math.max(0, i - 1)] > 0) {
-        const row = document.createElement('div');
-        row.className = 'panel-row';
-        row.style.fontSize = '0.82rem';
-
-        const info = document.createElement('span');
-        info.className = 'label';
-        info.textContent = dc.name + ' (' + formatNumber(dc.gpuCapacity) + ' GPUs) ' + dc.engineersRequired + ' Eng';
-        row.appendChild(info);
-
-        const right = document.createElement('span');
-        right.style.display = 'flex';
-        right.style.gap = '4px';
-        right.style.alignItems = 'center';
-
-        const countSpan = document.createElement('span');
-        countSpan.className = 'value';
-        countSpan.textContent = 'x' + state.datacenters[i];
-        right.appendChild(countSpan);
-
-        const btn = document.createElement('button');
-        btn.textContent = 'Buy ' + formatMoney(dc.cost);
-        btn.style.fontSize = '0.75rem';
-        const engAvailable = state.engineerCount - state.engineersRequired;
-        btn.disabled = state.funds < dc.cost || engAvailable < dc.engineersRequired;
-        btn.addEventListener('click', () => buyDatacenter(this.state, i));
-        right.appendChild(btn);
-
-        row.appendChild(right);
-        this.datacenterSection.appendChild(row);
-      }
-    }
-
-    // Engineers
-    this.engineerSection.innerHTML = '';
-    if (state.isPostGpuTransition) {
-      const engRow = document.createElement('div');
-      engRow.className = 'panel-row';
-      const engInfo = document.createElement('span');
-      engInfo.className = 'label';
-      engInfo.textContent = 'Engineers: ' + state.engineerCount + '/' + state.engineersRequired + ' needed';
-      engRow.appendChild(engInfo);
-
-      const engBtn = document.createElement('button');
-      engBtn.textContent = 'Hire ' + formatMoney(BALANCE.humanEngineerCostPerMin) + '/min';
-      engBtn.style.fontSize = '0.75rem';
-      engBtn.disabled = state.funds < BALANCE.humanEngineerCostPerMin;
-      engBtn.addEventListener('click', () => hireEngineer(this.state));
-      engRow.appendChild(engBtn);
-
-      this.engineerSection.appendChild(engRow);
+        const dc = BALANCE.datacenters[i];
+        const row = this.datacenterRows[i];
+        // Only show if player is near needing it or already has previous tiers
+        if (i === 0 || state.datacenters[i] > 0 || state.datacenters[Math.max(0, i - 1)] > 0) {
+            row.style.display = 'flex';
+            const info = row.querySelector('.label')!;
+            const engAvailable = state.engineerCount - state.engineersRequired;
+            const engMet = engAvailable >= dc.engineersRequired;
+            
+            const engText = `<span style="color: ${engMet ? 'inherit' : 'var(--accent-red)'}">(requires ${dc.engineersRequired} engineers)</span>`;
+            info.innerHTML = `${dc.name} (${formatNumber(dc.gpuCapacity)} GPUs) ${engText}`;
+            
+            const countSpan = row.querySelector('.value')!;
+            countSpan.textContent = 'x' + state.datacenters[i];
+            
+            const btn = row.querySelector('button')!;
+            btn.textContent = 'Buy ' + formatMoney(dc.cost);
+            btn.disabled = state.funds < dc.cost || !engMet;
+        } else {
+            row.style.display = 'none';
+        }
     }
   }
 }

@@ -1,20 +1,27 @@
 import type { GameState } from '../../game/GameState.ts';
 import type { Panel } from '../PanelManager.ts';
-import { BALANCE } from '../../game/BalanceConfig.ts';
-import type { SubscriptionTier } from '../../game/BalanceConfig.ts';
+import { BALANCE, getNextTier } from '../../game/BalanceConfig.ts';
 import { formatMoney } from '../../game/utils.ts';
-import { buySubscription, buyMicMini, goSelfHosted } from '../../game/systems/ComputeSystem.ts';
+import { buyMicMini, goSelfHosted, upgradeTier, hireAgent } from '../../game/systems/ComputeSystem.ts';
+import { flashElement } from '../UIUtils.ts';
 
 export class AgentsPanel implements Panel {
   readonly el: HTMLElement;
   private state: GameState;
   private onTransition: (() => void) | null;
 
-  // Tier row refs
-  private tierRows: Map<SubscriptionTier, {
-    countEl: HTMLSpanElement;
-    buyBtn: HTMLButtonElement;
-  }> = new Map();
+  // Subscription Tier Elements
+  private subTierNameEl!: HTMLSpanElement;
+  private subTierIntelEl!: HTMLSpanElement;
+  private subTierCostEl!: HTMLSpanElement;
+  private nextTierInfoEl!: HTMLDivElement;
+  private upgradeBtn!: HTMLButtonElement;
+
+  // Agent Controls
+  private agentCountEl!: HTMLSpanElement;
+  private unassignedCountEl!: HTMLSpanElement; // NEW
+  private agentCostEl!: HTMLSpanElement;
+  private incBtn!: HTMLButtonElement;
 
   // Other refs
   private coresEl!: HTMLSpanElement;
@@ -44,60 +51,133 @@ export class AgentsPanel implements Panel {
     const body = document.createElement('div');
     body.className = 'panel-body';
 
-    // Subscription tiers
-    const tiersSection = document.createElement('div');
-    tiersSection.className = 'panel-section';
+    // --- Subscription Tier Section ---
+    const tierSection = document.createElement('div');
+    tierSection.className = 'section';
+    tierSection.style.marginBottom = '12px';
+    tierSection.style.borderBottom = '1px solid var(--border-color)';
+    tierSection.style.paddingBottom = '8px';
 
-    // Display tiers in user-friendly order: Free, Pro, Ultra, Ultra Max, Ultra Pro Max
-    const displayOrder: SubscriptionTier[] = ['free', 'pro', 'ultra', 'ultraMax', 'ultraProMax'];
+    const tierHeader = document.createElement('div');
+    tierHeader.className = 'panel-row';
+    const tierLabel = document.createElement('span');
+    tierLabel.className = 'label';
+    tierLabel.textContent = 'Subscription Tier';
+    
+    const tierValue = document.createElement('div');
+    tierValue.style.textAlign = 'right';
+    this.subTierNameEl = document.createElement('div');
+    this.subTierNameEl.className = 'highlight';
+    
+    const tierMeta = document.createElement('div');
+    tierMeta.style.fontSize = '0.78rem';
+    tierMeta.style.color = 'var(--text-muted)';
+    this.subTierIntelEl = document.createElement('span');
+    this.subTierCostEl = document.createElement('span');
+    this.subTierCostEl.style.marginLeft = '8px';
+    
+    tierMeta.appendChild(this.subTierIntelEl);
+    tierMeta.appendChild(this.subTierCostEl);
+    
+    tierValue.appendChild(this.subTierNameEl);
+    tierValue.appendChild(tierMeta);
+    tierHeader.appendChild(tierLabel);
+    tierHeader.appendChild(tierValue);
+    tierSection.appendChild(tierHeader);
 
-    for (const tier of displayOrder) {
-      const config = BALANCE.tiers[tier];
-      const row = document.createElement('div');
-      row.className = 'tier-row';
+    // Next Tier / Upgrade
+    this.nextTierInfoEl = document.createElement('div');
+    // Using a button, so this div might just hold extra info properly or we put button inside
+    this.nextTierInfoEl.style.display = 'none'; // Hidden, button will have text
 
-      // Tier name
-      const name = document.createElement('span');
-      name.className = 'tier-name';
-      name.textContent = config.displayName;
-      row.appendChild(name);
+    this.upgradeBtn = document.createElement('button');
+    this.upgradeBtn.className = 'btn-buy';
+    this.upgradeBtn.style.width = '100%';
+    this.upgradeBtn.style.marginTop = '8px';
+    this.upgradeBtn.addEventListener('click', () => {
+      const next = getNextTier(this.state.subscriptionTier);
+      if (next) upgradeTier(this.state, next);
+    });
 
-      // Tier info
-      const info = document.createElement('span');
-      info.className = 'tier-info';
-      const costStr = config.costPerMin > 0 ? formatMoney(config.costPerMin) + '/min' : 'Free';
-      const limitStr = config.taskLimitPerDay ? config.taskLimitPerDay + '/day' : 'No limit';
-      const coreStr = config.coresPerAgent + ' core' + (config.coresPerAgent > 1 ? 's' : '');
-      info.textContent = costStr + '  Intel ' + config.intel + '  ' + limitStr + '  ' + coreStr;
-      row.appendChild(info);
+    tierSection.appendChild(this.upgradeBtn);
+    body.appendChild(tierSection);
 
-      // Count
-      const countEl = document.createElement('span');
-      countEl.className = 'tier-count';
-      countEl.textContent = '0';
-      row.appendChild(countEl);
+    // --- Agent Hiring Details (Moved from JobsPanel) ---
+    const agentSection = document.createElement('div');
+    agentSection.className = 'section';
+    agentSection.style.marginBottom = '12px';
+    
+    const agentRow = document.createElement('div');
+    agentRow.className = 'panel-row';
+    agentRow.style.alignItems = 'center';
+    
+    const agentLabel = document.createElement('span');
+    agentLabel.className = 'label';
+    agentLabel.textContent = 'Active Agents';
+    
+    const controls = document.createElement('div');
+    controls.className = 'controls';
+    controls.style.display = 'flex';
+    controls.style.gap = '8px';
+    controls.style.alignItems = 'center';
 
-      // Buy button (not for free tier)
-      const buyBtn = document.createElement('button');
-      if (tier === 'free') {
-        buyBtn.textContent = '—';
-        buyBtn.disabled = true;
-        buyBtn.style.visibility = 'hidden';
-        buyBtn.style.width = '34px';
-      } else {
-        buyBtn.textContent = '+1';
-        buyBtn.addEventListener('click', () => {
-          buySubscription(this.state, tier);
-        });
+    this.agentCountEl = document.createElement('span');
+    this.agentCountEl.className = 'value';
+    this.agentCountEl.style.minWidth = '24px';
+    this.agentCountEl.style.textAlign = 'center';
+    
+    this.incBtn = document.createElement('button');
+    this.incBtn.className = 'btn-mini';
+    this.incBtn.style.minWidth = '100px';
+    this.incBtn.addEventListener('click', () => {
+      if (!hireAgent(this.state)) {
+        flashElement(this.coresEl);
       }
-      row.appendChild(buyBtn);
+    });
 
-      tiersSection.appendChild(row);
-      this.tierRows.set(tier, { countEl, buyBtn });
-    }
+    controls.appendChild(this.agentCountEl);
+    controls.appendChild(this.incBtn);
+    
+    agentRow.appendChild(agentLabel);
+    agentRow.appendChild(controls);
+    
+    // --- Unassigned Agents Row ---
+    const unassignedRow = document.createElement('div');
+    unassignedRow.className = 'panel-row';
+    unassignedRow.style.marginTop = '4px';
+    unassignedRow.style.fontSize = '0.8rem';
+    
+    const unassignedLabel = document.createElement('span');
+    unassignedLabel.className = 'label';
+    unassignedLabel.textContent = 'Unassigned Agents';
+    
+    this.unassignedCountEl = document.createElement('span');
+    this.unassignedCountEl.className = 'value';
+    this.unassignedCountEl.style.fontWeight = '600';
+    this.unassignedCountEl.textContent = '0';
+    
+    unassignedRow.appendChild(unassignedLabel);
+    unassignedRow.appendChild(this.unassignedCountEl);
+    agentSection.appendChild(unassignedRow);
 
-    body.appendChild(tiersSection);
+    // Flash listener
+    document.addEventListener('flash-unassigned', () => {
+      flashElement(this.unassignedCountEl);
+    });
+    
+    this.agentCostEl = document.createElement('div');
+    this.agentCostEl.className = 'sub-label';
+    this.agentCostEl.style.textAlign = 'right';
+    this.agentCostEl.style.fontSize = '0.75rem';
+    this.agentCostEl.style.color = 'var(--text-muted)';
+    this.agentCostEl.style.marginTop = '4px';
 
+    agentSection.appendChild(agentRow);
+    agentSection.appendChild(this.agentCostEl);
+    body.appendChild(agentSection);
+
+
+    // --- Hardware ---
     // Divider
     body.appendChild(this.createDivider());
 
@@ -130,7 +210,9 @@ export class AgentsPanel implements Panel {
     micLeft.appendChild(this.micMiniCountEl);
 
     this.micMiniBuyBtn = document.createElement('button');
-    this.micMiniBuyBtn.innerHTML = 'Buy <span style="opacity:0.7;font-size:0.8em">' + formatMoney(BALANCE.micMini.cost) + '</span> <span style="color:var(--accent-green);font-size:0.75em">+8 cores</span>';
+    this.micMiniBuyBtn.innerHTML = 'Buy ' + formatMoney(BALANCE.micMini.cost) + ' <span style="font-size:0.8em;opacity:0.8">+8 cores</span>';
+    this.micMiniBuyBtn.className = 'btn-mini';
+    this.micMiniBuyBtn.style.minWidth = '120px';
     this.micMiniBuyBtn.addEventListener('click', () => {
       buyMicMini(this.state);
     });
@@ -175,7 +257,7 @@ export class AgentsPanel implements Panel {
     shDesc.style.fontSize = '0.78rem';
     shDesc.style.color = 'var(--text-secondary)';
     shDesc.style.marginBottom = '6px';
-    shDesc.textContent = 'Replace subscriptions with GPUs running DeepKick-405B (Intel 2.5). Eliminates all subscription costs!';
+    shDesc.textContent = 'Replace subscriptions with GPUs running DeepKick-405B (Intel 3.0).';
 
     this.selfHostedCostEl = document.createElement('div');
     this.selfHostedCostEl.style.fontSize = '0.82rem';
@@ -196,13 +278,6 @@ export class AgentsPanel implements Panel {
     this.selfHostedSection.appendChild(this.selfHostedBtn);
     body.appendChild(this.selfHostedSection);
 
-    // Warning
-    const warning = document.createElement('div');
-    warning.className = 'warning-text';
-    warning.textContent = 'Paid subs cancel if funds reach $0.';
-    warning.style.marginTop = '4px';
-    body.appendChild(warning);
-
     this.el.appendChild(body);
   }
 
@@ -214,24 +289,52 @@ export class AgentsPanel implements Panel {
 
   update(state: GameState): void {
     this.state = state;
-
-    // Update tier counts and button states
-    const availableCores = state.cpuCoresTotal - state.usedCores;
-
-    for (const [tier, refs] of this.tierRows) {
-      const count = state.subscriptions[tier];
-      refs.countEl.textContent = count.toString();
-
-      if (tier !== 'free') {
-        const config = BALANCE.tiers[tier];
-        const canAfford = state.funds >= config.costPerMin;
-        const hasCores = availableCores >= config.coresPerAgent;
-        refs.buyBtn.disabled = !canAfford || !hasCores;
-      }
+    
+    // -- Subscription Tier --
+    const currentTier = BALANCE.tiers[state.subscriptionTier];
+    this.subTierNameEl.textContent = currentTier.displayName;
+    this.subTierIntelEl.textContent = `Intel ${currentTier.intel.toFixed(1)}`;
+    this.subTierCostEl.textContent = `$${currentTier.cost} upfront`;
+    
+    // Upgrade Info
+    const nextTierType = getNextTier(state.subscriptionTier);
+    if (nextTierType) {
+      const nextTier = BALANCE.tiers[nextTierType];
+      // Updated Text: Upgrade To <Tier Name> ($price/m/agent, X intelligence)
+      // "The cost should be paid upfront (upgrade pays for the subscription for 1 minute)"
+      
+      this.upgradeBtn.style.display = 'block';
+      const upgradeCost = nextTier.cost * state.agents.length;
+      this.upgradeBtn.textContent = `Upgrade to ${nextTier.displayName} (${formatMoney(upgradeCost)}, ${nextTier.intel.toFixed(1)} Intel)`;
+      
+      this.upgradeBtn.disabled = state.funds < upgradeCost;
+      
+    } else {
+      this.upgradeBtn.style.display = 'none';
+      // Or show "Max Tier" text? Removed nextTierInfoEl usage essentially, reusing button area or just hiding.
+      // If hiding, maybe show text.
     }
 
+    // -- Agent Controls --
+    this.agentCountEl.textContent = state.agents.length.toString();
+    const unassignedCount = state.agents.filter(a => a.assignedJob === 'unassigned').length;
+    this.unassignedCountEl.textContent = unassignedCount.toString();
+    if (unassignedCount > 0) {
+      this.unassignedCountEl.style.color = 'var(--accent-green)';
+    } else {
+      this.unassignedCountEl.style.color = '';
+    }
+    
+    this.incBtn.textContent = `Hire (${formatMoney(currentTier.cost)})`;
+    this.incBtn.disabled = state.funds < currentTier.cost;
+
+    this.agentCostEl.textContent = `$${currentTier.cost} per agent`;
+
     // CPU Cores
-    this.coresEl.textContent = (state.cpuCoresTotal - state.usedCores) + '/' + state.cpuCoresTotal + ' free';
+    const coresFree = state.cpuCoresTotal - state.usedCores;
+    this.coresEl.textContent = coresFree + '/' + state.cpuCoresTotal + ' free';
+    if (coresFree < 0) this.coresEl.style.color = 'var(--accent-red)';
+    else this.coresEl.style.color = '';
 
     // Mic-mini
     this.micMiniCountEl.textContent = state.micMiniCount.toString();
@@ -240,9 +343,9 @@ export class AgentsPanel implements Panel {
     // Summary
     const totalAgents = state.agents.length;
     this.totalAgentsEl.textContent = 'Total agents: ' + totalAgents;
-    this.totalCostEl.textContent = 'Sub cost: ' + formatMoney(state.expensePerMin) + '/min';
+    this.totalCostEl.textContent = 'Income potential: ' + formatMoney(state.incomePerMin) + '/min';
 
-    // Go Self-Hosted: show when player has enough agents and money
+    // Go Self-Hosted
     const gpuCost = totalAgents * BALANCE.gpuCost;
     if (!state.isPostGpuTransition && totalAgents >= 3 && state.funds >= gpuCost * 0.5) {
       this.selfHostedSection.classList.remove('hidden');
