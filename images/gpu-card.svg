@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 12" width="48" height="12">
+  <!-- PCB board -->
+  <rect x="1" y="1" width="46" height="10" rx="1" fill="#1a5c2a" stroke="#0d3318" stroke-width="0.5"/>
+  <!-- GPU die (main chip) -->
+  <rect x="16" y="3" width="8" height="6" rx="0.5" fill="#333" stroke="#555" stroke-width="0.3"/>
+  <!-- Die glow when active -->
+  <rect x="17" y="4" width="6" height="4" rx="0.3" fill="#4ecca3" opacity="0.4">
+    <animate attributeName="opacity" values="0.3;0.7;0.3" dur="1.5s" repeatCount="indefinite"/>
+  </rect>
+  <!-- VRAM chips -->
+  <rect x="4" y="3" width="4" height="3" rx="0.3" fill="#222"/>
+  <rect x="4" y="7" width="4" height="3" rx="0.3" fill="#222"/>
+  <rect x="28" y="3" width="4" height="3" rx="0.3" fill="#222"/>
+  <rect x="28" y="7" width="4" height="3" rx="0.3" fill="#222"/>
+  <rect x="34" y="3" width="4" height="3" rx="0.3" fill="#222"/>
+  <rect x="34" y="7" width="4" height="3" rx="0.3" fill="#222"/>
+  <!-- VRMs -->
+  <rect x="10" y="3" width="3" height="2" rx="0.2" fill="#444"/>
+  <rect x="10" y="7" width="3" height="2" rx="0.2" fill="#444"/>
+  <!-- Power connector -->
+  <rect x="40" y="2" width="6" height="3" rx="0.5" fill="#111" stroke="#555" stroke-width="0.3"/>
+  <rect x="40" y="7" width="6" height="3" rx="0.5" fill="#111" stroke="#555" stroke-width="0.3"/>
+  <!-- PCIe connector (bottom edge) -->
+  <rect x="8" y="10" width="20" height="1.5" rx="0.3" fill="#c4a43a"/>
+  <!-- Status LED -->
+  <circle cx="3" cy="6" r="0.8" fill="#4ecca3">
+    <animate attributeName="opacity" values="1;0.3;1" dur="2s" repeatCount="indefinite"/>
+  </circle>
+</svg>

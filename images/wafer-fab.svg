@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 40" width="48" height="40">
+  <!-- Clean room building - white/sterile look -->
+  <rect x="4" y="10" width="40" height="26" rx="1" fill="#d8dce8" stroke="#b0b8c8" stroke-width="0.5"/>
+  <!-- Flat roof -->
+  <rect x="2" y="8" width="44" height="4" rx="1" fill="#c0c8d8"/>
+  <!-- HEPA filter units on roof -->
+  <rect x="8" y="4" width="10" height="5" rx="1" fill="#e0e4ea" stroke="#b0b8c8" stroke-width="0.3"/>
+  <rect x="22" y="4" width="10" height="5" rx="1" fill="#e0e4ea" stroke="#b0b8c8" stroke-width="0.3"/>
+  <!-- Air flow indicator -->
+  <line x1="13" y1="9" x2="13" y2="12" stroke="#88a" stroke-width="0.3" stroke-dasharray="1,1">
+    <animate attributeName="y1" values="9;11;9" dur="1s" repeatCount="indefinite"/>
+  </line>
+  <line x1="27" y1="9" x2="27" y2="12" stroke="#88a" stroke-width="0.3" stroke-dasharray="1,1">
+    <animate attributeName="y1" values="9;11;9" dur="1s" repeatCount="indefinite"/>
+  </line>
+  <!-- Windows showing interior -->
+  <rect x="8" y="14" width="12" height="8" rx="0.5" fill="#e8eef8" stroke="#b0b8c8" stroke-width="0.3"/>
+  <rect x="24" y="14" width="12" height="8" rx="0.5" fill="#e8eef8" stroke="#b0b8c8" stroke-width="0.3"/>
+  <!-- Wafer inside (visible through window) -->
+  <circle cx="14" cy="18" r="2.5" fill="#7a8aaa" opacity="0.5"/>
+  <circle cx="14" cy="18" r="2" fill="#8a9aba" opacity="0.3"/>
+  <!-- Lithography beam (through window) -->
+  <line x1="30" y1="15" x2="30" y2="21" stroke="#4a6aff" stroke-width="0.5" opacity="0.6">
+    <animate attributeName="opacity" values="0.3;0.8;0.3" dur="0.8s" repeatCount="indefinite"/>
+  </line>
+  <!-- Airlock door -->
+  <rect x="18" y="24" width="8" height="12" rx="0.5" fill="#a0a8b8" stroke="#8890a0" stroke-width="0.3"/>
+  <circle cx="24.5" cy="30" r="0.8" fill="#888"/>
+  <!-- Clean room symbol -->
+  <text x="22" y="29" text-anchor="middle" font-size="3.5" fill="#556" font-family="sans-serif">CR</text>
+  <!-- Status LED -->
+  <circle cx="40" cy="13" r="1" fill="#4ecca3" opacity="0.8">
+    <animate attributeName="opacity" values="0.8;0.4;0.8" dur="2s" repeatCount="indefinite"/>
+  </circle>
+  <!-- Ground -->
+  <rect x="0" y="36" width="48" height="4" fill="#2a3a2a"/>
+  <!-- Paved area -->
+  <rect x="4" y="36" width="40" height="2" fill="#7a7a7a" opacity="0.3"/>
+</svg>

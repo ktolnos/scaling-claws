@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" width="40" height="40">
+  <!-- Hillside / excavation -->
+  <path d="M0,28 Q10,18 20,22 Q30,14 40,20 L40,36 L0,36 Z" fill="#5a5040" stroke="#4a4030" stroke-width="0.3"/>
+  <!-- Mine entrance -->
+  <path d="M14,26 L20,20 L26,26 Z" fill="#2a2018" stroke="#444" stroke-width="0.3"/>
+  <rect x="14" y="26" width="12" height="6" fill="#2a2018" stroke="#444" stroke-width="0.3"/>
+  <!-- Support beams -->
+  <line x1="15" y1="26" x2="15" y2="32" stroke="#8a7a5a" stroke-width="1"/>
+  <line x1="25" y1="26" x2="25" y2="32" stroke="#8a7a5a" stroke-width="1"/>
+  <line x1="15" y1="26" x2="25" y2="26" stroke="#8a7a5a" stroke-width="0.8"/>
+  <!-- Mine cart track -->
+  <line x1="20" y1="32" x2="36" y2="32" stroke="#888" stroke-width="0.8"/>
+  <line x1="20" y1="33.5" x2="36" y2="33.5" stroke="#888" stroke-width="0.8"/>
+  <!-- Mine cart -->
+  <rect x="28" y="29" width="6" height="4" rx="0.5" fill="#666" stroke="#555" stroke-width="0.3"/>
+  <!-- Silicon chunks in cart -->
+  <circle cx="29.5" cy="29.5" r="1" fill="#8a9aaa"/>
+  <circle cx="31.5" cy="29" r="1.2" fill="#7a8a9a"/>
+  <circle cx="33" cy="29.5" r="0.8" fill="#9aaaba"/>
+  <!-- Cart wheels -->
+  <circle cx="29.5" cy="33.5" r="1" fill="#444" stroke="#333" stroke-width="0.3"/>
+  <circle cx="33" cy="33.5" r="1" fill="#444" stroke="#333" stroke-width="0.3"/>
+  <!-- Headframe structure -->
+  <rect x="18" y="10" width="4" height="12" fill="none" stroke="#777" stroke-width="0.8"/>
+  <line x1="16" y1="10" x2="24" y2="10" stroke="#777" stroke-width="0.8"/>
+  <!-- Pulley wheel -->
+  <circle cx="20" cy="10" r="2" fill="none" stroke="#888" stroke-width="0.6">
+    <animateTransform attributeName="transform" type="rotate" values="0 20 10;360 20 10" dur="3s" repeatCount="indefinite"/>
+  </circle>
+  <!-- Cable from pulley -->
+  <line x1="20" y1="12" x2="20" y2="20" stroke="#999" stroke-width="0.4"/>
+  <!-- Light in mine entrance -->
+  <circle cx="20" cy="28" r="2" fill="#e9a845" opacity="0.3">
+    <animate attributeName="opacity" values="0.2;0.4;0.2" dur="2s" repeatCount="indefinite"/>
+  </circle>
+  <!-- Ground -->
+  <rect x="0" y="36" width="40" height="4" fill="#3a4a2a"/>
+</svg>

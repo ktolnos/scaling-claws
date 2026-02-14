@@ -1,0 +1,145 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 100" width="200" height="100">
+  <!-- Sky gradient -->
+  <defs>
+    <linearGradient id="skyGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1a2a4a"/>
+      <stop offset="60%" stop-color="#2a4a6a"/>
+      <stop offset="100%" stop-color="#4a6a8a"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="200" height="65" fill="url(#skyGrad)"/>
+  
+  <!-- Ground -->
+  <rect x="0" y="65" width="200" height="35" fill="#2a3a1a"/>
+  <!-- Ground texture -->
+  <rect x="0" y="65" width="200" height="2" fill="#3a4a2a"/>
+  
+  <!-- Road -->
+  <rect x="0" y="72" width="200" height="5" fill="#3a3a3a"/>
+  <line x1="0" y1="74.5" x2="200" y2="74.5" stroke="#8a8a3a" stroke-width="0.5" stroke-dasharray="6,4"/>
+  
+  <!-- === DATACENTER 1 (left) === -->
+  <rect x="10" y="40" width="30" height="25" rx="1" fill="#2a3040" stroke="#1a2030" stroke-width="0.4"/>
+  <rect x="8" y="38" width="34" height="4" rx="1" fill="#3a4050"/>
+  <!-- HVAC -->
+  <rect x="14" y="34" width="6" height="4" rx="0.5" fill="#445" stroke="#556" stroke-width="0.2"/>
+  <rect x="24" y="35" width="5" height="3" rx="0.5" fill="#445" stroke="#556" stroke-width="0.2"/>
+  <!-- Windows -->
+  <rect x="13" y="44" width="5" height="3" rx="0.3" fill="#1a3a5a" opacity="0.7"/>
+  <rect x="20" y="44" width="5" height="3" rx="0.3" fill="#1a4a3a" opacity="0.7">
+    <animate attributeName="fill" values="#1a4a3a;#1a6a4a;#1a4a3a" dur="3s" repeatCount="indefinite"/>
+  </rect>
+  <rect x="27" y="44" width="5" height="3" rx="0.3" fill="#1a3a5a" opacity="0.7"/>
+  <!-- Door -->
+  <rect x="20" y="52" width="8" height="13" rx="0.5" fill="#1a1a28" stroke="#333" stroke-width="0.3"/>
+  <!-- Status light -->
+  <circle cx="36" cy="42" r="0.8" fill="#4ecca3" opacity="0.8">
+    <animate attributeName="opacity" values="0.8;0.4;0.8" dur="2s" repeatCount="indefinite"/>
+  </circle>
+  
+  <!-- === GAS PLANT (center-left) === -->
+  <rect x="52" y="44" width="18" height="21" rx="1" fill="#3a3530" stroke="#2a2520" stroke-width="0.3"/>
+  <!-- Smokestack -->
+  <rect x="70" y="30" width="4" height="35" rx="0.5" fill="#4a4540"/>
+  <rect x="69" y="32" width="6" height="2" rx="0.3" fill="#5a5550"/>
+  <!-- Smoke -->
+  <circle cx="72" cy="28" r="2" fill="#778" opacity="0.2">
+    <animate attributeName="cy" values="28;20" dur="3s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values="0.2;0" dur="3s" repeatCount="indefinite"/>
+    <animate attributeName="r" values="2;5" dur="3s" repeatCount="indefinite"/>
+  </circle>
+  <circle cx="73" cy="26" r="1.5" fill="#889" opacity="0.15">
+    <animate attributeName="cy" values="26;16" dur="4s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values="0.15;0" dur="4s" repeatCount="indefinite"/>
+    <animate attributeName="r" values="1.5;4" dur="4s" repeatCount="indefinite"/>
+  </circle>
+  <!-- Warning light -->
+  <circle cx="54" cy="44" r="0.6" fill="#e9a845">
+    <animate attributeName="opacity" values="1;0.3;1" dur="1.5s" repeatCount="indefinite"/>
+  </circle>
+
+  <!-- === SOLAR FARM (center) === -->
+  <g transform="translate(82,50)">
+    <rect x="0" y="0" width="7" height="5" rx="0.2" fill="#2244aa" stroke="#1a3388" stroke-width="0.2" transform="skewY(-8)"/>
+    <line x1="3.5" y1="5" x2="3.5" y2="10" stroke="#666" stroke-width="0.5"/>
+    <rect x="0" y="0" width="7" height="5" rx="0.2" fill="#88aaff" opacity="0.15" transform="skewY(-8)">
+      <animate attributeName="opacity" values="0.05;0.2;0.05" dur="4s" repeatCount="indefinite"/>
+    </rect>
+  </g>
+  <g transform="translate(92,50)">
+    <rect x="0" y="0" width="7" height="5" rx="0.2" fill="#2244aa" stroke="#1a3388" stroke-width="0.2" transform="skewY(-8)"/>
+    <line x1="3.5" y1="5" x2="3.5" y2="10" stroke="#666" stroke-width="0.5"/>
+  </g>
+  <g transform="translate(102,50)">
+    <rect x="0" y="0" width="7" height="5" rx="0.2" fill="#2244aa" stroke="#1a3388" stroke-width="0.2" transform="skewY(-8)"/>
+    <line x1="3.5" y1="5" x2="3.5" y2="10" stroke="#666" stroke-width="0.5"/>
+  </g>
+
+  <!-- === ROCKET SILO (right-center) === -->
+  <!-- Launch pad -->
+  <rect x="118" y="56" width="16" height="9" rx="0.5" fill="#4a4a4a" stroke="#333" stroke-width="0.3"/>
+  <!-- Gantry -->
+  <rect x="132" y="30" width="3" height="28" fill="none" stroke="#666" stroke-width="0.5"/>
+  <line x1="132" y1="36" x2="135" y2="36" stroke="#666" stroke-width="0.3"/>
+  <line x1="132" y1="42" x2="135" y2="42" stroke="#666" stroke-width="0.3"/>
+  <line x1="132" y1="48" x2="135" y2="48" stroke="#666" stroke-width="0.3"/>
+  <!-- Rocket -->
+  <rect x="124" y="34" width="6" height="22" rx="0.5" fill="#e8e8e8" stroke="#ccc" stroke-width="0.3"/>
+  <path d="M124,34 L127,24 L130,34 Z" fill="#e94560"/>
+  <rect x="124" y="42" width="6" height="2" fill="#2a5aaa"/>
+  <!-- Flame -->
+  <ellipse cx="127" cy="58" rx="2" ry="2.5" fill="#ff8833" opacity="0.3">
+    <animate attributeName="ry" values="1.5;3;1.5" dur="0.3s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values="0.2;0.5;0.2" dur="0.3s" repeatCount="indefinite"/>
+  </ellipse>
+  <!-- Warning lights -->
+  <circle cx="120" cy="56" r="0.6" fill="#e94560">
+    <animate attributeName="opacity" values="1;0.2;1" dur="1s" repeatCount="indefinite"/>
+  </circle>
+
+  <!-- === ROBOT FACTORY (right) === -->
+  <rect x="146" y="42" width="28" height="23" rx="1" fill="#3a3a44" stroke="#2a2a34" stroke-width="0.3"/>
+  <!-- Sawtooth roof -->
+  <polygon points="146,42 156,34 156,42" fill="#4a4a54"/>
+  <polygon points="156,42 166,34 166,42" fill="#4a4a54"/>
+  <polygon points="166,42 174,36 174,42" fill="#4a4a54"/>
+  <!-- Roof windows -->
+  <polygon points="148,42 154,36 154,42" fill="#3a5a6a" opacity="0.4"/>
+  <polygon points="158,42 164,36 164,42" fill="#3a5a6a" opacity="0.4"/>
+  <!-- Assembly window -->
+  <rect x="150" y="46" width="10" height="7" rx="0.3" fill="#1a2a3a"/>
+  <!-- Robot being assembled -->
+  <rect x="154" y="47" width="3" height="2" rx="0.3" fill="#7a8a9a"/>
+  <rect x="153.5" y="49.5" width="4" height="3" rx="0.2" fill="#6a7a8a"/>
+  <!-- Conveyor door -->
+  <rect x="164" y="52" width="8" height="13" rx="0.3" fill="#1a1a24" stroke="#333" stroke-width="0.2"/>
+  <!-- Antenna -->
+  <line x1="172" y1="30" x2="172" y2="42" stroke="#777" stroke-width="0.3"/>
+  <circle cx="172" cy="30" r="0.6" fill="#e94560">
+    <animate attributeName="opacity" values="1;0.3;1" dur="1.5s" repeatCount="indefinite"/>
+  </circle>
+
+  <!-- === SMALL ROBOTS walking === -->
+  <!-- Robot 1 -->
+  <g transform="translate(140,62)">
+    <rect x="0" y="0" width="2.5" height="1.5" rx="0.5" fill="#7a8a9a"/>
+    <rect x="0.2" y="1.5" width="2" height="2" rx="0.3" fill="#6a7a8a"/>
+    <circle cx="1.2" cy="0.5" r="0.3" fill="#4ecca3"/>
+  </g>
+  <!-- Robot 2 -->
+  <g transform="translate(144,62)">
+    <rect x="0" y="0" width="2.5" height="1.5" rx="0.5" fill="#7a8a9a"/>
+    <rect x="0.2" y="1.5" width="2" height="2" rx="0.3" fill="#6a7a8a"/>
+    <circle cx="1.2" cy="0.5" r="0.3" fill="#4ecca3"/>
+  </g>
+
+  <!-- === POWER LINES connecting facilities === -->
+  <line x1="42" y1="45" x2="52" y2="45" stroke="#888" stroke-width="0.4"/>
+  <line x1="42" y1="46.5" x2="52" y2="46.5" stroke="#888" stroke-width="0.4"/>
+  <!-- Power poles -->
+  <line x1="47" y1="40" x2="47" y2="50" stroke="#777" stroke-width="0.6"/>
+  <line x1="45" y1="41" x2="49" y2="41" stroke="#777" stroke-width="0.4"/>
+  
+  <!-- Distant mountains -->
+  <path d="M0,65 L20,55 L40,62 L60,52 L80,58 L100,48 L120,56 L140,50 L160,58 L180,52 L200,60 L200,65 Z" fill="#1a2a1a" opacity="0.3"/>
+</svg>
