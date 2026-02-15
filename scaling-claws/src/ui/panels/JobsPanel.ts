@@ -6,6 +6,7 @@ import type { JobType } from '../../game/BalanceConfig.ts';
 import { formatNumber, formatMoney } from '../../game/utils.ts';
 import { ProgressBar } from '../components/ProgressBar.ts';
 import { BulkBuyGroup } from '../components/BulkBuyGroup.ts';
+import { flashElement } from '../UIUtils.ts';
 import {
   nudgeAgent,
   assignAgentsToJob, removeAgentsFromJob,
@@ -81,6 +82,15 @@ export class JobsPanel implements Panel {
     nudgeRow.appendChild(this.nudgeBtn);
     body.appendChild(nudgeRow);
 
+    // Flash listener for auto-firing
+    document.addEventListener('flash-job', (e: any) => {
+      const jobType = e.detail?.jobType as JobType;
+      if (jobType) {
+        const refs = this.jobRows.get(jobType);
+        if (refs) flashElement(refs.row);
+      }
+    });
+
     this.el.appendChild(body);
   }
 
@@ -98,9 +108,9 @@ export class JobsPanel implements Panel {
     row.style.borderRadius = '6px';
     row.style.gap = '6px';
 
-    // Left block: title + reward + requirements (fixed width)
+    // Left block: title + reward + requirements (fixed width reduced)
     const infoBlock = document.createElement('div');
-    infoBlock.style.flex = '0 0 130px';
+    infoBlock.style.flex = '0 0 115px';
     infoBlock.style.display = 'flex';
     infoBlock.style.flexDirection = 'column';
     infoBlock.style.overflow = 'hidden';
@@ -214,14 +224,7 @@ export class JobsPanel implements Panel {
   update(state: GameState): void {
     this.state = state;
 
-    // AI agents are already grouped in agentPools (no grouping needed!)
-
-    // Group human workers by job
-    const humanByJob = new Map<JobType, typeof state.humanWorkers>();
-    for (const w of state.humanWorkers) {
-      if (!humanByJob.has(w.assignedJob)) humanByJob.set(w.assignedJob, []);
-      humanByJob.get(w.assignedJob)!.push(w);
-    }
+    // AI agents and human workers are already grouped in pools (no grouping needed!)
 
     // Remove rows for locked or automated jobs
     for (const [jobType, refs] of this.jobRows) {
@@ -297,8 +300,8 @@ export class JobsPanel implements Panel {
 
       // Worker count and progress bars
       if (isHuman) {
-        const workers = humanByJob.get(jobType) || [];
-        const count = workers.length;
+        const pool = state.humanPools[jobType];
+        const count = pool.totalCount;
         refs.countEl.textContent = formatNumber(count);
 
         // Update progress bars
@@ -306,7 +309,7 @@ export class JobsPanel implements Panel {
         for (let i = 0; i < MAX_PROGRESS_BARS; i++) {
           if (i < barsToShow) {
             refs.progressBars[i].el.style.display = '';
-            refs.progressBars[i].update(workers[i].progress, false);
+            refs.progressBars[i].update(pool.samples.progress[i], false);
           } else {
             refs.progressBars[i].el.style.display = 'none';
           }

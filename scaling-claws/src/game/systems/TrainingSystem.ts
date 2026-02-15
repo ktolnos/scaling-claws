@@ -67,6 +67,7 @@ export function startFineTune(state: GameState, index: number): boolean {
   const ft = BALANCE.fineTunes[index];
   if (state.trainingData < ft.dataTB) return false;
   if (ft.codeReq > 0 && state.code < ft.codeReq) return false;
+  if (ft.scienceReq > 0 && state.science < ft.scienceReq) return false;
 
   for (let i = 0; i < index; i++) {
     if (!state.completedFineTunes.includes(i)) return false;
@@ -74,6 +75,11 @@ export function startFineTune(state: GameState, index: number): boolean {
 
   state.currentFineTuneIndex = index;
   state.fineTuneProgress = 0;
+  
+  // Consume requirements? The user called it "price" but similar to codeReq which isn't consumed.
+  // Given "science price", it might mean consumption. But "similar to codeReq" says no.
+  // Let's stick to requirement for now as "similar to codeReq" is more specific about mechanics.
+  
   return true;
 }
 
@@ -92,6 +98,7 @@ export function startAriesTraining(state: GameState, index: number): boolean {
   const am = BALANCE.ariesModels[index];
   if (state.trainingData < am.dataTB) return false;
   if (am.codeReq > 0 && state.code < am.codeReq) return false;
+  if (am.scienceReq > 0 && state.science < am.scienceReq) return false;
 
   state.ariesModelIndex = index;
   state.ariesProgress = 0;

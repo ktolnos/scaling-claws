@@ -3,43 +3,56 @@ import type { Panel } from '../PanelManager.ts';
 import { BALANCE } from '../../game/BalanceConfig.ts';
 import { formatMoney, formatNumber } from '../../game/utils.ts';
 import {
-  buyLithoMachine, buyWaferBatch, buildFab,
+  buyLithoMachine, buyWafers, buySilicon, buildFab,
   buildSiliconMine, buildRobotFactory, buyRobot,
 } from '../../game/systems/SupplySystem.ts';
-import { getBuyTiers } from '../components/BulkBuyGroup.ts';
-
-interface SimpleRowRefs {
-  info: HTMLSpanElement;
-  btn: HTMLButtonElement;
-  btnMoney: HTMLSpanElement;
-  btnLabor?: HTMLSpanElement;
-}
-
-interface BulkRowRefs {
-  info: HTMLSpanElement;
-  btnGroup: HTMLDivElement;
-  lastTiers: string;
-}
+import { BulkBuyGroup } from '../components/BulkBuyGroup.ts';
 
 export class SupplyPanel implements Panel {
   readonly el: HTMLElement;
   private state: GameState;
 
   // GPU Production
-  private lithoRefs!: SimpleRowRefs;
-  private waferRefs!: BulkRowRefs;
-  private waferPriceHint!: HTMLDivElement;
+  private lithoBuyGroup!: BulkBuyGroup;
+  private lithoInfoEl!: HTMLSpanElement;
+  private lithoRateEl!: HTMLSpanElement;
+  private lithoPriceEl!: HTMLSpanElement;
+
+  private siliconBuyGroup!: BulkBuyGroup;
+  private siliconInfoEl!: HTMLSpanElement;
+  private siliconRateEl!: HTMLSpanElement;
+  private siliconPriceEl!: HTMLSpanElement;
+
+  private waferBuyGroup!: BulkBuyGroup;
+  private waferInfoEl!: HTMLSpanElement;
+  private waferRateEl!: HTMLSpanElement;
+  private waferPriceEl!: HTMLSpanElement;
+  
   private gpuOutputEl!: HTMLDivElement;
 
   // Facilities
-  private fabRefs!: SimpleRowRefs;
-  private mineRefs!: SimpleRowRefs;
+  private fabBuyGroup!: BulkBuyGroup;
+  private fabInfoEl!: HTMLSpanElement;
+  private fabRateEl!: HTMLSpanElement;
+  private fabPriceEl!: HTMLSpanElement;
+
+  private mineBuyGroup!: BulkBuyGroup;
+  private mineInfoEl!: HTMLSpanElement;
+  private mineRateEl!: HTMLSpanElement;
+  private minePriceEl!: HTMLSpanElement;
 
   // Robotics
   private roboticsHint!: HTMLDivElement;
   private roboticsContent!: HTMLDivElement;
-  private factoryRefs!: SimpleRowRefs;
-  private robotRefs!: BulkRowRefs;
+  private factoryBuyGroup!: BulkBuyGroup;
+  private factoryInfoEl!: HTMLSpanElement;
+  private factoryRateEl!: HTMLSpanElement;
+  private factoryPriceEl!: HTMLSpanElement;
+
+  private robotInfoEl!: HTMLSpanElement;
+  private robotBuyGroup!: BulkBuyGroup;
+  private robotRateEl!: HTMLSpanElement;
+  private robotPriceEl!: HTMLSpanElement;
 
   constructor(state: GameState) {
     this.state = state;
@@ -66,17 +79,28 @@ export class SupplyPanel implements Panel {
     const gpuSection = document.createElement('div');
     gpuSection.className = 'panel-section';
 
-    this.lithoRefs = this.buildSimpleRow(gpuSection, () => buyLithoMachine(this.state));
-    this.waferRefs = this.buildBulkRow(gpuSection);
+    const litho = this.buildBulkRow(gpuSection, 'Litho machines:', (amt) => buyLithoMachine(this.state, amt));
+    this.lithoInfoEl = litho.info;
+    this.lithoRateEl = litho.rate!;
+    this.lithoPriceEl = litho.price;
+    this.lithoBuyGroup = litho.buyGroup;
 
-    this.waferPriceHint = document.createElement('div');
-    this.waferPriceHint.style.fontSize = '0.72rem';
-    this.waferPriceHint.style.color = 'var(--text-muted)';
-    gpuSection.appendChild(this.waferPriceHint);
+    const silicon = this.buildBulkRow(gpuSection, 'Silicon:', (amt) => buySilicon(this.state, amt));
+    this.siliconInfoEl = silicon.info;
+    this.siliconPriceEl = silicon.price;
+    this.siliconRateEl = silicon.rate!;
+    this.siliconBuyGroup = silicon.buyGroup;
+
+    const wafer = this.buildBulkRow(gpuSection, 'Wafers:', (amt) => buyWafers(this.state, amt));
+    this.waferInfoEl = wafer.info;
+    this.waferPriceEl = wafer.price;
+    this.waferRateEl = wafer.rate!;
+    this.waferBuyGroup = wafer.buyGroup;
 
     this.gpuOutputEl = document.createElement('div');
     this.gpuOutputEl.style.fontSize = '0.82rem';
     this.gpuOutputEl.style.color = 'var(--accent-green)';
+    this.gpuOutputEl.style.marginTop = '4px';
     gpuSection.appendChild(this.gpuOutputEl);
 
     body.appendChild(gpuSection);
@@ -91,8 +115,17 @@ export class SupplyPanel implements Panel {
     const fabSection = document.createElement('div');
     fabSection.className = 'panel-section';
 
-    this.fabRefs = this.buildSimpleRow(fabSection, () => buildFab(this.state));
-    this.mineRefs = this.buildSimpleRow(fabSection, () => buildSiliconMine(this.state));
+    const fab = this.buildBulkRow(fabSection, 'Wafer fabs:', (amt) => buildFab(this.state, amt));
+    this.fabInfoEl = fab.info;
+    this.fabRateEl = fab.rate!;
+    this.fabPriceEl = fab.price;
+    this.fabBuyGroup = fab.buyGroup;
+
+    const mine = this.buildBulkRow(fabSection, 'Silicon mines:', (amt) => buildSiliconMine(this.state, amt));
+    this.mineInfoEl = mine.info;
+    this.mineRateEl = mine.rate!;
+    this.minePriceEl = mine.price;
+    this.mineBuyGroup = mine.buyGroup;
 
     body.appendChild(fabSection);
     body.appendChild(this.createDivider());
@@ -115,8 +148,17 @@ export class SupplyPanel implements Panel {
     this.roboticsContent = document.createElement('div');
     this.roboticsContent.style.display = 'none';
 
-    this.factoryRefs = this.buildSimpleRow(this.roboticsContent, () => buildRobotFactory(this.state));
-    this.robotRefs = this.buildBulkRow(this.roboticsContent);
+    const factory = this.buildBulkRow(this.roboticsContent, 'Robot factories:', (amt) => buildRobotFactory(this.state, amt));
+    this.factoryInfoEl = factory.info;
+    this.factoryRateEl = factory.rate!;
+    this.factoryPriceEl = factory.price;
+    this.factoryBuyGroup = factory.buyGroup;
+
+    const robot = this.buildBulkRow(this.roboticsContent, 'Robots:', (amt) => buyRobot(this.state, amt));
+    this.robotInfoEl = robot.info;
+    this.robotPriceEl = robot.price;
+    this.robotRateEl = robot.rate!;
+    this.robotBuyGroup = robot.buyGroup;
 
     roboticsSection.appendChild(this.roboticsContent);
     body.appendChild(roboticsSection);
@@ -124,53 +166,59 @@ export class SupplyPanel implements Panel {
     this.el.appendChild(body);
   }
 
-  private buildSimpleRow(parent: HTMLElement, onClick: () => void): SimpleRowRefs {
+  private buildBulkRow(parent: HTMLElement, labelText: string, onAction: (amt: number) => void) {
     const row = document.createElement('div');
     row.className = 'panel-row';
     row.style.fontSize = '0.82rem';
+    row.style.display = 'flex';
+    row.style.alignItems = 'center';
+    row.style.gap = '8px';
+    row.style.marginBottom = '6px';
+
+    const textCol = document.createElement('div');
+    textCol.style.display = 'flex';
+    textCol.style.flexDirection = 'column';
+    textCol.style.flex = '1';
+    textCol.style.overflow = 'hidden';
+
+    const topRow = document.createElement('div');
+    topRow.style.display = 'flex';
+    topRow.style.alignItems = 'baseline';
+    topRow.style.gap = '4px';
+
+    const label = document.createElement('span');
+    label.className = 'label';
+    label.textContent = labelText;
+    topRow.appendChild(label);
 
     const info = document.createElement('span');
-    info.className = 'label';
-    row.appendChild(info);
+    info.className = 'value';
+    info.style.fontWeight = 'bold';
+    topRow.appendChild(info);
 
-    const btn = document.createElement('button');
-    btn.style.fontSize = '0.72rem';
-    
-    const btnText = document.createElement('span');
-    btnText.textContent = 'Buy ';
-    btn.appendChild(btnText);
-    
-    const btnMoney = document.createElement('span');
-    btn.appendChild(btnMoney);
-    
-    const btnSpace = document.createTextNode(' ');
-    btn.appendChild(btnSpace);
-    
-    const btnLabor = document.createElement('span');
-    btn.appendChild(btnLabor);
+    const rate = document.createElement('span');
+    rate.className = 'value';
+    rate.style.color = 'var(--text-muted)';
+    rate.style.fontSize = '0.72rem';
+    topRow.appendChild(rate);
 
-    btn.addEventListener('click', onClick);
-    row.appendChild(btn);
+    textCol.appendChild(topRow);
 
-    parent.appendChild(row);
-    return { info, btn, btnMoney, btnLabor };
-  }
+    const price = document.createElement('div');
+    price.style.fontSize = '0.68rem';
+    price.style.color = 'var(--text-muted)';
+    price.style.whiteSpace = 'nowrap';
+    price.style.overflow = 'hidden';
+    price.style.textOverflow = 'ellipsis';
+    textCol.appendChild(price);
 
-  private buildBulkRow(parent: HTMLElement): BulkRowRefs {
-    const row = document.createElement('div');
-    row.className = 'panel-row';
-    row.style.fontSize = '0.82rem';
+    row.appendChild(textCol);
 
-    const info = document.createElement('span');
-    info.className = 'label';
-    row.appendChild(info);
-
-    const btnGroup = document.createElement('div');
-    btnGroup.className = 'bulk-buy-group';
-    row.appendChild(btnGroup);
+    const buyGroup = new BulkBuyGroup(onAction, '+');
+    row.appendChild(buyGroup.el);
 
     parent.appendChild(row);
-    return { info, btnGroup, lastTiers: '' };
+    return { info, rate, price, buyGroup };
   }
 
   private createDivider(): HTMLHRElement {
@@ -188,37 +236,30 @@ export class SupplyPanel implements Panel {
 
   private updateGpuProduction(state: GameState): void {
     // Litho
-    this.lithoRefs.info.textContent = 'Lithography machines: ' + state.lithoMachines;
-    const lithoMoneyMet = state.funds >= BALANCE.lithoMachineCost;
-    const lithoMoneyColor = lithoMoneyMet ? '' : 'var(--accent-red)';
-    this.lithoRefs.btnMoney.textContent = formatMoney(BALANCE.lithoMachineCost);
-    this.lithoRefs.btnMoney.style.color = lithoMoneyColor;
-    this.lithoRefs.btn.disabled = !lithoMoneyMet;
+    this.lithoInfoEl.textContent = formatNumber(state.lithoMachines);
+    this.lithoPriceEl.textContent = `${formatMoney(BALANCE.lithoMachineCost)} ea | ${BALANCE.lithoWaferConsumptionPerMin} waf/m | ${BALANCE.waferGpus} GPUs/waf`;
+    this.lithoBuyGroup.update(state.lithoMachines, (amt) => state.funds >= amt * BALANCE.lithoMachineCost);
+    this.updateRateDisplay(this.lithoRateEl, state.lithoActualRate, state.lithoMachines > 0);
 
-    // Wafer batches
-    this.waferRefs.info.textContent = 'Wafer batches: ' + formatNumber(Math.floor(state.waferBatches));
+    // Silicon
+    const silProd = state.siliconProductionPerMin;
+    const silDem = state.siliconDemandPerMin;
+    const silAmt = Math.floor(state.silicon);
+    this.siliconInfoEl.textContent = formatNumber(silAmt);
+    this.siliconInfoEl.style.color = silAmt <= 0 ? 'var(--accent-red)' : '';
+    this.siliconRateEl.textContent = `(+${formatNumber(silProd)}, -${formatNumber(silDem)})/m`;
+    this.siliconPriceEl.textContent = `${formatMoney(BALANCE.siliconCost)} each`;
+    this.siliconBuyGroup.update(state.silicon, (amt) => state.funds >= amt * BALANCE.siliconCost);
 
-    const tiers = getBuyTiers(Math.floor(state.waferBatches));
-    const tiersKey = tiers.join(',');
-    if (tiersKey !== this.waferRefs.lastTiers) {
-      this.waferRefs.lastTiers = tiersKey;
-      this.waferRefs.btnGroup.innerHTML = '';
-      for (const amt of tiers) {
-        const btn = document.createElement('button');
-        btn.textContent = '+' + formatNumber(amt);
-        btn.style.fontSize = '0.72rem';
-        btn.dataset.amount = amt.toString();
-        btn.title = formatMoney(amt * BALANCE.waferBatchCost);
-        btn.addEventListener('click', () => buyWaferBatch(this.state, amt));
-        this.waferRefs.btnGroup.appendChild(btn);
-      }
-    }
-    this.waferRefs.btnGroup.querySelectorAll('button').forEach(b => {
-      const amt = parseInt((b as HTMLElement).dataset.amount ?? '1');
-      (b as HTMLButtonElement).disabled = state.funds < amt * BALANCE.waferBatchCost;
-    });
-
-    this.waferPriceHint.textContent = formatMoney(BALANCE.waferBatchCost) + '/batch (' + BALANCE.waferBatchGpus + ' GPUs each)';
+    // Wafers
+    const wafProd = state.waferProductionPerMin;
+    const wafDem = state.waferDemandPerMin;
+    const wafAmt = Math.floor(state.wafers);
+    this.waferInfoEl.textContent = formatNumber(wafAmt);
+    this.waferInfoEl.style.color = wafAmt <= 0 ? 'var(--accent-red)' : '';
+    this.waferRateEl.textContent = `(+${formatNumber(wafProd)}, -${formatNumber(wafDem)})/m`;
+    this.waferPriceEl.textContent = `${formatMoney(BALANCE.waferCost)} each`;
+    this.waferBuyGroup.update(state.wafers, (amt) => state.funds >= amt * BALANCE.waferCost);
 
     if (state.gpuProductionPerMin > 0) {
       this.gpuOutputEl.textContent = 'GPU output: ' + formatNumber(state.gpuProductionPerMin) + '/min';
@@ -228,38 +269,40 @@ export class SupplyPanel implements Panel {
     }
   }
 
+  private updateRateDisplay(el: HTMLSpanElement, rate: number, show: boolean): void {
+    if (!show) {
+      el.textContent = '';
+      return;
+    }
+    const pct = Math.round(rate * 100);
+    el.textContent = `(${pct}%)`;
+    if (pct >= 100) {
+      el.style.color = 'var(--accent-green)';
+    } else if (pct >= 50) {
+      el.style.color = 'var(--accent-yellow)';
+    } else {
+      el.style.color = 'var(--accent-red)';
+    }
+  }
+
   private updateFacilities(state: GameState): void {
     // Fabs
-    const fabLaborMet = state.labor >= BALANCE.fabLaborCost;
-    const fabMoneyMet = state.funds >= BALANCE.fabCost;
-    this.fabRefs.info.textContent = 'Wafer fabs: ' + state.waferFabs;
-    
-    const fabMoneyColor = fabMoneyMet ? '' : 'var(--accent-red)';
-    const fabLaborColor = fabLaborMet ? '' : 'var(--accent-red)';
-    
-    this.fabRefs.btnMoney.textContent = formatMoney(BALANCE.fabCost);
-    this.fabRefs.btnMoney.style.color = fabMoneyColor;
-    if (this.fabRefs.btnLabor) {
-      this.fabRefs.btnLabor.textContent = ` + ${formatNumber(BALANCE.fabLaborCost)} labor`;
-      this.fabRefs.btnLabor.style.color = fabLaborColor;
-    }
-    this.fabRefs.btn.disabled = !fabMoneyMet || !fabLaborMet;
+    this.fabInfoEl.textContent = formatNumber(state.waferFabs);
+    const fabPriceStr = `${formatMoney(BALANCE.fabCost)} + ${formatNumber(BALANCE.fabLaborCost)} labor`;
+    this.fabPriceEl.textContent = `${fabPriceStr} ea | ${BALANCE.fabOutputPerMin} wafers/m`;
+    this.fabBuyGroup.update(state.waferFabs, (amt) => 
+      state.funds >= amt * BALANCE.fabCost && state.labor >= amt * BALANCE.fabLaborCost
+    );
+    this.updateRateDisplay(this.fabRateEl, state.fabActualRate, state.waferFabs > 0);
 
     // Mines
-    const mineLaborMet = state.labor >= BALANCE.siliconMineLaborCost;
-    const mineMoneyMet = state.funds >= BALANCE.siliconMineCost;
-    this.mineRefs.info.textContent = 'Silicon mines: ' + state.siliconMines;
-
-    const mineMoneyColor = mineMoneyMet ? '' : 'var(--accent-red)';
-    const mineLaborColor = mineLaborMet ? '' : 'var(--accent-red)';
-    
-    this.mineRefs.btnMoney.textContent = formatMoney(BALANCE.siliconMineCost);
-    this.mineRefs.btnMoney.style.color = mineMoneyColor;
-    if (this.mineRefs.btnLabor) {
-      this.mineRefs.btnLabor.textContent = ` + ${formatNumber(BALANCE.siliconMineLaborCost)} labor`;
-      this.mineRefs.btnLabor.style.color = mineLaborColor;
-    }
-    this.mineRefs.btn.disabled = !mineMoneyMet || !mineLaborMet;
+    this.mineInfoEl.textContent = formatNumber(state.siliconMines);
+    const minePriceStr = `${formatMoney(BALANCE.siliconMineCost)} + ${formatNumber(BALANCE.siliconMineLaborCost)} labor`;
+    this.minePriceEl.textContent = `${minePriceStr} ea | ${BALANCE.siliconMineOutputPerMin} silicon/m`;
+    this.mineBuyGroup.update(state.siliconMines, (amt) => 
+      state.funds >= amt * BALANCE.siliconMineCost && state.labor >= amt * BALANCE.siliconMineLaborCost
+    );
+    this.updateRateDisplay(this.mineRateEl, state.mineActualRate, state.siliconMines > 0);
   }
 
   private updateRobotics(state: GameState): void {
@@ -275,46 +318,19 @@ export class SupplyPanel implements Panel {
     this.roboticsContent.style.display = '';
 
     // Factories
-    const factLaborMet = state.labor >= BALANCE.robotFactoryLaborCost;
-    const factMoneyMet = state.funds >= BALANCE.robotFactoryCost;
-    this.factoryRefs.info.textContent = 'Robot factories: ' + state.robotFactories;
-    
-    const factMoneyColor = factMoneyMet ? '' : 'var(--accent-red)';
-    const factLaborColor = factLaborMet ? '' : 'var(--accent-red)';
-    
-    this.factoryRefs.btnMoney.textContent = formatMoney(BALANCE.robotFactoryCost);
-    this.factoryRefs.btnMoney.style.color = factMoneyColor;
-    if (this.factoryRefs.btnLabor) {
-      this.factoryRefs.btnLabor.textContent = ` + ${formatNumber(BALANCE.robotFactoryLaborCost)} labor`;
-      this.factoryRefs.btnLabor.style.color = factLaborColor;
-    }
-    this.factoryRefs.btn.disabled = !factMoneyMet || !factLaborMet;
+    this.factoryInfoEl.textContent = formatNumber(state.robotFactories);
+    const factPriceStr = `${formatMoney(BALANCE.robotFactoryCost)} + ${formatNumber(BALANCE.robotFactoryLaborCost)} labor`;
+    this.factoryPriceEl.textContent = `${factPriceStr} ea | ${BALANCE.robotFactoryOutputPerMin} robots/m`;
+    this.factoryBuyGroup.update(state.robotFactories, (amt) => 
+      state.funds >= amt * BALANCE.robotFactoryCost && state.labor >= amt * BALANCE.robotFactoryLaborCost
+    );
+    this.updateRateDisplay(this.factoryRateEl, state.factoryActualRate, state.robotFactories > 0);
 
     // Robots
-    let robotText = 'Robots: ' + formatNumber(Math.floor(state.robots));
-    if (state.robotFactories > 0) {
-      robotText += ' (+' + formatNumber(state.robotFactories * BALANCE.robotFactoryOutputPerMin) + '/min)';
-    }
-    this.robotRefs.info.textContent = robotText;
-
-    const tiers = getBuyTiers(Math.floor(state.robots));
-    const tiersKey = tiers.join(',');
-    if (tiersKey !== this.robotRefs.lastTiers) {
-      this.robotRefs.lastTiers = tiersKey;
-      this.robotRefs.btnGroup.innerHTML = '';
-      for (const amt of tiers) {
-        const btn = document.createElement('button');
-        btn.textContent = '+' + formatNumber(amt);
-        btn.style.fontSize = '0.72rem';
-        btn.dataset.amount = amt.toString();
-        btn.title = formatMoney(amt * BALANCE.robotCost);
-        btn.addEventListener('click', () => buyRobot(this.state, amt));
-        this.robotRefs.btnGroup.appendChild(btn);
-      }
-    }
-    this.robotRefs.btnGroup.querySelectorAll('button').forEach(b => {
-      const amt = parseInt((b as HTMLElement).dataset.amount ?? '1');
-      (b as HTMLButtonElement).disabled = state.funds < amt * BALANCE.robotCost;
-    });
+    const roboProd = state.robotFactories * BALANCE.robotFactoryOutputPerMin;
+    this.robotInfoEl.textContent = formatNumber(Math.floor(state.robots));
+    this.robotRateEl.textContent = `(+${formatNumber(roboProd)}/min)`;
+    this.robotPriceEl.textContent = `${formatMoney(BALANCE.robotCost)} each`;
+    this.robotBuyGroup.update(state.robots, (amt) => state.funds >= amt * BALANCE.robotCost);
   }
 }

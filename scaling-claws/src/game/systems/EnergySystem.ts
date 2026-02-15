@@ -5,7 +5,7 @@ export function tickEnergy(state: GameState, _dtMs: number): void {
   if (!state.isPostGpuTransition) return;
 
   // Power demand: GPUs
-  state.powerDemandMW = state.gpuCount * BALANCE.gpuPowerMW;
+  state.powerDemandMW = state.installedGpuCount * BALANCE.gpuPowerMW;
 
   // Power supply: grid + plants + solar + home
   let supply = BALANCE.homePowerMW;

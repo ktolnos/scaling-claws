@@ -3,6 +3,7 @@ import './styles/panels.css';
 import './styles/visuals.css';
 
 import { createInitialState } from './game/GameState.ts';
+// NOTE: DO NOT add migrations here. The game is in active development and breaking changes to saves are currently acceptable.
 import { GameLoop } from './game/GameLoop.ts';
 import { BALANCE } from './game/BalanceConfig.ts';
 import { saveGame, loadGame } from './game/SaveManager.ts';
@@ -57,7 +58,7 @@ if (state.isPostGpuTransition) {
 }
 
 // If training/research already unlocked (loaded from save), show training panel
-if (state.intelligence >= BALANCE.researchUnlockIntel) {
+if (state.intelligence >= BALANCE.trainingUnlockIntel) {
   panelManager.register('training', new TrainingPanel(state));
 }
 
@@ -67,7 +68,7 @@ if (state.completedResearch.includes('chipFab1')) {
 }
 
 // Track whether panels have been added (for mid-game unlocks)
-let trainingPanelAdded = state.intelligence >= BALANCE.researchUnlockIntel;
+let trainingPanelAdded = state.intelligence >= BALANCE.trainingUnlockIntel;
 let supplyPanelAdded = state.completedResearch.includes('chipFab1');
 let spacePanelAdded = state.completedResearch.includes('spaceRockets1');
 
@@ -82,7 +83,7 @@ setInterval(() => {
   ticker.update(s);
 
   // Check for mid-game training/research unlock
-  if (!trainingPanelAdded && s.intelligence >= BALANCE.researchUnlockIntel) {
+  if (!trainingPanelAdded && s.intelligence >= BALANCE.trainingUnlockIntel) {
     panelManager.register('training', new TrainingPanel(s));
     trainingPanelAdded = true;
   }

@@ -13,6 +13,8 @@ export class ComputePanel implements Panel {
   private modelNameEl!: HTMLSpanElement;
   // private modelIntelEl!: HTMLSpanElement; // REMOVED
   private gpuCountEl!: HTMLSpanElement;
+  private installedGpuRow!: HTMLDivElement;
+  private installedGpuCountEl!: HTMLSpanElement;
   private unassignedCountEl!: HTMLSpanElement;
   private unassignedLabelEl!: HTMLSpanElement;
   private freeComputeEl!: HTMLSpanElement;
@@ -88,17 +90,7 @@ export class ComputePanel implements Panel {
 
     // Intel row REMOVED
 
-    // GPU count
-    const gpuRow = document.createElement('div');
-    gpuRow.className = 'panel-row';
-    const gpuLabel = document.createElement('span');
-    gpuLabel.className = 'label';
-    gpuLabel.textContent = 'GPUs:';
-    this.gpuCountEl = document.createElement('span');
-    this.gpuCountEl.className = 'value';
-    gpuRow.appendChild(gpuLabel);
-    gpuRow.appendChild(this.gpuCountEl);
-    body.appendChild(gpuRow);
+    body.appendChild(modelRow);
 
 
     // Unassigned Agents
@@ -141,18 +133,51 @@ export class ComputePanel implements Panel {
 
     body.appendChild(this.createDivider());
 
-    // Buy GPU buttons
+    // GPUs buttons with count display
     this.buyGpuRow = document.createElement('div');
     this.buyGpuRow.className = 'panel-row';
     const buyLabel = document.createElement('span');
     buyLabel.className = 'label';
-    buyLabel.innerHTML = 'Buy GPU <span style="opacity:0.6;font-size:0.8em">' + formatMoney(BALANCE.gpuCost) + ' each</span>';
+    buyLabel.style.display = 'flex';
+    buyLabel.style.flexDirection = 'column';
+    buyLabel.style.gap = '2px';
+
+    const topPart = document.createElement('div');
+    topPart.innerHTML = 'GPUs: ';
+    this.gpuCountEl = document.createElement('span');
+    this.gpuCountEl.className = 'value';
+    this.gpuCountEl.style.fontWeight = 'bold';
+    topPart.appendChild(this.gpuCountEl);
+    buyLabel.appendChild(topPart);
+
+    const pricePart = document.createElement('div');
+    pricePart.style.opacity = '0.6';
+    pricePart.style.fontSize = '0.72rem';
+    pricePart.textContent = `${formatMoney(BALANCE.gpuCost)} each`;
+    buyLabel.appendChild(pricePart);
+
     this.buyGpuRow.appendChild(buyLabel);
 
     this.buyGpuBtnGroup = document.createElement('div');
     this.buyGpuBtnGroup.className = 'bulk-buy-group';
     this.buyGpuRow.appendChild(this.buyGpuBtnGroup);
     body.appendChild(this.buyGpuRow);
+
+    // Installed GPUs Row
+    this.installedGpuRow = document.createElement('div');
+    this.installedGpuRow.className = 'panel-row';
+    this.installedGpuRow.style.fontSize = '0.85rem';
+    this.installedGpuRow.style.color = 'var(--text-secondary)';
+    
+    const installedLabel = document.createElement('span');
+    installedLabel.className = 'label';
+    installedLabel.textContent = 'Installed GPUs:';
+    this.installedGpuRow.appendChild(installedLabel);
+    
+    this.installedGpuCountEl = document.createElement('span');
+    this.installedGpuCountEl.className = 'value';
+    this.installedGpuRow.appendChild(this.installedGpuCountEl);
+    body.appendChild(this.installedGpuRow);
 
     // Model upgrade section
     this.upgradeSection = document.createElement('div');
@@ -461,7 +486,20 @@ export class ComputePanel implements Panel {
     const model = BALANCE.models[state.currentModelIndex];
 
     this.modelNameEl.textContent = model.name + ' (Intel ' + (Math.round(model.intel * 10) / 10).toString() + ')';
-    this.gpuCountEl.textContent = state.gpuCount + ' / ' + state.gpuCapacity + ' capacity';
+    this.gpuCountEl.textContent = formatNumber(state.gpuCount);
+
+    if (state.isPostGpuTransition) {
+      this.installedGpuRow.style.display = 'flex';
+      const installedPct = state.gpuCount > 0 ? Math.floor((state.installedGpuCount / state.gpuCount) * 100) : 100;
+      this.installedGpuCountEl.textContent = `${formatNumber(state.installedGpuCount)} (${installedPct}%) (Capacity: ${formatNumber(state.gpuCapacity)})`;
+      if (state.installedGpuCount < state.gpuCount) {
+        this.installedGpuCountEl.style.color = 'var(--accent-red)';
+      } else {
+        this.installedGpuCountEl.style.color = '';
+      }
+    } else {
+      this.installedGpuRow.style.display = 'none';
+    }
     
     if (state.isPostGpuTransition) {
       this.unassignedLabelEl.textContent = 'Unassigned Agents:';
@@ -514,7 +552,7 @@ export class ComputePanel implements Panel {
     const gpuBtns = this.buyGpuBtnGroup.querySelectorAll('button');
     gpuBtns.forEach(btn => {
       const amt = parseInt(btn.dataset.amount ?? '1');
-      btn.disabled = state.funds < amt * BALANCE.gpuCost || state.gpuCount >= state.gpuCapacity;
+      btn.disabled = state.funds < amt * BALANCE.gpuCost;
     });
 
     // Model upgrade
@@ -538,11 +576,14 @@ export class ComputePanel implements Panel {
     }
 
     // Datacenter hint
-    if (state.needsDatacenter) {
-      this.datacenterHintEl.textContent = 'GPU capacity full! Buy a datacenter to expand.';
+    if (state.gpuCount > state.installedGpuCount) {
+      this.datacenterHintEl.textContent = 'Unutilized GPUs! Buy datacenters to install them.';
       this.datacenterHintEl.style.color = 'var(--accent-red)';
     } else if (state.gpuCount > state.gpuCapacity * 0.8) {
-      this.datacenterHintEl.textContent = 'At ' + state.gpuCapacity + ' GPUs you\'ll need a datacenter.';
+      this.datacenterHintEl.textContent = 'At ' + formatNumber(state.gpuCapacity) + ' GPUs you\'ll need a datacenter.';
+      this.datacenterHintEl.style.color = 'var(--accent-blue)';
+    } else if (state.gpuCapacity > state.gpuCount * 2) {
+      this.datacenterHintEl.textContent = 'Hint: GPUs must be bought separately from datacenters.';
       this.datacenterHintEl.style.color = 'var(--accent-blue)';
     } else {
       this.datacenterHintEl.textContent = '';

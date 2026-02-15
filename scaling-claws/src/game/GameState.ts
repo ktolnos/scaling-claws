@@ -1,14 +1,6 @@
 import { BALANCE } from './BalanceConfig.ts';
 import type { SubscriptionTier, JobType } from './BalanceConfig.ts';
 
-export interface AgentState {
-  id: number;
-  assignedJob: JobType;
-  progress: number;       // 0..1
-  isStuck: boolean;
-  isIdle: boolean;        // no CPU core / GPU available
-  taskTimeMs: number;     // total time for current task
-}
 
 export interface JobPool {
   totalCount: number;         // Total agents in this job
@@ -21,12 +13,6 @@ export interface JobPool {
   };
 }
 
-export interface HumanWorkerState {
-  id: number;
-  assignedJob: JobType;   // always a human job type
-  progress: number;       // 0..1
-  taskTimeMs: number;
-}
 
 export interface ResourceRate {
   label: string;
@@ -39,6 +25,14 @@ export interface ResourceBreakdown {
   science: { income: ResourceRate[]; expense: ResourceRate[] };
   labor: { income: ResourceRate[]; expense: ResourceRate[] };
   compute: { label: string; pflops: number }[];
+}
+
+export interface HumanPool {
+  totalCount: number;
+  aggregateProgress: number;
+  samples: {
+    progress: number[];
+  };
 }
 
 export interface GameState {
@@ -54,8 +48,8 @@ export interface GameState {
   lastTickTime: number;
   gameStartTime: number;
 
-  // AI Agents (legacy - for migration only)
-  agents?: AgentState[];
+  // AI Agents (legacy fields kept for structural reference if needed, but no longer processed)
+  agents?: any[];
   nextAgentId?: number;
 
   // AI Agent Pools (new aggregate structure)
@@ -64,7 +58,8 @@ export interface GameState {
   poolsVersion: number;
 
   // Human Workers
-  humanWorkers: HumanWorkerState[];
+  humanWorkers: any[];
+  humanPools: Record<JobType, HumanPool>;
   nextHumanWorkerId: number;
 
   // Global Subscription Tier
@@ -76,7 +71,8 @@ export interface GameState {
 
   // GPU & Compute
   gpuCount: number;
-  totalPflops: number;         // computed: gpuCount * pflopsPerGpu
+  installedGpuCount: number;   // computed: min(gpuCount, gpuCapacity)
+  totalPflops: number;         // computed: installedGpuCount * pflopsPerGpu
   currentModelIndex: number;   // index into BALANCE.models
   freeCompute: number;         // computed: totalPflops - training allocation
   isPostGpuTransition: boolean;
@@ -90,6 +86,7 @@ export interface GameState {
   labor: number;               // stockpile
   laborPerMin: number;         // computed: production rate from workers
   laborConsumedPerMin: number; // computed: consumption by facilities
+  laborThrottle: number;      // 0..1, 1 = no throttle
 
   // Energy
   gridPowerKW: number;
@@ -131,7 +128,16 @@ export interface GameState {
   robotFactories: number;
   robots: number;
   gpuProductionPerMin: number;    // computed: GPUs auto-produced per minute
-  waferBatches: number;           // pending wafer batches → GPU production
+  silicon: number;                // silicon stockpile
+  siliconProductionPerMin: number;
+  siliconDemandPerMin: number;
+  wafers: number;                 // pending wafers → GPU production
+  waferProductionPerMin: number;
+  waferDemandPerMin: number;
+  lithoActualRate: number;
+  fabActualRate: number;
+  mineActualRate: number;
+  factoryActualRate: number;
 
   // API Services
   apiUnlocked: boolean;
@@ -209,6 +215,7 @@ export function createInitialState(): GameState {
     gameStartTime: now,
 
     humanWorkers: [],
+    humanPools: initializeHumanPools(),
     nextHumanWorkerId: 0,
 
     subscriptionTier: 'basic',
@@ -218,6 +225,7 @@ export function createInitialState(): GameState {
 
     // GPU & Compute
     gpuCount: 0,
+    installedGpuCount: 0,
     totalPflops: 0,
     currentModelIndex: 0,
     freeCompute: 0,
@@ -232,6 +240,7 @@ export function createInitialState(): GameState {
     labor: 0,
     laborPerMin: 0,
     laborConsumedPerMin: 0,
+    laborThrottle: 1,
 
     // Energy
     gridPowerKW: 0,
@@ -273,7 +282,16 @@ export function createInitialState(): GameState {
     robotFactories: 0,
     robots: 0,
     gpuProductionPerMin: 0,
-    waferBatches: 0,
+    silicon: 0,
+    siliconProductionPerMin: 0,
+    siliconDemandPerMin: 0,
+    wafers: 0,
+    waferProductionPerMin: 0,
+    waferDemandPerMin: 0,
+    lithoActualRate: 0,
+    fabActualRate: 0,
+    mineActualRate: 0,
+    factoryActualRate: 0,
 
     // Space
     rockets: 0,
@@ -361,55 +379,25 @@ function initializeAgentPools(): Record<JobType, JobPool> {
   return pools as Record<JobType, JobPool>;
 }
 
+function initializeHumanPools(): Record<JobType, HumanPool> {
+  const pools: Record<string, HumanPool> = {};
+  const allJobTypes = Object.keys(BALANCE.jobs) as JobType[];
+
+  for (const jobType of allJobTypes) {
+    pools[jobType] = {
+      totalCount: 0,
+      aggregateProgress: 0,
+      samples: {
+        progress: [0, 0, 0, 0],
+      },
+    };
+  }
+
+  return pools as Record<JobType, HumanPool>;
+}
+
 export function getTotalAssignedAgents(state: GameState): number {
   return state.totalAgents - state.agentPools['unassigned'].totalCount;
 }
 
-export function migrateAgentsToPoolsV1(state: GameState): void {
-  if (state.poolsVersion && state.poolsVersion >= 1) return; // already migrated
-
-  // Initialize empty pools for all job types
-  state.agentPools = initializeAgentPools();
-  // Reset unassigned to 0 (will be populated from agents array)
-  state.agentPools['unassigned'].totalCount = 0;
-
-  // Migrate from legacy agents array
-  if (state.agents && state.agents.length > 0) {
-    // Group agents by job
-    const agentsByJob = new Map<JobType, AgentState[]>();
-    for (const agent of state.agents) {
-      if (!agentsByJob.has(agent.assignedJob)) {
-        agentsByJob.set(agent.assignedJob, []);
-      }
-      agentsByJob.get(agent.assignedJob)!.push(agent);
-    }
-
-    // Convert to pools
-    for (const [jobType, agents] of agentsByJob.entries()) {
-      const pool = state.agentPools[jobType];
-      pool.totalCount = agents.length;
-
-      // Count stuck and idle
-      pool.stuckCount = agents.filter(a => a.isStuck).length;
-      pool.idleCount = agents.filter(a => a.isIdle).length;
-
-      // Initialize aggregate progress (average of existing progress)
-      const avgProgress = agents.reduce((sum, a) => sum + a.progress, 0) / agents.length;
-      pool.aggregateProgress = avgProgress;
-
-      // Migrate first 4 agents to samples
-      for (let i = 0; i < Math.min(4, agents.length); i++) {
-        pool.samples.progress[i] = agents[i].progress;
-        pool.samples.stuck[i] = agents[i].isStuck;
-      }
-    }
-
-    state.totalAgents = state.agents.length;
-    delete state.agents; // remove legacy data
-    delete state.nextAgentId;
-  } else {
-    state.totalAgents = 0;
-  }
-
-  state.poolsVersion = 1;
-}
+// NOTE: DO NOT add migrations here. The game is in active development and breaking changes to saves are currently acceptable.

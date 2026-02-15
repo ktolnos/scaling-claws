@@ -13,30 +13,28 @@ const FLAVOR_TEXTS_MIC_MINI = [
   '"Your third Mic-mini. Your desk is becoming a server rack."',
 ];
 
-/** Unstick one stuck agent. Returns true if one was found. */
-function nudgeOneAgent(state: GameState): boolean {
-  // Iterate jobs in priority order
+/** Unstick stuck agents in bulk. */
+function nudgeAgents(state: GameState, count: number): void {
+  let remaining = count;
   for (const jobType of JOB_ORDER) {
+    if (remaining <= 0) break;
     const pool = state.agentPools[jobType];
-    if (!pool) continue;
+    if (!pool || pool.stuckCount <= 0) continue;
 
-    // Check if any agents are stuck in this job
-    if (pool.stuckCount > 0) {
-      // Decrement stuck count (aggregate nudge)
-      pool.stuckCount = Math.max(0, pool.stuckCount - 1);
+    const toUnstick = Math.min(remaining, pool.stuckCount);
+    pool.stuckCount -= toUnstick;
+    remaining -= toUnstick;
 
-      // Also nudge first stuck sample agent for visual feedback
-      for (let i = 0; i < 4; i++) {
-        if (pool.samples.stuck[i]) {
-          pool.samples.stuck[i] = false;
-          break; // Only nudge one sample
-        }
+    // Visual feedback for samples
+    let samplesRemaining = toUnstick;
+    for (let i = 0; i < 4; i++) {
+      if (samplesRemaining <= 0) break;
+      if (pool.samples.stuck[i]) {
+        pool.samples.stuck[i] = false;
+        samplesRemaining--;
       }
-
-      return true;
     }
   }
-  return false;
 }
 
 /** Apply resource production for a completed task. */
@@ -57,7 +55,7 @@ function applyProduction(state: GameState, resource: string, amount: number, com
       state.labor += total;
       break;
     case 'nudge':
-      for (let i = 0; i < completions; i++) nudgeOneAgent(state);
+      nudgeAgents(state, completions);
       break;
   }
 }
@@ -115,157 +113,128 @@ export function tickJobs(state: GameState, dtMs: number): void {
   let sciencePerMin = 0;
   let laborPerMin = 0;
 
-  // --- Process AI Agents (AGGREGATE PROCESSING) ---
-  for (const [jobType, pool] of Object.entries(state.agentPools)) {
-    if (pool.totalCount === 0) continue;
+  // --- Unified Worker Processing ---
+  let humanSalaryPerMin = 0;
 
-    const jobConfig = BALANCE.jobs[jobType as JobType];
+  for (const jobType of JOB_ORDER) {
+    const jobConfig = BALANCE.jobs[jobType];
     if (jobConfig.timeMs <= 0) continue;
 
-    const taskTime = jobConfig.timeMs;
-    const intelScale = state.intelligence;
-    const progressPerTick = (dtMs / taskTime) * state.agentEfficiency * intelScale;
-    const activeAgents = pool.totalCount - pool.idleCount;
-    const sampleCount = Math.min(4, pool.totalCount);
-    const nonSampleActive = Math.max(0, activeAgents - sampleCount);
+    const aiPool = state.agentPools[jobType];
+    const humanPool = state.humanPools[jobType];
 
-    // 1. Snapshot pre-update sample stuck to derive non-sample stuck
-    let prevSampleStuck = 0;
-    for (let i = 0; i < sampleCount; i++) {
-      if (pool.samples.stuck[i]) prevSampleStuck++;
-    }
-    let restStuck = Math.min(Math.max(0, pool.stuckCount - prevSampleStuck), nonSampleActive);
+    // 1. Process AI Agents
+    if (aiPool && aiPool.totalCount > 0) {
+      const taskTime = jobConfig.timeMs;
+      const intelScale = state.intelligence;
+      const progressPerTick = (dtMs / taskTime) * state.agentEfficiency * intelScale;
+      const activeAgents = aiPool.totalCount - aiPool.idleCount;
+      const sampleCount = Math.min(4, aiPool.totalCount);
+      const nonSampleActive = Math.max(0, activeAgents - sampleCount);
 
-    // 2. Advance sample agents, roll stuck on task completion
-    const effectiveStuckRate = stuckRate * (jobConfig.stuckProbability ?? 1.0);
-    let sampleStuck = 0;
-    for (let i = 0; i < 4; i++) {
-      if (i >= pool.totalCount) {
-        pool.samples.progress[i] = 0;
-        pool.samples.stuck[i] = false;
-        continue;
+      // Snapshot pre-update sample stuck to derive non-sample stuck
+      let prevSampleStuck = 0;
+      for (let i = 0; i < sampleCount; i++) {
+        if (aiPool.samples.stuck[i]) prevSampleStuck++;
       }
-      if (!pool.samples.stuck[i]) {
-        pool.samples.progress[i] += progressPerTick;
-        if (pool.samples.progress[i] >= 1) {
-          pool.samples.progress[i] -= Math.floor(pool.samples.progress[i]);
-          if (Math.random() < effectiveStuckRate) pool.samples.stuck[i] = true;
+      let restStuck = Math.min(Math.max(0, aiPool.stuckCount - prevSampleStuck), nonSampleActive);
+
+      // Advance sample agents, roll stuck on task completion
+      const effectiveStuckRate = stuckRate * (jobConfig.stuckProbability ?? 1.0);
+      let sampleStuck = 0;
+      for (let i = 0; i < 4; i++) {
+        if (i >= aiPool.totalCount) {
+          aiPool.samples.progress[i] = 0;
+          aiPool.samples.stuck[i] = false;
+          continue;
         }
+        if (!aiPool.samples.stuck[i]) {
+          aiPool.samples.progress[i] += progressPerTick;
+          if (aiPool.samples.progress[i] >= 1) {
+            aiPool.samples.progress[i] -= Math.floor(aiPool.samples.progress[i]);
+            if (Math.random() < effectiveStuckRate) aiPool.samples.stuck[i] = true;
+          }
+        }
+        if (aiPool.samples.stuck[i]) sampleStuck++;
       }
-      if (pool.samples.stuck[i]) sampleStuck++;
+
+      // Aggregate progress for all working agents
+      const workingAgents = activeAgents - sampleStuck - restStuck;
+      if (workingAgents > 0) {
+        aiPool.aggregateProgress += progressPerTick * workingAgents;
+        const completions = Math.floor(aiPool.aggregateProgress);
+        if (completions > 0) {
+          aiPool.aggregateProgress -= completions;
+          completedThisTick += completions;
+          state.completedTasks += completions;
+          applyProduction(state, jobConfig.produces.resource, jobConfig.produces.amount, completions);
+
+          // Milestone flavor texts
+          if (state.completedTasks === 1 && !state.shownFlavorTexts.includes(FLAVOR_TEXTS_EARLY[0])) {
+            state.pendingFlavorTexts.push(FLAVOR_TEXTS_EARLY[0]);
+          }
+
+          // Roll stuck for non-sample agents
+          const nonSampleWorking = nonSampleActive - restStuck;
+          if (nonSampleWorking > 0) {
+            const share = nonSampleWorking / workingAgents;
+            const newlyStuck = Math.floor(completions * effectiveStuckRate * share + Math.random());
+            restStuck = Math.min(restStuck + newlyStuck, nonSampleActive);
+          }
+
+          if ((sampleStuck + restStuck) > 0 && state.completedTasks < 5 && !state.shownFlavorTexts.includes(FLAVOR_TEXTS_EARLY[1])) {
+            state.pendingFlavorTexts.push(FLAVOR_TEXTS_EARLY[1]);
+          }
+        }
+
+        // Rates for UI
+        const effectiveRate = jobConfig.produces.amount * (60000 / taskTime) * state.agentEfficiency * intelScale * workingAgents;
+        updateBreakdown(state, jobConfig, jobType, effectiveRate, false);
+        if (jobConfig.produces.resource === 'funds') fundsIncomePerMin += effectiveRate;
+        else if (jobConfig.produces.resource === 'code') codePerMin += effectiveRate;
+        else if (jobConfig.produces.resource === 'science') sciencePerMin += effectiveRate;
+        else if (jobConfig.produces.resource === 'labor') laborPerMin += effectiveRate;
+      }
+      aiPool.stuckCount = sampleStuck + restStuck;
     }
 
-    // 3. Aggregate progress for all working agents
-    const workingAgents = activeAgents - sampleStuck - restStuck;
+    // 2. Process Human Workers
+    if (humanPool && humanPool.totalCount > 0) {
+      const progressPerTick = dtMs / jobConfig.timeMs;
+      humanPool.aggregateProgress += progressPerTick * humanPool.totalCount;
 
-    if (workingAgents > 0) {
-      pool.aggregateProgress += progressPerTick * workingAgents;
-
-      const completions = Math.floor(pool.aggregateProgress);
+      const completions = Math.floor(humanPool.aggregateProgress);
       if (completions > 0) {
-        pool.aggregateProgress -= completions;
+        humanPool.aggregateProgress -= completions;
         completedThisTick += completions;
         state.completedTasks += completions;
-
         applyProduction(state, jobConfig.produces.resource, jobConfig.produces.amount, completions);
+      }
 
-        if (state.completedTasks === 1 && !state.shownFlavorTexts.includes(FLAVOR_TEXTS_EARLY[0])) {
-          state.pendingFlavorTexts.push(FLAVOR_TEXTS_EARLY[0]);
-        }
-
-        // Roll stuck for non-sample agents (proportional to their share of work)
-        const nonSampleWorking = nonSampleActive - restStuck;
-        if (nonSampleWorking > 0) {
-          const share = nonSampleWorking / workingAgents;
-          const newlyStuck = Math.floor(completions * effectiveStuckRate * share + Math.random());
-          restStuck = Math.min(restStuck + newlyStuck, nonSampleActive);
-        }
-
-        if ((sampleStuck + restStuck) > 0 && state.completedTasks < 5 && !state.shownFlavorTexts.includes(FLAVOR_TEXTS_EARLY[1])) {
-          state.pendingFlavorTexts.push(FLAVOR_TEXTS_EARLY[1]);
+      // Update sample progress for UI
+      for (let i = 0; i < Math.min(humanPool.totalCount, 4); i++) {
+        humanPool.samples.progress[i] += progressPerTick;
+        if (humanPool.samples.progress[i] >= 1) {
+          humanPool.samples.progress[i] -= Math.floor(humanPool.samples.progress[i]);
         }
       }
 
-      // Per-minute rates for UI
-      const { resource, amount } = jobConfig.produces;
-      const effectiveRate = amount * (60000 / taskTime) * state.agentEfficiency * intelScale * workingAgents;
-      if (resource === 'funds') {
-        fundsIncomePerMin += effectiveRate;
-        state.resourceBreakdown.funds.income.push({ label: jobConfig.displayName, ratePerMin: effectiveRate });
-      } else if (resource === 'code') {
-        codePerMin += effectiveRate;
-        state.resourceBreakdown.code.income.push({ label: jobConfig.displayName, ratePerMin: effectiveRate });
-      } else if (resource === 'science') {
-        sciencePerMin += effectiveRate;
-        state.resourceBreakdown.science.income.push({ label: jobConfig.displayName, ratePerMin: effectiveRate });
-      } else if (resource === 'labor') {
-        laborPerMin += effectiveRate;
-        state.resourceBreakdown.labor.income.push({ label: jobConfig.displayName, ratePerMin: effectiveRate });
-      }
+      // Salary
+      if (jobConfig.salaryPerMin) humanSalaryPerMin += jobConfig.salaryPerMin * humanPool.totalCount;
+
+      // Rates for UI
+      const effectiveRate = jobConfig.produces.amount * (60000 / jobConfig.timeMs) * humanPool.totalCount;
+      updateBreakdown(state, jobConfig, jobType, effectiveRate, true);
+      if (jobConfig.produces.resource === 'funds') fundsIncomePerMin += effectiveRate;
+      else if (jobConfig.produces.resource === 'code') codePerMin += effectiveRate;
+      else if (jobConfig.produces.resource === 'science') sciencePerMin += effectiveRate;
+      else if (jobConfig.produces.resource === 'labor') laborPerMin += effectiveRate;
     }
-
-    // 4. Total stuck = samples + rest
-    pool.stuckCount = sampleStuck + restStuck;
   }
 
+  // Global stuck count sync
   state.stuckCount = 0;
-  for (const pool of Object.values(state.agentPools)) {
-    state.stuckCount += pool.stuckCount;
-  }
-
-  // --- Process Human Workers ---
-  let humanSalaryPerMin = 0;
-  // Group human workers by job to avoid redundant breakdown rows
-  const humanJobCounts = new Map<JobType, number>();
-  for (const worker of state.humanWorkers) {
-    humanJobCounts.set(worker.assignedJob, (humanJobCounts.get(worker.assignedJob) || 0) + 1);
-  }
-
-  for (const worker of state.humanWorkers) {
-    const jobConfig = BALANCE.jobs[worker.assignedJob];
-    if (jobConfig.timeMs <= 0) continue;
-
-    // Human workers progress at fixed rate (no intel/efficiency scaling)
-    worker.progress += dtMs / worker.taskTimeMs;
-
-    if (worker.progress >= 1) {
-      const completions = Math.floor(worker.progress);
-      worker.progress -= completions;
-      completedThisTick += completions;
-
-      applyProduction(state, jobConfig.produces.resource, jobConfig.produces.amount, completions);
-      state.completedTasks += completions;
-
-      worker.taskTimeMs = jobConfig.timeMs;
-    }
-
-    // Accumulate salary
-    if (jobConfig.salaryPerMin) {
-      humanSalaryPerMin += jobConfig.salaryPerMin;
-    }
-  }
-
-  // Add human production to breakdown
-  for (const [jobType, count] of humanJobCounts.entries()) {
-    const jobConfig = BALANCE.jobs[jobType];
-    const { resource, amount } = jobConfig.produces;
-    const effectiveRate = amount * (60000 / jobConfig.timeMs) * count;
-    const label = `${jobConfig.displayName} (x${count})`;
-
-    if (resource === 'funds') {
-      fundsIncomePerMin += effectiveRate;
-      state.resourceBreakdown.funds.income.push({ label, ratePerMin: effectiveRate });
-    } else if (resource === 'code') {
-      codePerMin += effectiveRate;
-      state.resourceBreakdown.code.income.push({ label, ratePerMin: effectiveRate });
-    } else if (resource === 'science') {
-      sciencePerMin += effectiveRate;
-      state.resourceBreakdown.science.income.push({ label, ratePerMin: effectiveRate });
-    } else if (resource === 'labor') {
-      laborPerMin += effectiveRate;
-      state.resourceBreakdown.labor.income.push({ label, ratePerMin: effectiveRate });
-    }
-  }
+  for (const pool of Object.values(state.agentPools)) state.stuckCount += pool.stuckCount;
 
   // Update computed rates
   state.incomePerMin = fundsIncomePerMin + (state.apiUnlocked ? state.apiIncomePerMin : 0);
@@ -273,6 +242,47 @@ export function tickJobs(state: GameState, dtMs: number): void {
   state.sciencePerMin = sciencePerMin;
   state.laborPerMin = laborPerMin;
   state.humanSalaryPerMin = humanSalaryPerMin;
+
+  // --- Auto-Firing Logic (Goal 2) ---
+  // If we have no money and are losing money, fire human workers to balance the budget
+  if (state.funds <= 0 && state.expensePerMin > state.incomePerMin) {
+    let salaryToCut = state.expensePerMin - state.incomePerMin;
+    let anyFired = false;
+
+    // Fire in reverse order of seniority (last jobs first)
+    for (let i = JOB_ORDER.length - 1; i >= 0; i--) {
+      const jobType = JOB_ORDER[i];
+      const config = BALANCE.jobs[jobType];
+      if (config.workerType !== 'human' || !config.salaryPerMin) continue;
+
+      const pool = state.humanPools[jobType];
+      if (pool.totalCount <= 0) continue;
+
+      const workersToFire = Math.min(pool.totalCount, Math.ceil(salaryToCut / config.salaryPerMin));
+      if (workersToFire > 0) {
+        pool.totalCount -= workersToFire;
+        salaryToCut -= workersToFire * config.salaryPerMin;
+        anyFired = true;
+
+        // Visual feedback
+        document.dispatchEvent(new CustomEvent('flash-job', { detail: { jobType } }));
+      }
+      if (salaryToCut <= 0) break;
+    }
+
+    if (anyFired) {
+      // Refresh humanSalaryPerMin and expensePerMin for accurate UI and remaining tick logic
+      let newHumanSalary = 0;
+      for (const jt of JOB_ORDER) {
+        const pool = state.humanPools[jt];
+        const jobConfig = BALANCE.jobs[jt];
+        if (jobConfig.salaryPerMin) newHumanSalary += jobConfig.salaryPerMin * (pool?.totalCount || 0);
+      }
+      const gridCost = (state.gridPowerKW || 0) * BALANCE.gridPowerCostPerKWPerMin;
+      state.humanSalaryPerMin = newHumanSalary;
+      state.expensePerMin = newHumanSalary + gridCost;
+    }
+  }
 
   // Milestone flavor texts
   if (state.managerCount > 0 && !state.shownFlavorTexts.includes(FLAVOR_TEXTS_EARLY[2])) {
@@ -283,10 +293,33 @@ export function tickJobs(state: GameState, dtMs: number): void {
   }
 }
 
+/** Helper to update resource breakdown for UI. */
+function updateBreakdown(state: GameState, config: any, jobType: string, rate: number, isHuman: boolean): void {
+  const { resource } = config.produces;
+  const label = isHuman ? `${config.displayName} (x${state.humanPools[jobType as JobType].totalCount})` : config.displayName;
+  
+  const target = (resource === 'funds') ? state.resourceBreakdown.funds.income :
+                 (resource === 'code') ? state.resourceBreakdown.code.income :
+                 (resource === 'science') ? state.resourceBreakdown.science.income :
+                 (resource === 'labor') ? state.resourceBreakdown.labor.income : null;
+
+  if (target) {
+    target.push({ label, ratePerMin: rate });
+  }
+}
+
 // --- Public actions ---
 
 export function nudgeAgent(state: GameState): boolean {
-  return nudgeOneAgent(state);
+  const before = state.stuckCount;
+  nudgeAgents(state, 1);
+  
+  // Refresh stuck count for return value
+  let after = 0;
+  for (const pool of Object.values(state.agentPools)) after += pool.stuckCount;
+  state.stuckCount = after;
+
+  return after < before;
 }
 
 /** Check if an AI agent can be assigned to a given job. */
@@ -469,20 +502,22 @@ export function hireHumanWorker(state: GameState, jobType: JobType): boolean {
   if (state.funds < hireCost) return false;
 
   state.funds -= hireCost;
-  state.humanWorkers.push({
-    id: state.nextHumanWorkerId++,
-    assignedJob: jobType,
-    progress: 0,
-    taskTimeMs: jobConfig.timeMs,
-  });
+  const pool = state.humanPools[jobType];
+  pool.totalCount++;
+  
+  // Initialize sample if needed
+  if (pool.totalCount <= 4) {
+    pool.samples.progress[pool.totalCount - 1] = 0;
+  }
+
   return true;
 }
 
 export function fireHumanWorker(state: GameState, jobType: JobType): boolean {
-  const idx = state.humanWorkers.findIndex(w => w.assignedJob === jobType);
-  if (idx === -1) return false;
+  const pool = state.humanPools[jobType];
+  if (pool.totalCount <= 0) return false;
 
-  state.humanWorkers.splice(idx, 1);
+  pool.totalCount--;
   return true;
 }
 
@@ -493,29 +528,30 @@ export function hireHumanWorkers(state: GameState, jobType: JobType, count: numb
   if (state.intelligence < jobConfig.unlockAtIntel) return 0;
 
   const hireCost = jobConfig.hireCost ?? 0;
-  let hired = 0;
-  for (let i = 0; i < count; i++) {
-    if (state.funds < hireCost) break;
-    state.funds -= hireCost;
-    state.humanWorkers.push({
-      id: state.nextHumanWorkerId++,
-      assignedJob: jobType,
-      progress: 0,
-      taskTimeMs: jobConfig.timeMs,
-    });
-    hired++;
+  
+  // Calculate how many we can afford
+  const affordable = hireCost > 0 ? Math.floor(state.funds / hireCost) : count;
+  const toHire = Math.min(count, affordable);
+
+  if (toHire <= 0) return 0;
+
+  state.funds -= toHire * hireCost;
+  const pool = state.humanPools[jobType];
+  const oldCount = pool.totalCount;
+  pool.totalCount += toHire;
+
+  // Initialize samples if needed
+  for (let i = oldCount; i < Math.min(pool.totalCount, 4); i++) {
+    pool.samples.progress[i] = 0;
   }
-  return hired;
+
+  return toHire;
 }
 
 /** Fire N human workers from a job. */
 export function fireHumanWorkers(state: GameState, jobType: JobType, count: number): number {
-  let fired = 0;
-  for (let i = 0; i < count; i++) {
-    const idx = state.humanWorkers.findIndex(w => w.assignedJob === jobType);
-    if (idx === -1) break;
-    state.humanWorkers.splice(idx, 1);
-    fired++;
-  }
-  return fired;
+  const pool = state.humanPools[jobType];
+  const toFire = Math.min(count, pool.totalCount);
+  pool.totalCount -= toFire;
+  return toFire;
 }

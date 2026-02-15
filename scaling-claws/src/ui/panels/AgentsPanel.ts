@@ -217,7 +217,7 @@ export class AgentsPanel implements Panel {
     micLeft.style.gap = '8px';
     const micLabel = document.createElement('span');
     micLabel.className = 'label';
-    micLabel.textContent = 'Mic-mini PCs:';
+    micLabel.textContent = 'Muck-mini PCs:';
     this.micMiniCountEl = document.createElement('span');
     this.micMiniCountEl.className = 'value';
     this.micMiniCountEl.textContent = '0';
@@ -361,7 +361,13 @@ export class AgentsPanel implements Panel {
 
     // Mic-mini
     this.micMiniCountEl.textContent = state.micMiniCount.toString();
-    this.micMiniBuyBtn.disabled = state.funds < BALANCE.micMini.cost;
+    if (state.micMiniCount >= 7) {
+      this.micMiniBuyBtn.disabled = true;
+      this.micMiniBuyBtn.textContent = 'MAX REACHED';
+    } else {
+      this.micMiniBuyBtn.disabled = state.funds < BALANCE.micMini.cost;
+      this.micMiniBuyBtn.innerHTML = 'Buy ' + formatMoney(BALANCE.micMini.cost) + ' <span style="font-size:0.8em;opacity:0.8">+8 cores</span>';
+    }
 
     // Summary
     const totalAgents = state.totalAgents;

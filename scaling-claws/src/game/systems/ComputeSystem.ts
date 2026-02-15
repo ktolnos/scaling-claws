@@ -33,7 +33,8 @@ function tickSubscriptionEra(state: GameState, _dtMs: number): void {
 
 function tickGpuEra(state: GameState, dtMs: number): void {
   // Compute GPU metrics (apply GPU architecture research bonus)
-  state.totalPflops = state.gpuCount * BALANCE.pflopsPerGpu * state.gpuFlopsBonus * state.powerThrottle;
+  state.installedGpuCount = Math.min(state.gpuCount, state.gpuCapacity);
+  state.totalPflops = state.installedGpuCount * BALANCE.pflopsPerGpu * state.gpuFlopsBonus * state.powerThrottle;
 
   // Only set intelligence from model if no training has been done yet
   if (state.completedFineTunes.length === 0 && state.ariesModelIndex === -1 && state.currentFineTuneIndex === -1) {
@@ -122,6 +123,13 @@ function tickGpuEra(state: GameState, dtMs: number): void {
     }
   }
   state.laborConsumedPerMin = laborConsumedPerMin;
+  
+  // Labor Throttle: if stockpile is 0 and we are net negative, throttle
+  if (state.labor <= 0 && state.laborConsumedPerMin > state.laborPerMin) {
+    state.laborThrottle = state.laborPerMin / (state.laborConsumedPerMin || 1);
+  } else {
+    state.laborThrottle = 1;
+  }
 
   // Deduct labor
   state.labor -= laborConsumedPerMin * (dtMs / 60000);
@@ -133,8 +141,9 @@ function tickGpuEra(state: GameState, dtMs: number): void {
     // Quality = API improvement multiplier * model intelligence
     const effectiveAwareness = BALANCE.apiBaseAwareness + state.apiAwareness;
     
-    // Demand = (Awareness) * (Quality^a / Price^b) * Scale
-    const demand = effectiveAwareness * state.apiQuality *
+    // Demand = (Awareness^a) * (Quality) * (Intelligence^b / Price^c) * Scale
+    const demand = Math.pow(effectiveAwareness, BALANCE.apiAwarenessElasticity) * 
+      state.apiQuality *
       (Math.pow(state.intelligence, BALANCE.intelligenceElasticity) / 
        Math.pow(state.apiPrice, BALANCE.apiPriceElasticity)) * 
       BALANCE.apiDemandScale;
@@ -275,7 +284,7 @@ export function hireAgent(state: GameState): boolean {
       return false;
     }
   } else {
-    if (state.totalAgents >= state.gpuCount) {
+    if (state.totalAgents >= state.installedGpuCount) {
       return false;
     }
   }
@@ -337,6 +346,7 @@ export function upgradeTier(state: GameState, tier: SubscriptionTier): boolean {
 }
 
 export function buyMicMini(state: GameState): boolean {
+  if (state.micMiniCount >= 7) return false;
   if (state.funds < BALANCE.micMini.cost) return false;
 
   state.funds -= BALANCE.micMini.cost;
@@ -370,10 +380,6 @@ export function goSelfHosted(state: GameState): boolean {
 export function buyGpu(state: GameState, amount: number): boolean {
   const cost = amount * BALANCE.gpuCost;
   if (state.funds < cost) return false;
-  if (state.gpuCount + amount > state.gpuCapacity) {
-    amount = state.gpuCapacity - state.gpuCount;
-    if (amount <= 0) return false;
-  }
 
   state.funds -= amount * BALANCE.gpuCost;
   state.gpuCount += amount;

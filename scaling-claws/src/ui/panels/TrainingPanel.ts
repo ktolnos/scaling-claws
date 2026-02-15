@@ -354,7 +354,11 @@ export class TrainingPanel implements Panel {
         let reqHtml = formatNumber(ft.pflopsHrs) + ' PFLOPS-hrs + ' + dataStr;
         if (ft.codeReq > 0) {
           const codeBlocking = state.code < ft.codeReq;
-          reqHtml += ` + <span style="${codeBlocking ? 'color: var(--accent-red);' : ''}">${ft.codeReq} Code</span>`;
+          reqHtml += ` + <span style="${codeBlocking ? 'color: var(--accent-red);' : ''}">${formatNumber(ft.codeReq)} Code</span>`;
+        }
+        if (ft.scienceReq > 0) {
+          const scienceBlocking = state.science < ft.scienceReq;
+          reqHtml += ` + <span style="${scienceBlocking ? 'color: var(--accent-red);' : ''}">${formatNumber(ft.scienceReq)} Science</span>`;
         }
         this.nextRefs.reqs.innerHTML = reqHtml;
         this.nextRefs.btn.textContent = 'Start Fine-tune';
@@ -362,7 +366,7 @@ export class TrainingPanel implements Panel {
         this.nextTrainingType = 'ft';
         this.nextTrainingIdx = nextFT;
 
-        const canStart = state.trainingData >= ft.dataTB && (ft.codeReq === 0 || state.code >= ft.codeReq);
+        const canStart = state.trainingData >= ft.dataTB && (ft.codeReq === 0 || state.code >= ft.codeReq) && (ft.scienceReq === 0 || state.science >= ft.scienceReq);
         this.nextRefs.btn.disabled = !canStart;
       } else {
         const nextAries = this.getNextAries(state);
@@ -378,7 +382,11 @@ export class TrainingPanel implements Panel {
           let reqHtml = formatNumber(am.pflopsHrs) + ' PFLOPS-hrs + ' + dataStr;
           if (am.codeReq > 0) {
             const codeBlocking = state.code < am.codeReq;
-            reqHtml += ` + <span style="${codeBlocking ? 'color: var(--accent-red);' : ''}">${am.codeReq} Code</span>`;
+            reqHtml += ` + <span style="${codeBlocking ? 'color: var(--accent-red);' : ''}">${formatNumber(am.codeReq)} Code</span>`;
+          }
+          if (am.scienceReq > 0) {
+            const scienceBlocking = state.science < am.scienceReq;
+            reqHtml += ` + <span style="${scienceBlocking ? 'color: var(--accent-red);' : ''}">${formatNumber(am.scienceReq)} Science</span>`;
           }
           this.nextRefs.reqs.innerHTML = reqHtml;
           this.nextRefs.btn.textContent = 'Start Training';
@@ -386,7 +394,7 @@ export class TrainingPanel implements Panel {
           this.nextTrainingType = 'aries';
           this.nextTrainingIdx = nextAries;
 
-          const canStart = state.trainingData >= am.dataTB && (am.codeReq === 0 || state.code >= am.codeReq);
+          const canStart = state.trainingData >= am.dataTB && (am.codeReq === 0 || state.code >= am.codeReq) && (am.scienceReq === 0 || state.science >= am.scienceReq);
           this.nextRefs.btn.disabled = !canStart;
         } else {
           this.nextRefs.container.style.display = 'none';
