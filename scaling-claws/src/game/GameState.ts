@@ -146,6 +146,27 @@ export interface GameState {
   apiImprovementLevel: number; // Index of current tier
   apiQuality: number;      // Current quality multiplier
 
+  // Space
+  rockets: number;
+  satellites: number;
+  lunarBase: boolean;
+  lunarRobots: number;
+  lunarGPUs: number;
+  lunarSolarPanels: number;
+  lunarMassDriverRate: number;    // computed
+  mercuryBase: boolean;
+  mercuryRobots: number;
+  mercuryMiningRate: number;      // computed
+  spaceUnlocked: boolean;         // computed
+  launchCostBonus: number;        // computed from research
+
+  // Energy — separate grids
+  lunarPowerDemandMW: number;     // computed
+  lunarPowerSupplyMW: number;     // computed
+  lunarPowerThrottle: number;     // 0..1
+  orbitalPowerMW: number;         // computed (display only)
+  totalEnergyMW: number;          // computed: all grids combined
+
   // Job tracking
   completedTasks: number;
   unlockedJobs: JobType[];
@@ -253,6 +274,27 @@ export function createInitialState(): GameState {
     robots: 0,
     gpuProductionPerMin: 0,
     waferBatches: 0,
+
+    // Space
+    rockets: 0,
+    satellites: 0,
+    lunarBase: false,
+    lunarRobots: 0,
+    lunarGPUs: 0,
+    lunarSolarPanels: 0,
+    lunarMassDriverRate: 0,
+    mercuryBase: false,
+    mercuryRobots: 0,
+    mercuryMiningRate: 0,
+    spaceUnlocked: false,
+    launchCostBonus: 1,
+
+    // Energy — separate grids
+    lunarPowerDemandMW: 0,
+    lunarPowerSupplyMW: 0,
+    lunarPowerThrottle: 1,
+    orbitalPowerMW: 0,
+    totalEnergyMW: 0,
 
     // API Services
     apiUnlocked: false,

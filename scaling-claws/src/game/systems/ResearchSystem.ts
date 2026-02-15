@@ -35,6 +35,11 @@ function computeResearchBonuses(state: GameState): void {
     if (state.completedResearch.includes('synthData3')) synthRate *= 2;
   }
   state.apiUserSynthRate = synthRate;
+
+  // Launch cost reduction from space research
+  let launchBonus = 1;
+  if (state.completedResearch.includes('spaceRockets2')) launchBonus *= 0.6;
+  state.launchCostBonus = launchBonus;
 }
 
 
@@ -78,6 +83,22 @@ export function purchaseResearch(state: GameState, id: ResearchId): boolean {
   } else if (id === 'synthData1') {
     state.pendingFlavorTexts.push(
       '"Synthetic data pipeline online. Your users are now training the model for you."'
+    );
+  } else if (id === 'spaceRockets1') {
+    state.pendingFlavorTexts.push(
+      '"Rocket blueprints acquired. Your neighbors have questions about the delivery."'
+    );
+  } else if (id === 'spaceSystems1') {
+    state.pendingFlavorTexts.push(
+      '"Orbital satellite capability unlocked. The sun works for free."'
+    );
+  } else if (id === 'spaceSystems2') {
+    state.pendingFlavorTexts.push(
+      '"Lunar operations unlocked. One small step for AI, one giant leap for compute."'
+    );
+  } else if (id === 'spaceSystems3') {
+    state.pendingFlavorTexts.push(
+      '"Mercury operations unlocked. The closest planet to the sun has the best solar real estate."'
     );
   }
 

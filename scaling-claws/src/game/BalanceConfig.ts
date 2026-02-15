@@ -307,6 +307,26 @@ export const BALANCE = {
   // Subscription selling (Legacy but kept for Type check if needed, though we are replacing logic)
   // We will re-purpose these or add new ones for API
 
+  // Space
+  rocketCost: 5_000_000,
+  rocketLaborCost: 300,
+  satelliteCost: 500_000,
+  satelliteLaborCost: 50,
+  satellitePowerMW: 5,
+  lunarBaseCost: 50_000_000,
+  lunarBaseLaborCost: 1200,
+  lunarBaseCodeCost: 500,
+  lunarRobotTransferCost: 100_000,
+  lunarGPUTransferCost: 50_000,
+  lunarSolarPanelCost: 2_000,
+  lunarSolarPanelMW: 0.05,
+  massDriverBaseRate: 2,
+  mercuryBaseCost: 200_000_000,
+  mercuryBaseLaborCost: 3000,
+  mercuryBaseCodeCost: 2000,
+  mercuryRobotTransferCost: 500_000,
+  mercuryMiningBaseRate: 5,
+
   // API Services
   apiUnlockIntel: 5.0,
   apiUnlockCode: 200,

@@ -1,5 +1,5 @@
 import type { GameState } from '../game/GameState.ts';
-import { formatMoney, formatFlops, formatNumber } from '../game/utils.ts';
+import { formatMoney, formatFlops, formatNumber, formatMW } from '../game/utils.ts';
 import { deleteSave } from '../game/SaveManager.ts';
 
 export class TopBar {
@@ -13,6 +13,7 @@ export class TopBar {
   private codeItem!: HTMLDivElement;
   private scienceItem!: HTMLDivElement;
   private laborItem!: HTMLDivElement;
+  private energyItem!: HTMLDivElement;
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -72,6 +73,11 @@ export class TopBar {
     this.laborItem.dataset.resource = 'labor';
     this.laborItem.classList.add('hidden');
     this.container.appendChild(this.laborItem);
+
+    // Energy (hidden initially, shows once space unlocks)
+    this.energyItem = this.createItem('Energy');
+    this.energyItem.classList.add('hidden');
+    this.container.appendChild(this.energyItem);
 
     // Spacer to push restart button to the right
     const spacer = document.createElement('div');
@@ -219,6 +225,15 @@ export class TopBar {
       expenseEl.textContent = state.laborConsumedPerMin > 0 ? '-' + formatNumber(state.laborConsumedPerMin) + '/m' : '';
     }
 
+    // Energy: show once space is unlocked (separate grids become interesting)
+    if (state.spaceUnlocked) {
+      this.energyItem.classList.remove('hidden');
+      const valueEl = this.energyItem.querySelector('.value')!;
+      valueEl.textContent = formatMW(state.totalEnergyMW);
+      const rateEl = this.energyItem.querySelector('.rate')!;
+      rateEl.textContent = '';
+    }
+
     // Update Breakdown Panel
     const breakdownEl = this.container.querySelector('#top-bar-breakdown')!;
     if (this.container.classList.contains('is-expanded')) {
@@ -240,6 +255,20 @@ export class TopBar {
     
     // Labor
     html += this.renderBreakdownSection('Labor (u/min)', state.resourceBreakdown.labor, formatNumber);
+
+    // Energy
+    if (state.spaceUnlocked) {
+      html += '<div class="breakdown-section">';
+      html += '<div class="section-title">Energy</div>';
+      html += `<div class="breakdown-row"><span class="label">Earth</span><span class="value">${formatMW(state.powerSupplyMW)} supply / ${formatMW(state.powerDemandMW)} demand</span></div>`;
+      if (state.lunarBase) {
+        html += `<div class="breakdown-row"><span class="label">Lunar</span><span class="value">${formatMW(state.lunarPowerSupplyMW)} supply / ${formatMW(state.lunarPowerDemandMW)} demand</span></div>`;
+      }
+      if (state.satellites > 0) {
+        html += `<div class="breakdown-row"><span class="label">Orbital</span><span class="value">${formatMW(state.orbitalPowerMW)} (self-sufficient)</span></div>`;
+      }
+      html += '</div>';
+    }
 
     // Compute
     if (state.isPostGpuTransition) {

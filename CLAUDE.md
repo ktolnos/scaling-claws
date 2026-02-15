@@ -97,8 +97,16 @@ Refactored job assignments to be manual. Replaced recurring per-agent subscripti
 
 Manager job added: agents assigned to 'manager' auto-nudge stuck agents (6 nudges/min each, never get stuck). Unlocks at 3+ agents. Manager² removed.
 
-### Milestone 5: Space 🔲
-SpaceSystem, SpaceEnergyPanel (merged Space+Energy). Rockets, satellites, lunar base, Mercury operations. EarthMoonSpace visual, EarthSurface visual.
+### Milestone 5: Space ✅
+- SpaceSystem: `tickSpace()` with orbital power, lunar mass driver auto-satellites, mercury mining. Actions: buildRocket, launchSatellite, buildLunarBase, sendRobotsToMoon, sendGPUsToMoon, buyLunarSolarPanel, buildMercuryBase, sendRobotsToMercury
+- Separate energy grids: Earth (unchanged), Moon (lunarGPUs draw from lunarSolarPanels), Orbital (self-sufficient, display only). `totalEnergyMW` for TopBar
+- SpaceEnergyPanel: merged Space+Energy UI replacing EnergyPanel on spaceRockets1 research. Earth Energy + Space + Lunar + Mercury sections with progressive unlock
+- EnergySystem extended: lunar power grid (demand/supply/throttle), orbital power, total energy computation
+- ResearchSystem: launch cost bonus from spaceRockets2, space flavor texts
+- TopBar: total energy display with hover breakdown (Earth/Lunar/Orbital)
+- EarthSurface visual: DOM/SVG buildings with CSS zoom transitions
+- EarthMoonSpace visual: DOM/CSS satellite orbits, Moon, lunar base dots, mass driver streaks
+- `formatMW()` extracted to shared utils
 
 ### Milestone 6: Dyson Swarm + Endgame 🔲
 Mercury satellite production, Dyson power, Von Neumann exponential spread. InnerSolarSystem canvas visual. EndScreen with stats and Play Again.

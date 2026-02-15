@@ -1,7 +1,7 @@
 import type { GameState } from '../../game/GameState.ts';
 import type { Panel } from '../PanelManager.ts';
 import { BALANCE } from '../../game/BalanceConfig.ts';
-import { formatMoney, formatNumber } from '../../game/utils.ts';
+import { formatMoney, formatNumber, formatMW } from '../../game/utils.ts';
 import { buyGridPower, sellGridPower, buyGasPlant, buyNuclearPlant, buySolarFarm, buySolarPanel } from '../../game/systems/EnergySystem.ts';
 import { BulkBuyGroup, getBuyTiers } from '../components/BulkBuyGroup.ts';
 
@@ -276,10 +276,4 @@ export class EnergyPanel implements Panel {
     
     refs.btn.disabled = !moneyMet || !laborMet;
   }
-}
-
-function formatMW(mw: number): string {
-  if (mw < 1) return Math.round(mw * 1000).toString() + ' kW';
-  if (mw < 1000) return (Math.round(mw * 10) / 10).toString() + ' MW';
-  return (Math.round((mw / 1000) * 10) / 10).toString() + ' GW';
 }

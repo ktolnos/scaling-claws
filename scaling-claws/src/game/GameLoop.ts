@@ -6,6 +6,7 @@ import { tickEnergy } from './systems/EnergySystem.ts';
 import { tickTraining } from './systems/TrainingSystem.ts';
 import { tickResearch } from './systems/ResearchSystem.ts';
 import { tickSupply } from './systems/SupplySystem.ts';
+import { tickSpace } from './systems/SpaceSystem.ts';
 
 export class GameLoop {
   private state: GameState;
@@ -38,6 +39,7 @@ export class GameLoop {
     tickCompute(this.state, dt);
     tickTraining(this.state, dt);
     tickSupply(this.state, dt);
+    tickSpace(this.state, dt);
     tickJobs(this.state, dt);
   }
 

@@ -36,6 +36,12 @@ export function formatTime(ms: number): string {
   return sec > 0 ? min + 'm ' + sec + 's' : min + 'm';
 }
 
+export function formatMW(mw: number): string {
+  if (mw < 1) return Math.round(mw * 1000).toString() + ' kW';
+  if (mw < 1000) return (Math.round(mw * 10) / 10).toString() + ' MW';
+  return (Math.round((mw / 1000) * 10) / 10).toString() + ' GW';
+}
+
 export function formatFlops(flops: number): string {
   if (flops < 1e3) return (Math.round(flops * 10) / 10).toString() + ' PFLOPS';
   if (flops < 1e6) return (Math.round((flops / 1e3) * 10) / 10).toString() + ' EFLOPS';

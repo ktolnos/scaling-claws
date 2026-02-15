@@ -21,6 +21,18 @@ export function tickEnergy(state: GameState, _dtMs: number): void {
   } else {
     state.powerThrottle = 1;
   }
+
+  // Lunar grid (independent of Earth)
+  state.lunarPowerDemandMW = state.lunarGPUs * BALANCE.gpuPowerMW;
+  state.lunarPowerSupplyMW = state.lunarSolarPanels * BALANCE.lunarSolarPanelMW;
+  if (state.lunarPowerDemandMW > 0 && state.lunarPowerSupplyMW < state.lunarPowerDemandMW) {
+    state.lunarPowerThrottle = state.lunarPowerSupplyMW / state.lunarPowerDemandMW;
+  } else {
+    state.lunarPowerThrottle = 1;
+  }
+
+  // Total energy (for TopBar display)
+  state.totalEnergyMW = state.powerSupplyMW + state.lunarPowerSupplyMW + state.orbitalPowerMW;
 }
 
 export function buyGridPower(state: GameState, amountKW: number): boolean {
