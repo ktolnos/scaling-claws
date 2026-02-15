@@ -12,81 +12,89 @@ const FLAVOR_TEXTS_MIC_MINI = [
   '"Your third Mic-mini. Your desk is becoming a server rack."',
 ];
 
-export function tickJobs(state: GameState, dtMs: number): void {
-  const intel = state.intelligence;
-  
-  // 1. Check for job unlocks
-  // Display the job whenever the requirement for the previous job in the list is satisfied.
-  for (let i = 0; i < JOB_ORDER.length; i++) {
-    const jobType = JOB_ORDER[i];
-    if (state.unlockedJobs.includes(jobType)) continue;
-
-    const jobConfig = BALANCE.jobs[jobType];
-
-    // Progression logic: unlock job[i] if intel >= job[i-1].intelReq
-    let shouldUnlock = false;
-    if (i === 0) {
-      // First job unlocks by its own intel requirement
-      if (intel >= jobConfig.intelReq) {
-        shouldUnlock = true;
-      }
-    } else {
-      const prevJobType = JOB_ORDER[i - 1];
-      const prevJobConfig = BALANCE.jobs[prevJobType];
-      if (intel >= prevJobConfig.intelReq) {
-        shouldUnlock = true;
-      }
-    }
-
-    // Special Engineer unlock logic (datacenter transition)
-    if (jobType === 'engineer' && state.isPostGpuTransition) {
-      shouldUnlock = true;
-    }
-
-    if (shouldUnlock) {
-      state.unlockedJobs.push(jobType);
+/** Unstick one stuck agent. Returns true if one was found. */
+function nudgeOneAgent(state: GameState): boolean {
+  for (const agent of state.agents) {
+    if (agent.isStuck && !agent.isIdle) {
+      agent.isStuck = false;
+      return true;
     }
   }
+  return false;
+}
 
-  // Stuck rate depends on intel
+/** Apply resource production for a completed task. */
+function applyProduction(state: GameState, resource: string, amount: number, completions: number): void {
+  const total = amount * completions;
+  switch (resource) {
+    case 'funds':
+      state.funds += total;
+      state.totalEarned += total;
+      break;
+    case 'code':
+      state.code += total;
+      break;
+    case 'science':
+      state.science += total;
+      break;
+    case 'labor':
+      state.labor += total;
+      break;
+    case 'nudge':
+      for (let i = 0; i < completions; i++) nudgeOneAgent(state);
+      break;
+  }
+}
+
+export function tickJobs(state: GameState, dtMs: number): void {
+  const intel = state.intelligence;
+
+  // 1. Recompute unlocked jobs from current state
+  const unlocked: JobType[] = ['unassigned'];
+  for (const jobType of JOB_ORDER) {
+    const jobConfig = BALANCE.jobs[jobType];
+    let visible = intel >= jobConfig.unlockAtIntel;
+
+    // Manager unlocks when you have 3+ agents
+    if (jobType === 'manager' && state.agents.length >= 3) {
+      visible = true;
+    }
+
+    if (visible) {
+      unlocked.push(jobType);
+    }
+  }
+  state.unlockedJobs = unlocked;
+
   const stuckRate = getStuckRate(intel);
 
-  // Manager auto-nudge budget for this tick
-  let managerNudgeBudget = state.managerCount * BALANCE.managerNudgesPerMin * (dtMs / 60000);
-  managerNudgeBudget += state.managerSquaredCount * BALANCE.managerSquaredNudgesPerMin * (dtMs / 60000);
+  // Count managers
+  state.managerCount = state.agents.filter(a => a.assignedJob === 'manager').length;
 
   let stuckCount = 0;
   let completedThisTick = 0;
-  let incomeThisTick = 0;
 
+  // Rate accumulators for UI display
+  let fundsIncomePerMin = 0;
+  let codePerMin = 0;
+  let sciencePerMin = 0;
+  let laborPerMin = 0;
+
+  // --- Process AI Agents ---
   for (const agent of state.agents) {
-    if (agent.isIdle) {
-      continue;
-    }
+    if (agent.isIdle) continue;
 
     const jobConfig = BALANCE.jobs[agent.assignedJob];
-    if (jobConfig.timeMs <= 0) {
+    if (jobConfig.timeMs <= 0) continue;
+
+    if (agent.isStuck) {
+      stuckCount++;
       continue;
     }
 
-    if (agent.isStuck) {
-      // Try manager auto-nudge
-      if (managerNudgeBudget >= 1) {
-        agent.isStuck = false;
-        managerNudgeBudget -= 1;
-      } else {
-        stuckCount++;
-        continue;
-      }
-    }
-
-    // Advance progress
+    // Advance progress (scales with efficiency and intelligence)
     const taskTime = agent.taskTimeMs;
-    // Note: taskTimeMs is stored on agent, but should it be updated if job changes?
-    // Yes, assignJob updates it.
-    
-    // Scale progress by efficiency and intelligence relative to requirement
-    const intelScale = state.intelligence / (jobConfig.intelReq || 1);
+    const intelScale = state.intelligence;
     agent.progress += (dtMs / taskTime) * state.agentEfficiency * intelScale;
 
     // Task complete
@@ -94,14 +102,13 @@ export function tickJobs(state: GameState, dtMs: number): void {
       const completions = Math.floor(agent.progress);
       agent.progress -= completions;
       completedThisTick += completions;
-      incomeThisTick += jobConfig.reward * completions;
+
+      applyProduction(state, jobConfig.produces.resource, jobConfig.produces.amount, completions);
 
       state.completedTasks += completions;
-      state.totalEarned += jobConfig.reward * completions;
 
-      // First task milestone
-      if (!state.milestones.firstTaskComplete) {
-        state.milestones.firstTaskComplete = true;
+      // First task flavor text
+      if (!state.shownFlavorTexts.includes(FLAVOR_TEXTS_EARLY[0])) {
         state.pendingFlavorTexts.push(FLAVOR_TEXTS_EARLY[0]);
       }
 
@@ -109,34 +116,65 @@ export function tickJobs(state: GameState, dtMs: number): void {
       if (Math.random() < stuckRate) {
         agent.isStuck = true;
         stuckCount++;
-        // Flavor text for first stuck
         if (state.completedTasks < 5 && !state.shownFlavorTexts.includes(FLAVOR_TEXTS_EARLY[1])) {
           state.pendingFlavorTexts.push(FLAVOR_TEXTS_EARLY[1]);
         }
       }
 
-      // Ensure taskTimeMs is current (in case balance changed or job changed mid-tick?)
       agent.taskTimeMs = jobConfig.timeMs;
     }
+
+    // Accumulate rate for display
+    const { resource, amount } = jobConfig.produces;
+    const effectiveRate = amount * (60000 / jobConfig.timeMs) * state.agentEfficiency * intelScale;
+    if (resource === 'funds') fundsIncomePerMin += effectiveRate;
+    else if (resource === 'code') codePerMin += effectiveRate;
+    else if (resource === 'science') sciencePerMin += effectiveRate;
+    else if (resource === 'labor') laborPerMin += effectiveRate;
   }
 
   state.stuckCount = stuckCount;
 
-  // Calculate income per minute based on CURRENT assignments
-  // Sum up (reward * 60000/time) for each active agent
-  let currentIncomePerMin = 0;
-  for (const agent of state.agents) {
-    if (!agent.isIdle && !agent.isStuck) {
-       const jobConf = BALANCE.jobs[agent.assignedJob];
-       if (jobConf.timeMs > 0) {
-         currentIncomePerMin += jobConf.reward * (60000 / jobConf.timeMs);
-       }
+  // --- Process Human Workers ---
+  let humanSalaryPerMin = 0;
+  for (const worker of state.humanWorkers) {
+    const jobConfig = BALANCE.jobs[worker.assignedJob];
+    if (jobConfig.timeMs <= 0) continue;
+
+    // Human workers progress at fixed rate (no intel/efficiency scaling)
+    worker.progress += dtMs / worker.taskTimeMs;
+
+    if (worker.progress >= 1) {
+      const completions = Math.floor(worker.progress);
+      worker.progress -= completions;
+      completedThisTick += completions;
+
+      applyProduction(state, jobConfig.produces.resource, jobConfig.produces.amount, completions);
+      state.completedTasks += completions;
+
+      worker.taskTimeMs = jobConfig.timeMs;
+    }
+
+    // Accumulate rate for display
+    const { resource, amount } = jobConfig.produces;
+    const effectiveRate = amount * (60000 / jobConfig.timeMs);
+    if (resource === 'funds') fundsIncomePerMin += effectiveRate;
+    else if (resource === 'code') codePerMin += effectiveRate;
+    else if (resource === 'science') sciencePerMin += effectiveRate;
+    else if (resource === 'labor') laborPerMin += effectiveRate;
+
+    // Accumulate salary
+    if (jobConfig.salaryPerMin) {
+      humanSalaryPerMin += jobConfig.salaryPerMin;
     }
   }
-  state.incomePerMin = currentIncomePerMin;
 
-  // Add earned income
-  state.funds += incomeThisTick;
+  // Update computed rates
+  state.incomePerMin = fundsIncomePerMin;
+  state.codePerMin = codePerMin;
+  state.sciencePerMin = sciencePerMin;
+  state.laborPerMin = laborPerMin;
+  state.humanSalaryPerMin = humanSalaryPerMin;
 
   // Milestone flavor texts
   if (state.managerCount > 0 && !state.shownFlavorTexts.includes(FLAVOR_TEXTS_EARLY[2])) {
@@ -147,122 +185,68 @@ export function tickJobs(state: GameState, dtMs: number): void {
   }
 }
 
+// --- Public actions ---
+
 export function nudgeAgent(state: GameState): boolean {
-  for (const agent of state.agents) {
-    if (agent.isStuck && !agent.isIdle) {
-      agent.isStuck = false;
-      return true;
-    }
-  }
-  return false;
+  return nudgeOneAgent(state);
 }
 
-// Actions
-
-export function setAgentJob(state: GameState, agentId: number, jobType: JobType): boolean {
-  const agent = state.agents.find(a => a.id === agentId);
-  if (!agent) return false;
-  
-  // Check unlock
+/** Check if an AI agent can be assigned to a given job. */
+function canAssignAiAgent(state: GameState, jobType: JobType): boolean {
   if (!state.unlockedJobs.includes(jobType)) return false;
-
-  // Check agent requirements (Intel/Research)
   const jobConfig = BALANCE.jobs[jobType];
-  if (state.intelligence < jobConfig.intelReq) return false;
+  if (jobConfig.workerType !== 'ai') return false;
+  if (state.intelligence < jobConfig.unlockAtIntel) return false;
   if (jobConfig.agentIntelReq && state.intelligence < jobConfig.agentIntelReq) return false;
   if (jobConfig.agentResearchReq) {
     for (const req of jobConfig.agentResearchReq) {
       if (!state.completedResearch.includes(req)) return false;
     }
   }
-
-  if (agent.assignedJob !== jobType) {
-    agent.assignedJob = jobType;
-    agent.progress = 0;
-    agent.isStuck = false;
-    agent.taskTimeMs = BALANCE.jobs[jobType].timeMs;
-  }
   return true;
 }
-
-export function setAllAgentsJob(state: GameState, jobType: JobType): boolean {
-  if (!state.unlockedJobs.includes(jobType)) return false;
-  
-  const jobConfig = BALANCE.jobs[jobType];
-  if (state.intelligence < jobConfig.intelReq) return false;
-  if (jobConfig.agentIntelReq && state.intelligence < jobConfig.agentIntelReq) return false;
-  if (jobConfig.agentResearchReq) {
-    for (const req of jobConfig.agentResearchReq) {
-      if (!state.completedResearch.includes(req)) return false;
-    }
-  }
-  
-  for (const agent of state.agents) {
-    if (agent.assignedJob !== jobType) {
-      agent.assignedJob = jobType;
-      agent.progress = 0;
-      agent.isStuck = false;
-      agent.taskTimeMs = BALANCE.jobs[jobType].timeMs;
-    }
-  }
-  return true;
-}
-
-
 
 export function incrementJobAssignments(state: GameState, targetJob: JobType): boolean {
-   if (!state.unlockedJobs.includes(targetJob)) return false;
-   
-   const jobConfig = BALANCE.jobs[targetJob];
-   if (state.intelligence < jobConfig.intelReq) return false;
-   if (jobConfig.agentIntelReq && state.intelligence < jobConfig.agentIntelReq) return false;
-   if (jobConfig.agentResearchReq) {
-     for (const req of jobConfig.agentResearchReq) {
-       if (!state.completedResearch.includes(req)) return false;
-     }
-   }
+  if (!canAssignAiAgent(state, targetJob)) return false;
 
-   // Find agent on UNASSIGNED job.
-   const candidate = state.agents.find(a => a.assignedJob === 'unassigned');
-   if (!candidate) return false;
+  const assignedCount = state.agents.filter(a => a.assignedJob !== 'unassigned').length;
+  if (assignedCount >= state.activeAgentCount) return false;
 
-   candidate.assignedJob = targetJob;
-   candidate.progress = 0;
-   candidate.isStuck = false;
-   candidate.taskTimeMs = BALANCE.jobs[targetJob].timeMs;
-   return true;
+  const candidate = state.agents.find(a => a.assignedJob === 'unassigned');
+  if (!candidate) return false;
+
+  candidate.assignedJob = targetJob;
+  candidate.progress = 0;
+  candidate.isStuck = false;
+  candidate.taskTimeMs = BALANCE.jobs[targetJob].timeMs;
+  return true;
 }
 
 export function decrementJobAssignments(state: GameState, sourceJob: JobType): boolean {
-   // Find agent on this job.
-   const candidate = state.agents.find(a => a.assignedJob === sourceJob);
-   if (!candidate) return false;
+  const candidate = state.agents.find(a => a.assignedJob === sourceJob);
+  if (!candidate) return false;
 
-   candidate.assignedJob = 'unassigned';
-   candidate.progress = 0;
-   candidate.isStuck = false;
-   candidate.taskTimeMs = 0;
-   return true;
+  candidate.assignedJob = 'unassigned';
+  candidate.progress = 0;
+  candidate.isStuck = false;
+  candidate.taskTimeMs = 0;
+  return true;
 }
 
 export function assignAllToJob(state: GameState, targetJob: JobType): void {
-  if (!state.unlockedJobs.includes(targetJob)) return;
+  if (!canAssignAiAgent(state, targetJob)) return;
 
-  const jobConfig = BALANCE.jobs[targetJob];
-  if (state.intelligence < jobConfig.intelReq) return;
-  if (jobConfig.agentIntelReq && state.intelligence < jobConfig.agentIntelReq) return;
-  if (jobConfig.agentResearchReq) {
-    for (const req of jobConfig.agentResearchReq) {
-      if (!state.completedResearch.includes(req)) return;
-    }
-  }
+  const assignedCount = state.agents.filter(a => a.assignedJob !== 'unassigned').length;
+  let remainingSlots = state.activeAgentCount - assignedCount;
 
   for (const agent of state.agents) {
+    if (remainingSlots <= 0) break;
     if (agent.assignedJob === 'unassigned') {
       agent.assignedJob = targetJob;
       agent.progress = 0;
       agent.isStuck = false;
       agent.taskTimeMs = BALANCE.jobs[targetJob].timeMs;
+      remainingSlots--;
     }
   }
 }
@@ -278,3 +262,102 @@ export function removeAllFromJob(state: GameState, sourceJob: JobType): void {
   }
 }
 
+/** Assign N unassigned AI agents to a job (for bulk buy). */
+export function assignAgentsToJob(state: GameState, targetJob: JobType, count: number): number {
+  if (!canAssignAiAgent(state, targetJob)) return 0;
+
+  const assignedCount = state.agents.filter(a => a.assignedJob !== 'unassigned').length;
+  const availableSlots = state.activeAgentCount - assignedCount;
+  const toAssign = Math.min(count, availableSlots);
+
+  let assigned = 0;
+  for (const agent of state.agents) {
+    if (assigned >= toAssign) break;
+    if (agent.assignedJob === 'unassigned') {
+      agent.assignedJob = targetJob;
+      agent.progress = 0;
+      agent.isStuck = false;
+      agent.taskTimeMs = BALANCE.jobs[targetJob].timeMs;
+      assigned++;
+    }
+  }
+  return assigned;
+}
+
+/** Remove N AI agents from a job back to unassigned. */
+export function removeAgentsFromJob(state: GameState, sourceJob: JobType, count: number): number {
+  let removed = 0;
+  for (const agent of state.agents) {
+    if (removed >= count) break;
+    if (agent.assignedJob === sourceJob) {
+      agent.assignedJob = 'unassigned';
+      agent.progress = 0;
+      agent.isStuck = false;
+      agent.taskTimeMs = 0;
+      removed++;
+    }
+  }
+  return removed;
+}
+
+// --- Human worker actions ---
+
+export function hireHumanWorker(state: GameState, jobType: JobType): boolean {
+  const jobConfig = BALANCE.jobs[jobType];
+  if (jobConfig.workerType !== 'human') return false;
+  if (state.intelligence < jobConfig.unlockAtIntel) return false;
+
+  const hireCost = jobConfig.hireCost ?? 0;
+  if (state.funds < hireCost) return false;
+
+  state.funds -= hireCost;
+  state.humanWorkers.push({
+    id: state.nextHumanWorkerId++,
+    assignedJob: jobType,
+    progress: 0,
+    taskTimeMs: jobConfig.timeMs,
+  });
+  return true;
+}
+
+export function fireHumanWorker(state: GameState, jobType: JobType): boolean {
+  const idx = state.humanWorkers.findIndex(w => w.assignedJob === jobType);
+  if (idx === -1) return false;
+
+  state.humanWorkers.splice(idx, 1);
+  return true;
+}
+
+/** Hire N human workers for a job (for bulk buy). */
+export function hireHumanWorkers(state: GameState, jobType: JobType, count: number): number {
+  const jobConfig = BALANCE.jobs[jobType];
+  if (jobConfig.workerType !== 'human') return 0;
+  if (state.intelligence < jobConfig.unlockAtIntel) return 0;
+
+  const hireCost = jobConfig.hireCost ?? 0;
+  let hired = 0;
+  for (let i = 0; i < count; i++) {
+    if (state.funds < hireCost) break;
+    state.funds -= hireCost;
+    state.humanWorkers.push({
+      id: state.nextHumanWorkerId++,
+      assignedJob: jobType,
+      progress: 0,
+      taskTimeMs: jobConfig.timeMs,
+    });
+    hired++;
+  }
+  return hired;
+}
+
+/** Fire N human workers from a job. */
+export function fireHumanWorkers(state: GameState, jobType: JobType, count: number): number {
+  let fired = 0;
+  for (let i = 0; i < count; i++) {
+    const idx = state.humanWorkers.findIndex(w => w.assignedJob === jobType);
+    if (idx === -1) break;
+    state.humanWorkers.splice(idx, 1);
+    fired++;
+  }
+  return fired;
+}

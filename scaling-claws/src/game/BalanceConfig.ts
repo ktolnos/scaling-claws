@@ -12,21 +12,43 @@ export const TIER_ORDER: SubscriptionTier[] = [
   'ultraProMax', 'ultraMax', 'ultra', 'pro', 'basic',
 ];
 
+// Resource types that jobs can produce
+export const ResourceTypes = {
+  funds: 'funds',
+  code: 'code',
+  science: 'science',
+  labor: 'labor',
+  nudge: 'nudge',
+} as const;
+
+export type ResourceType = typeof ResourceTypes[keyof typeof ResourceTypes];
+
 export const JobTypes = {
+  // AI jobs (use state.agents)
   sixxerBasic: 'sixxerBasic',
   sixxerStandard: 'sixxerStandard',
   sixxerAdvanced: 'sixxerAdvanced',
   sixxerEnterprise: 'sixxerEnterprise',
   downWork: 'downWork',
-  softwareDev: 'softwareDev',
-  engineer: 'engineer',
+  manager: 'manager',
+  aiSWE: 'aiSWE',
+  aiResearcher: 'aiResearcher',
+  robotWorker: 'robotWorker',
+  // Human jobs (use state.humanWorkers)
+  humanSWE: 'humanSWE',
+  humanWorker: 'humanWorker',
+  // Special
   unassigned: 'unassigned',
 } as const;
 
 export type JobType = typeof JobTypes[keyof typeof JobTypes];
 
+/** Display order for jobs in the UI. */
 export const JOB_ORDER: JobType[] = [
-  'sixxerBasic', 'sixxerStandard', 'sixxerAdvanced', 'sixxerEnterprise', 'downWork', 'softwareDev', 'engineer',
+  'sixxerBasic', 'sixxerStandard', 'sixxerAdvanced', 'sixxerEnterprise', 'downWork',
+  'manager',
+  'humanWorker', 'humanSWE',
+  'aiSWE', 'aiResearcher', 'robotWorker',
 ];
 
 // Research IDs
@@ -76,19 +98,26 @@ export interface TierConfig {
 }
 
 export interface JobConfig {
-  reward: number;
+  produces: { resource: ResourceType; amount: number };
   timeMs: number;
-  intelReq: number;
+  /** Intel threshold for the job to appear on the job board. */
+  unlockAtIntel: number;
   displayName: string;
-  canHireHumans?: boolean;
-  agentIntelReq?: number;    // NEW
-  agentResearchReq?: ResearchId[]; // NEW
+  /** 'ai' = uses state.agents, 'human' = uses state.humanWorkers */
+  workerType: 'ai' | 'human';
+  /** Intel required before AI agents can be assigned (only relevant for AI jobs). */
+  agentIntelReq: number;
+  /** Research prerequisites before AI agents can be assigned. */
+  agentResearchReq?: ResearchId[];
+  /** Ongoing salary per minute for each human worker (human jobs only). */
+  salaryPerMin?: number;
+  /** One-time cost to hire a human worker (human jobs only). */
+  hireCost?: number;
 }
 
 export interface ModelConfig {
   name: string;
   intel: number;
-  pflopsPerInstance: number;
   minGpus: number;
 }
 
@@ -96,20 +125,22 @@ export interface DatacenterConfig {
   name: string;
   cost: number;
   gpuCapacity: number;
-  engineersRequired: number;
+  laborCost: number;      // upfront labor to build
+  laborPerMin: number;    // ongoing labor consumption
 }
 
 export interface PowerPlantConfig {
   name: string;
   cost: number;
   outputMW: number;
-  engineersRequired: number;
+  laborCost: number;      // upfront labor to build
+  laborPerMin: number;    // ongoing labor consumption
 }
 
 export const BALANCE = {
   startingFunds: 10,
-  startingCpuCores: 4,
-  homePowerMW: 0.002, // 2 KW
+  startingCpuCores: 8,
+  homePowerMW: 0.02, // 20 KW
   tickIntervalMs: 50,
   uiUpdateIntervalMs: 200,
   autoSaveIntervalMs: 30000,
@@ -123,34 +154,27 @@ export const BALANCE = {
   } as Record<SubscriptionTier, TierConfig>,
 
   jobs: {
-    sixxerBasic:      { reward: 6,     timeMs: 2000,   intelReq: 0.5,  displayName: 'Sixxer Basic' } as JobConfig,
-    sixxerStandard:   { reward: 18,    timeMs: 3000,  intelReq: 1,  displayName: 'Sixxer Standard' } as JobConfig,
-    sixxerAdvanced:   { reward: 50,    timeMs: 4000,  intelReq: 1.5,  displayName: 'Sixxer Advanced' } as JobConfig,
-    sixxerEnterprise: { reward: 1000,   timeMs: 5500,  intelReq: 2.5,  displayName: 'Sixxer Enterprise' } as JobConfig,
-    downWork:         { reward: 2000,   timeMs: 5500,  intelReq: 3.0,  displayName: 'Downwork' } as JobConfig,
-    softwareDev:      {
-      reward: 0,
-      timeMs: 0,
-      intelReq: 15.0,
-      displayName: 'Software Dev',
-      canHireHumans: true,
-      agentIntelReq: 15.0,
-      agentResearchReq: []
-    } as JobConfig,
-    engineer:         { 
-      reward: 0, 
-      timeMs: 0, 
-      intelReq: 2,
-      displayName: 'Engineers', 
-      canHireHumans: true,
-      agentIntelReq: 15.0,
-      agentResearchReq: ['robotics2']
-    } as JobConfig,
+    // --- AI Jobs ---
+    sixxerBasic:      { produces: { resource: 'funds', amount: 6 },     timeMs: 2000,  unlockAtIntel: 0.5, agentIntelReq: 0.5, workerType: 'ai', displayName: 'Sixxer Basic' } as JobConfig,
+    sixxerStandard:   { produces: { resource: 'funds', amount: 18 },    timeMs: 3000,  unlockAtIntel: 0.5, agentIntelReq: 1.0, workerType: 'ai', displayName: 'Sixxer Standard' } as JobConfig,
+    sixxerAdvanced:   { produces: { resource: 'funds', amount: 50 },    timeMs: 4000,  unlockAtIntel: 1.0, agentIntelReq: 1.5, workerType: 'ai', displayName: 'Sixxer Advanced' } as JobConfig,
+    sixxerEnterprise: { produces: { resource: 'funds', amount: 1000 },  timeMs: 5500,  unlockAtIntel: 1.5, agentIntelReq: 2.0, workerType: 'ai', displayName: 'Sixxer Enterprise' } as JobConfig,
+    downWork:         { produces: { resource: 'funds', amount: 2000 },  timeMs: 5500,  unlockAtIntel: 3.0, agentIntelReq: 3.5, workerType: 'ai', displayName: 'Downwork' } as JobConfig,
+    manager:          { produces: { resource: 'nudge', amount: 1 },     timeMs: 1000,  unlockAtIntel: 1.5, agentIntelReq: 2.5, workerType: 'ai', displayName: 'Agent Manager' } as JobConfig,
+    aiSWE:            { produces: { resource: 'code', amount: 0.5 },    timeMs: 3000,  unlockAtIntel: 15.0, agentIntelReq: 15.0, workerType: 'ai', displayName: 'AI Coder' } as JobConfig,
+    aiResearcher:     { produces: { resource: 'science', amount: 2 },   timeMs: 5000,  unlockAtIntel: 12.0, agentIntelReq: 12.0, workerType: 'ai', displayName: 'AI Researcher' } as JobConfig,
+    robotWorker:      { produces: { resource: 'labor', amount: 5 },     timeMs: 3000,  unlockAtIntel: 15.0, agentIntelReq: 15.0, agentResearchReq: ['robotics2'], workerType: 'ai', displayName: 'Robot Worker' } as JobConfig,
+    // --- Human Jobs ---
+    humanSWE:         { produces: { resource: 'code', amount: 0.15 },   timeMs: 3000,  unlockAtIntel: 3.0, agentIntelReq: 0, workerType: 'human', displayName: 'Human Coder', salaryPerMin: 300, hireCost: 500 } as JobConfig,
+    humanWorker:      { produces: { resource: 'labor', amount: 5 },     timeMs: 5000,  unlockAtIntel: 5.0, agentIntelReq: 0, workerType: 'human', displayName: 'Human Worker', salaryPerMin: 200, hireCost: 300 } as JobConfig,
+    // --- Special ---
     unassigned: {
-      reward: 0,
+      produces: { resource: 'funds', amount: 0 },
       timeMs: 0,
-      intelReq: 0,
+      unlockAtIntel: 0,
       displayName: 'Unassigned',
+      workerType: 'ai',
+      agentIntelReq: 0,
     } as JobConfig,
   } as Record<JobType, JobConfig>,
 
@@ -160,30 +184,26 @@ export const BALANCE = {
     displayName: 'Mic-mini PC',
   },
 
-  managerNudgesPerMin: 6,
-  managerSquaredNudgesPerMin: 10,
-  managedAgentsPerManager: 12,
-  managedManagersPerManager2: 8,
-
   // GPU & Compute
+  selfHostedUnlockIntel: 2.5,
   gpuCost: 3000,
   pflopsPerGpu: 2.0,
   gpuPowerMW: 0.0004, // 400W per GPU = 0.0004 MW
 
   models: [
-    { name: 'DeepKick-405B',  intel: 3.0,  pflopsPerInstance: 2.0,  minGpus: 1 },
-    { name: 'DeepKick-647B',  intel: 5.0,  pflopsPerInstance: 4.0,  minGpus: 64 },
-    { name: 'DeepKick-1.2T',  intel: 7.0,  pflopsPerInstance: 8.0,  minGpus: 128 },
-    { name: 'DeepKick-2.8T',  intel: 9.0,  pflopsPerInstance: 16.0, minGpus: 256 },
+    { name: 'DeepKick-405B',  intel: 3.0,  minGpus: 1 },
+    { name: 'DeepKick-647B',  intel: 5.0,  minGpus: 64 },
+    { name: 'DeepKick-1.2T',  intel: 7.0,  minGpus: 128 },
+    { name: 'DeepKick-2.8T',  intel: 9.0,  minGpus: 256 },
   ] as ModelConfig[],
 
   // Datacenters
   datacenterThreshold: 128, // GPUs that trigger datacenter requirement
   datacenters: [
-    { name: 'Small Datacenter',  cost: 100_000,     gpuCapacity: 256,    engineersRequired: 2 },
-    { name: 'Medium Datacenter', cost: 2_000_000,   gpuCapacity: 4_096,  engineersRequired: 5 },
-    { name: 'Large Datacenter',  cost: 30_000_000,  gpuCapacity: 65_536, engineersRequired: 12 },
-    { name: 'Mega Datacenter',   cost: 500_000_000, gpuCapacity: 1_000_000, engineersRequired: 30 },
+    { name: 'Small Datacenter',  cost: 100_000,     gpuCapacity: 256,       laborCost: 120, laborPerMin: 60 },
+    { name: 'Medium Datacenter', cost: 2_000_000,   gpuCapacity: 4_096,     laborCost: 300, laborPerMin: 150 },
+    { name: 'Large Datacenter',  cost: 30_000_000,  gpuCapacity: 65_536,    laborCost: 720, laborPerMin: 360 },
+    { name: 'Mega Datacenter',   cost: 500_000_000, gpuCapacity: 1_000_000, laborCost: 1800, laborPerMin: 900 },
   ] as DatacenterConfig[],
 
   // Energy
@@ -192,23 +212,20 @@ export const BALANCE = {
   gridCostPerBlockPerMin: 800,
 
   powerPlants: {
-    gas:     { name: 'Gas Plant',     cost: 1_500_000,  outputMW: 50,  engineersRequired: 3 } as PowerPlantConfig,
-    nuclear: { name: 'Nuclear Plant', cost: 12_000_000, outputMW: 200, engineersRequired: 3 } as PowerPlantConfig,
-    solar:   { name: 'Solar Farm',    cost: 800_000,    outputMW: 0,   engineersRequired: 1 } as PowerPlantConfig, // MW comes from panels
+    gas:     { name: 'Gas Plant',     cost: 1_500_000,  outputMW: 50,  laborCost: 180, laborPerMin: 90 } as PowerPlantConfig,
+    nuclear: { name: 'Nuclear Plant', cost: 12_000_000, outputMW: 200, laborCost: 180, laborPerMin: 90 } as PowerPlantConfig,
+    solar:   { name: 'Solar Farm',    cost: 800_000,    outputMW: 0,   laborCost: 60, laborPerMin: 30 } as PowerPlantConfig, // MW comes from panels
   },
 
   solarPanelCost: 400,
   solarPanelMW: 0.01, // 10kW per panel
 
-  // Engineers
-  humanEngineerCostPerMin: 200,
-
   // Training
   fineTunes: [
-    { name: 'DeepKick-Math',   intel: 6.0,  pflopsHrs: 50,    dataTB: 20,   codeReq: 20 },
-    { name: 'DeepKick-Code',   intel: 7.5,  pflopsHrs: 150,   dataTB: 60,   codeReq: 0 },
-    { name: 'DeepKick-Reason', intel: 9.0,  pflopsHrs: 500,   dataTB: 200,  codeReq: 0 },
-    { name: 'DeepKick-Ultra',  intel: 11.0, pflopsHrs: 2000,  dataTB: 800,  codeReq: 0 },
+    { name: 'DeepKick-Math',   intel: 10.0,  pflopsHrs: 50,    dataTB: 20,   codeReq: 20 },
+    { name: 'DeepKick-Code',   intel: 11.0,  pflopsHrs: 150,   dataTB: 60,   codeReq: 0 },
+    { name: 'DeepKick-Reason', intel: 12.0,  pflopsHrs: 500,   dataTB: 200,  codeReq: 0 },
+    { name: 'DeepKick-Ultra',  intel: 13.0, pflopsHrs: 2000,  dataTB: 800,  codeReq: 0 },
   ],
 
   ariesModels: [
@@ -219,20 +236,13 @@ export const BALANCE = {
     { name: 'Aries-5', intel: 50.0, pflopsHrs: 20_000_000, dataTB: 3_000_000, codeReq: 0 },
   ],
 
-  trainingUnlockDatacenters: 2, // Need 2+ DCs to unlock training
-  trainingUnlockCode: 20,       // Need 20 Code for fine-tune pipeline
+  trainingUnlockIntel: 9.0,     // Intel threshold to unlock training panel
 
   dataBaseCostPerTB: 200,
   dataEscalationRate: 0.15, // +15% per purchase
 
-  // Software Devs
-  humanDevCostPerMin: 300,
-  humanDevCodePerMin: 1,
-  aiDevCodePerMinPerIntel: 0.25, // Code/min = intel * this
-
   // Research
   researchUnlockIntel: 12.0,
-  aiResearcherSciencePerMinPerIntel: 1,
 
   // Research tree
   research: [
@@ -278,22 +288,45 @@ export const BALANCE = {
   waferBatchCost: 3_000,        // $3K per 50-GPU wafer batch
   waferBatchGpus: 50,           // GPUs produced per wafer batch
   fabCost: 8_000_000,
-  fabEngineers: 5,
+  fabLaborCost: 300,            // upfront labor to build a fab
+  fabLaborPerMin: 150,          // ongoing labor consumption per fab
   fabOutputPerMin: 10,          // wafer batches per min per fab
   siliconMineCost: 4_000_000,
-  siliconMineEngineers: 4,
+  siliconMineLaborCost: 240,    // upfront labor to build a mine
+  siliconMineLaborPerMin: 120,  // ongoing labor consumption per mine
   robotFactoryCost: 2_000_000,
-  robotFactoryEngineers: 3,
+  robotFactoryLaborCost: 180,   // upfront labor to build a factory
+  robotFactoryLaborPerMin: 90,  // ongoing labor consumption per factory
   robotFactoryOutputPerMin: 2,  // robots per min per factory
   robotCost: 5_000,
 
-  // Subscription selling
-  subSellingUnlockIntel: 8.0,
-  subSellingUnlockCode: 200,
-  subscriberPflopsPerSub: 2.0,  // PFLOPS reserved per subscriber
-  adCost: 50_000,               // cost of ad campaign
-  adAwarenessBoost: 1_500,      // awareness gained per ad
-  subscriberGrowthRate: 0.05,   // fraction of (demand - current) that converts per min
+  // Subscription selling (Legacy but kept for Type check if needed, though we are replacing logic)
+  // We will re-purpose these or add new ones for API
+
+  // API Services
+  apiUnlockIntel: 8.0,
+  apiUnlockCode: 200,
+
+  apiPflopsPerUser: 0.1, // PFLOPS needed per active user
+
+  apiAdCost: 50_000,
+  apiAdAwarenessBoost: 1_500,
+
+  apiPriceElasticity: 1.3,
+  apiQualityElasticity: 1.1,
+  apiBaseAwareness: 200, // Starting awareness
+  apiDemandScale: 20, // Global scale factor
+
+  // API Improvement Tiers
+  apiImprovementTiers: [
+    { cost: 1_000,       multiplier: 1.5, name: 'Basic Optimization' },
+    { cost: 10_000,      multiplier: 2.0, name: 'Advanced Caching' },
+    { cost: 100_000,     multiplier: 3.0, name: 'Predictive Batching' },
+    { cost: 1_000_000,   multiplier: 5.0, name: 'Kernel Fusion' },
+    { cost: 10_000_000,  multiplier: 10.0, name: 'Quantum Quantization' },
+    { cost: 100_000_000, multiplier: 25.0, name: 'Neural Compilation' },
+    { cost: 1_000_000_000, multiplier: 100.0, name: 'AGI Alignment' },
+  ] as { cost: number; multiplier: number; name: string }[],
 
   // Synth data
   synthDataPflopsPerTBPerMin: 5, // 5 PFLOPS → 1 TB/min
@@ -306,20 +339,6 @@ export const BALANCE = {
 export function getStuckRate(intel: number): number {
   return Math.min(0.35, 0.25 * Math.pow(0.5 / intel, 1.2));
 }
-
-/**
- * Get the best job type the player's current intel can handle.
- */
-export function getBestJobType(intel: number): JobType {
-  let best: JobType = 'sixxerBasic';
-  for (const jt of JOB_ORDER) {
-    if (intel >= BALANCE.jobs[jt].intelReq) {
-      best = jt;
-    }
-  }
-  return best;
-}
-
 /**
  * Get the intelligence for a given subscription tier.
  */

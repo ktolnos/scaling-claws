@@ -2,7 +2,7 @@ const SUFFIXES = ['', 'K', 'M', 'B', 'T', 'Q'];
 
 export function formatNumber(n: number): string {
   if (n < 0) return '-' + formatNumber(-n);
-  if (n < 1000) return n < 10 ? n.toFixed(1) : Math.floor(n).toString();
+  if (n < 1000) return Number.isInteger(n) ? n.toString() : (n < 10 ? n.toFixed(1) : Math.floor(n).toString());
 
   let tier = 0;
   let scaled = n;

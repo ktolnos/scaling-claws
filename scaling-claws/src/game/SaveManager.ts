@@ -29,7 +29,6 @@ export function loadGame(): GameState | null {
     const state: GameState = {
       ...defaults,
       ...parsed,
-      milestones: { ...defaults.milestones, ...parsed.milestones },
     };
 
     // Fix lastTickTime to now (don't try to simulate offline time yet)
@@ -58,7 +57,6 @@ export function importSave(data: string): GameState | null {
     return {
       ...defaults,
       ...parsed,
-      milestones: { ...defaults.milestones, ...parsed.milestones },
       lastTickTime: Date.now(),
     };
   } catch (_e) {

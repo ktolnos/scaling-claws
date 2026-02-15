@@ -78,12 +78,19 @@ export class AgentsPanel implements Panel {
     
     tierMeta.appendChild(this.subTierIntelEl);
     tierMeta.appendChild(this.subTierCostEl);
-    
+
     tierValue.appendChild(this.subTierNameEl);
     tierValue.appendChild(tierMeta);
     tierHeader.appendChild(tierLabel);
     tierHeader.appendChild(tierValue);
     tierSection.appendChild(tierHeader);
+
+    const intelHint = document.createElement('div');
+    intelHint.style.fontSize = '0.72rem';
+    intelHint.style.color = 'var(--text-muted)';
+    intelHint.style.marginTop = '4px';
+    intelHint.textContent = 'Higher intelligence = faster job completion.';
+    tierSection.appendChild(intelHint);
 
     // Next Tier / Upgrade
     this.nextTierInfoEl = document.createElement('div');
@@ -131,7 +138,14 @@ export class AgentsPanel implements Panel {
     this.incBtn.style.minWidth = '100px';
     this.incBtn.addEventListener('click', () => {
       if (!hireAgent(this.state)) {
-        flashElement(this.coresEl);
+        // Flash appropriate constraint indicator
+        if (this.state.isPostGpuTransition) {
+          // At GPU stage: need more GPU instances (show in ComputePanel)
+          document.dispatchEvent(new CustomEvent('flash-gpu-capacity'));
+        } else {
+          // At subscription stage: need more CPU cores
+          flashElement(this.coresEl);
+        }
       }
     });
 
@@ -304,8 +318,9 @@ export class AgentsPanel implements Panel {
       // "The cost should be paid upfront (upgrade pays for the subscription for 1 minute)"
       
       this.upgradeBtn.style.display = 'block';
-      const upgradeCost = nextTier.cost * state.agents.length;
-      this.upgradeBtn.textContent = `Upgrade to ${nextTier.displayName} (${formatMoney(upgradeCost)}, ${nextTier.intel.toFixed(1)} Intel)`;
+      const agentCount = state.agents.length;
+      const upgradeCost = nextTier.cost * agentCount;
+      this.upgradeBtn.textContent = `Upgrade to ${nextTier.displayName} (${agentCount}×${formatMoney(nextTier.cost)} = ${formatMoney(upgradeCost)}, ${nextTier.intel.toFixed(1)} Intel)`;
       
       this.upgradeBtn.disabled = state.funds < upgradeCost;
       
@@ -317,7 +332,14 @@ export class AgentsPanel implements Panel {
 
     // -- Agent Controls --
     this.agentCountEl.textContent = state.agents.length.toString();
-    const unassignedCount = state.agents.filter(a => a.assignedJob === 'unassigned').length;
+    const assignedCount = state.agents.filter(a => a.assignedJob !== 'unassigned').length;
+    let unassignedCount = state.agents.length - assignedCount;
+
+    if (state.isPostGpuTransition) {
+      // In GPU era, unassigned agents are limited by compute slots
+      unassignedCount = Math.max(0, state.activeAgentCount - assignedCount);
+    }
+
     this.unassignedCountEl.textContent = unassignedCount.toString();
     if (unassignedCount > 0) {
       this.unassignedCountEl.style.color = 'var(--accent-green)';
@@ -347,7 +369,7 @@ export class AgentsPanel implements Panel {
 
     // Go Self-Hosted
     const gpuCost = totalAgents * BALANCE.gpuCost;
-    if (!state.isPostGpuTransition && totalAgents >= 3 && state.funds >= gpuCost * 0.5) {
+    if (!state.isPostGpuTransition && state.intelligence >= BALANCE.selfHostedUnlockIntel) {
       this.selfHostedSection.classList.remove('hidden');
       this.selfHostedCostEl.textContent = totalAgents + ' GPUs x ' + formatMoney(BALANCE.gpuCost) + ' = ' + formatMoney(gpuCost);
       this.selfHostedBtn.disabled = state.funds < gpuCost;

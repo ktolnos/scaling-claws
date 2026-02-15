@@ -1,13 +1,20 @@
 import { BALANCE } from './BalanceConfig.ts';
-import type { SubscriptionTier, JobType, ResearchId } from './BalanceConfig.ts';
+import type { SubscriptionTier, JobType } from './BalanceConfig.ts';
 
 export interface AgentState {
   id: number;
   assignedJob: JobType;
   progress: number;       // 0..1
   isStuck: boolean;
-  isIdle: boolean;        // no CPU core / GPU instance available
+  isIdle: boolean;        // no CPU core / GPU available
   taskTimeMs: number;     // total time for current task
+}
+
+export interface HumanWorkerState {
+  id: number;
+  assignedJob: JobType;   // always a human job type
+  progress: number;       // 0..1
+  taskTimeMs: number;
 }
 
 export interface GameState {
@@ -20,9 +27,13 @@ export interface GameState {
   lastTickTime: number;
   gameStartTime: number;
 
-  // Agents
+  // AI Agents
   agents: AgentState[];
   nextAgentId: number;
+
+  // Human Workers
+  humanWorkers: HumanWorkerState[];
+  nextHumanWorkerId: number;
 
   // Global Subscription Tier
   subscriptionTier: SubscriptionTier;
@@ -35,8 +46,7 @@ export interface GameState {
   gpuCount: number;
   totalPflops: number;         // computed: gpuCount * pflopsPerGpu
   currentModelIndex: number;   // index into BALANCE.models
-  instanceCount: number;       // computed: floor(totalPflops / model.pflopsPerInstance)
-  freeCompute: number;         // computed: total - (instances * perInstance) - training
+  freeCompute: number;         // computed: totalPflops - training allocation
   isPostGpuTransition: boolean;
 
   // Datacenters: count per tier [small, medium, large, mega]
@@ -44,10 +54,10 @@ export interface GameState {
   gpuCapacity: number;         // computed from datacenters
   needsDatacenter: boolean;    // computed: gpuCount approaching capacity
 
-  // Engineers
-  engineerCount: number;       // humans hired
-  engineersRequired: number;   // computed: total needed for all facilities
-  engineerExpensePerMin: number; // computed
+  // Labor
+  labor: number;               // stockpile
+  laborPerMin: number;         // computed: production rate from workers
+  laborConsumedPerMin: number; // computed: consumption by facilities
 
   // Energy
   gridBlocksOwned: number;     // each block = 5 MW
@@ -70,17 +80,14 @@ export interface GameState {
   ariesModelIndex: number;        // -1 = none, index into BALANCE.ariesModels
   ariesProgress: number;          // PFLOPS-hrs into current Aries run
 
-  // Code & Science
+  // Code & Science (produced by jobs, consumed by training/research)
   code: number;
-  codePerMin: number;             // computed
-  humanSoftwareDevs: number;
-  aiSoftwareDevs: number;
+  codePerMin: number;             // computed: production from jobs
   science: number;
-  sciencePerMin: number;          // computed
-  aiResearchers: number;
+  sciencePerMin: number;          // computed: production from jobs
 
   // Research
-  completedResearch: ResearchId[];
+  completedResearch: string[];
   synthDataUnlocked: boolean;     // Synth Data I completed
   synthDataRate: number;          // computed: TB/min from synth data
   synthDataAllocPflops: number;   // PFLOPS used for synth data generation
@@ -96,27 +103,29 @@ export interface GameState {
   gpuProductionPerMin: number;    // computed: GPUs auto-produced per minute
   waferBatches: number;           // pending wafer batches → GPU production
 
-  // Subscription selling
-  subSellingUnlocked: boolean;
-  subscriberCount: number;
-  subscriberPrice: number;        // $/min per subscriber
-  subscriberDemand: number;       // computed: how many want to subscribe
-  subscriberAwareness: number;    // affects demand
-  subscriberReservedPflops: number; // computed: PFLOPS reserved for subs
-  subscriberIncomePerMin: number; // computed
+  // API Services
+  apiUnlocked: boolean;
+  apiUserCount: number;
+  apiPrice: number;        // Price factor (affects demand)
+  apiDemand: number;       // Computed demand
+  apiAwareness: number;    // Awareness level
+  apiReservedPflops: number; // Computed PFLOPS used
+  apiIncomePerMin: number; // Computed income
+  apiInferenceAllocationPct: number; // 0-100
+  apiImprovementLevel: number; // Index of current tier
+  apiQuality: number;      // Current quality multiplier
 
   // Job tracking
   completedTasks: number;
   unlockedJobs: JobType[];
-  softwareDevCount: number;           // agents doing AI Coder jobs
 
   // Manager tracking
   managerCount: number;
-  managerSquaredCount: number;
 
   // Computed per tick (for UI display)
   incomePerMin: number;
   expensePerMin: number;
+  humanSalaryPerMin: number;     // computed: total human worker salaries
   intelligence: number;
   agentEfficiency: number;
   stuckCount: number;
@@ -126,27 +135,6 @@ export interface GameState {
   // Flavor text
   pendingFlavorTexts: string[];
   shownFlavorTexts: string[];
-
-  // Milestone flags
-  milestones: {
-    firstTaskComplete: boolean;
-    firstProSub: boolean;
-    firstMicMini: boolean;
-    reachedUltra: boolean;
-    reachedUltraMax: boolean;
-    reachedUltraProMax: boolean;
-    firstManagerAgent: boolean;
-    firstManagerSquared: boolean;
-    gpuTransition: boolean;
-    firstDatacenter: boolean;
-    firstGasPlant: boolean;
-    firstNuclearPlant: boolean;
-    firstSolarFarm: boolean;
-    trainingUnlocked: boolean;
-    researchUnlocked: boolean;
-    supplyChainUnlocked: boolean;
-    subSellingUnlocked: boolean;
-  };
 }
 
 export function createInitialState(): GameState {
@@ -169,6 +157,9 @@ export function createInitialState(): GameState {
     }],
     nextAgentId: 1,
 
+    humanWorkers: [],
+    nextHumanWorkerId: 0,
+
     subscriptionTier: 'basic',
 
     cpuCoresTotal: BALANCE.startingCpuCores,
@@ -178,7 +169,6 @@ export function createInitialState(): GameState {
     gpuCount: 0,
     totalPflops: 0,
     currentModelIndex: 0,
-    instanceCount: 0,
     freeCompute: 0,
     isPostGpuTransition: false,
 
@@ -187,10 +177,10 @@ export function createInitialState(): GameState {
     gpuCapacity: 32,
     needsDatacenter: false,
 
-    // Engineers
-    engineerCount: 0,
-    engineersRequired: 0,
-    engineerExpensePerMin: 0,
+    // Labor
+    labor: 0,
+    laborPerMin: 0,
+    laborConsumedPerMin: 0,
 
     // Energy
     gridBlocksOwned: 0,
@@ -216,11 +206,8 @@ export function createInitialState(): GameState {
     // Code & Science
     code: 0,
     codePerMin: 0,
-    humanSoftwareDevs: 0,
-    aiSoftwareDevs: 0,
     science: 0,
     sciencePerMin: 0,
-    aiResearchers: 0,
 
     // Research
     completedResearch: [],
@@ -239,24 +226,26 @@ export function createInitialState(): GameState {
     gpuProductionPerMin: 0,
     waferBatches: 0,
 
-    // Subscription selling
-    subSellingUnlocked: false,
-    subscriberCount: 0,
-    subscriberPrice: 35,
-    subscriberDemand: 0,
-    subscriberAwareness: 0,
-    subscriberReservedPflops: 0,
-    subscriberIncomePerMin: 0,
+    // API Services
+    apiUnlocked: false,
+    apiUserCount: 0,
+    apiPrice: 35,
+    apiDemand: 0,
+    apiAwareness: 0,
+    apiReservedPflops: 0,
+    apiIncomePerMin: 0,
+    apiInferenceAllocationPct: 0,
+    apiImprovementLevel: -1,
+    apiQuality: 1,
 
     completedTasks: 0,
     unlockedJobs: ['unassigned', 'sixxerBasic'],
-    softwareDevCount: 0,
 
     managerCount: 0,
-    managerSquaredCount: 0,
 
     incomePerMin: 0,
     expensePerMin: 0,
+    humanSalaryPerMin: 0,
     intelligence: BALANCE.tiers.basic.intel,
     agentEfficiency: 1,
     stuckCount: 0,
@@ -265,25 +254,5 @@ export function createInitialState(): GameState {
 
     pendingFlavorTexts: [],
     shownFlavorTexts: [],
-
-    milestones: {
-      firstTaskComplete: false,
-      firstProSub: false,
-      firstMicMini: false,
-      reachedUltra: false,
-      reachedUltraMax: false,
-      reachedUltraProMax: false,
-      firstManagerAgent: false,
-      firstManagerSquared: false,
-      gpuTransition: false,
-      firstDatacenter: false,
-      firstGasPlant: false,
-      firstNuclearPlant: false,
-      firstSolarFarm: false,
-      trainingUnlocked: false,
-      researchUnlocked: false,
-      supplyChainUnlocked: false,
-      subSellingUnlocked: false,
-    },
   };
 }

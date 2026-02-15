@@ -4,6 +4,8 @@ import { tickJobs } from './systems/JobSystem.ts';
 import { tickCompute } from './systems/ComputeSystem.ts';
 import { tickEnergy } from './systems/EnergySystem.ts';
 import { tickTraining } from './systems/TrainingSystem.ts';
+import { tickResearch } from './systems/ResearchSystem.ts';
+import { tickSupply } from './systems/SupplySystem.ts';
 
 export class GameLoop {
   private state: GameState;
@@ -29,8 +31,10 @@ export class GameLoop {
 
     // Run systems in order
     tickEnergy(this.state, dt);
+    tickResearch(this.state, dt);   // Compute bonuses before they're used
     tickCompute(this.state, dt);
     tickTraining(this.state, dt);
+    tickSupply(this.state, dt);
     tickJobs(this.state, dt);
   }
 

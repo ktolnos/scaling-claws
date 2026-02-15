@@ -8,7 +8,7 @@ export function tickEnergy(state: GameState, _dtMs: number): void {
   state.powerDemandMW = state.gpuCount * BALANCE.gpuPowerMW;
 
   // Power supply: grid + plants + solar + home
-  let supply = BALANCE.homePowerMW; 
+  let supply = BALANCE.homePowerMW;
   supply += state.gridBlocksOwned * BALANCE.gridBlockMW;
   supply += state.gasPlants * BALANCE.powerPlants.gas.outputMW;
   supply += state.nuclearPlants * BALANCE.powerPlants.nuclear.outputMW;
@@ -24,8 +24,6 @@ export function tickEnergy(state: GameState, _dtMs: number): void {
 }
 
 export function buyGridBlock(state: GameState): boolean {
-  // Grid blocks have no upfront cost, just ongoing $800/min per block
-  // But check they can afford at least 1 min
   const newCostPerMin = (state.gridBlocksOwned + 1) * BALANCE.gridCostPerBlockPerMin;
   if (state.funds < newCostPerMin) return false;
 
@@ -41,50 +39,31 @@ export function sellGridBlock(state: GameState): boolean {
 
 export function buyGasPlant(state: GameState): boolean {
   if (state.funds < BALANCE.powerPlants.gas.cost) return false;
-  // Check engineer availability
-  const engAvailable = state.engineerCount - state.engineersRequired;
-  if (engAvailable < BALANCE.powerPlants.gas.engineersRequired) return false;
+  if (state.labor < BALANCE.powerPlants.gas.laborCost) return false;
 
   state.funds -= BALANCE.powerPlants.gas.cost;
+  state.labor -= BALANCE.powerPlants.gas.laborCost;
   state.gasPlants++;
-
-  if (!state.milestones.firstGasPlant) {
-    state.milestones.firstGasPlant = true;
-    state.pendingFlavorTexts.push(
-      '"Datacenter #4. The power company sent a personal account manager. And a fruit basket."'
-    );
-  }
-
   return true;
 }
 
 export function buyNuclearPlant(state: GameState): boolean {
   if (state.funds < BALANCE.powerPlants.nuclear.cost) return false;
-  const engAvailable = state.engineerCount - state.engineersRequired;
-  if (engAvailable < BALANCE.powerPlants.nuclear.engineersRequired) return false;
+  if (state.labor < BALANCE.powerPlants.nuclear.laborCost) return false;
 
   state.funds -= BALANCE.powerPlants.nuclear.cost;
+  state.labor -= BALANCE.powerPlants.nuclear.laborCost;
   state.nuclearPlants++;
-
-  if (!state.milestones.firstNuclearPlant) {
-    state.milestones.firstNuclearPlant = true;
-  }
-
   return true;
 }
 
 export function buySolarFarm(state: GameState): boolean {
   if (state.funds < BALANCE.powerPlants.solar.cost) return false;
-  const engAvailable = state.engineerCount - state.engineersRequired;
-  if (engAvailable < BALANCE.powerPlants.solar.engineersRequired) return false;
+  if (state.labor < BALANCE.powerPlants.solar.laborCost) return false;
 
   state.funds -= BALANCE.powerPlants.solar.cost;
+  state.labor -= BALANCE.powerPlants.solar.laborCost;
   state.solarFarms++;
-
-  if (!state.milestones.firstSolarFarm) {
-    state.milestones.firstSolarFarm = true;
-  }
-
   return true;
 }
 

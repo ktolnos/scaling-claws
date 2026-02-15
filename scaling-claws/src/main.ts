@@ -13,6 +13,7 @@ import { AgentsPanel } from './ui/panels/AgentsPanel.ts';
 import { ComputePanel } from './ui/panels/ComputePanel.ts';
 import { EnergyPanel } from './ui/panels/EnergyPanel.ts';
 import { TrainingPanel } from './ui/panels/TrainingPanel.ts';
+import { SupplyPanel } from './ui/panels/SupplyPanel.ts';
 import { DatacenterInterior } from './ui/visuals/DatacenterInterior.ts';
 import { Ticker } from './ui/components/Ticker.ts';
 
@@ -46,12 +47,18 @@ if (state.isPostGpuTransition) {
 }
 
 // If training already unlocked (loaded from save), show training panel
-if (state.milestones.trainingUnlocked) {
+if (state.intelligence >= BALANCE.trainingUnlockIntel) {
   panelManager.register('training', new TrainingPanel(state));
 }
 
-// Track whether training panel has been added (for mid-game unlock)
-let trainingPanelAdded = state.milestones.trainingUnlocked;
+// If supply chain already unlocked (loaded from save), show supply panel
+if (state.completedResearch.includes('chipFab1')) {
+  panelManager.register('supply', new SupplyPanel(state));
+}
+
+// Track whether panels have been added (for mid-game unlocks)
+let trainingPanelAdded = state.intelligence >= BALANCE.trainingUnlockIntel;
+let supplyPanelAdded = state.completedResearch.includes('chipFab1');
 
 // UI update loop
 setInterval(() => {
@@ -62,9 +69,15 @@ setInterval(() => {
   ticker.update(s);
 
   // Check for mid-game training unlock
-  if (!trainingPanelAdded && s.milestones.trainingUnlocked) {
+  if (!trainingPanelAdded && s.intelligence >= BALANCE.trainingUnlockIntel) {
     panelManager.register('training', new TrainingPanel(s));
     trainingPanelAdded = true;
+  }
+
+  // Check for mid-game supply chain unlock
+  if (!supplyPanelAdded && s.completedResearch.includes('chipFab1')) {
+    panelManager.register('supply', new SupplyPanel(s));
+    supplyPanelAdded = true;
   }
 }, BALANCE.uiUpdateIntervalMs);
 

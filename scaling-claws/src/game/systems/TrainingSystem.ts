@@ -4,44 +4,20 @@ import { BALANCE } from '../BalanceConfig.ts';
 export function tickTraining(state: GameState, dtMs: number): void {
   if (!state.isPostGpuTransition) return;
 
-  // Compute training allocation
-  const allocPct = state.trainingAllocationPct / 100;
-  state.trainingAllocatedPflops = state.totalPflops * allocPct;
+  // Compute training allocation - NOW HANDLED IN ComputeSystem.ts
+  // state.trainingAllocatedPflops is already set
+  
+  // Update freeCompute accounting - NOW HANDLED IN ComputeSystem.ts
 
-  // Update freeCompute accounting (instances + training)
-  const model = BALANCE.models[state.currentModelIndex];
-  const instanceCompute = state.instanceCount * model.pflopsPerInstance;
-  state.freeCompute = Math.max(0, state.totalPflops - instanceCompute - state.trainingAllocatedPflops);
+  // Code and science production is now handled by JobSystem (AI/Human SWE and AI Researcher jobs)
 
-  // Code production
-  const humanCodePerMin = state.humanSoftwareDevs * BALANCE.humanDevCodePerMin;
-  const aiCodePerMin = state.aiSoftwareDevs * (state.intelligence * BALANCE.aiDevCodePerMinPerIntel);
-  state.codePerMin = humanCodePerMin + aiCodePerMin;
-  state.code += state.codePerMin * (dtMs / 60000);
-
-  // Science production
-  state.sciencePerMin = state.aiResearchers * state.intelligence * BALANCE.aiResearcherSciencePerMinPerIntel;
-  state.science += state.sciencePerMin * (dtMs / 60000);
-
-  // Software dev expenses
-  const devExpense = state.humanSoftwareDevs * BALANCE.humanDevCostPerMin;
-  state.expensePerMin += devExpense;
-  state.funds -= devExpense * (dtMs / 60000);
-
-  // Check training unlock
-  const totalDCs = state.datacenters.reduce((a, b) => a + b, 0);
-  if (!state.milestones.trainingUnlocked && totalDCs >= BALANCE.trainingUnlockDatacenters && state.code >= BALANCE.trainingUnlockCode) {
-    state.milestones.trainingUnlocked = true;
-  }
-
-  // Progress fine-tune
+  // Progress fine-tune (apply algo efficiency bonus)
   if (state.currentFineTuneIndex >= 0 && state.trainingAllocatedPflops > 0) {
-    const pflopsHrsThisTick = state.trainingAllocatedPflops * (dtMs / 3600000);
+    const pflopsHrsThisTick = state.trainingAllocatedPflops * (dtMs / 3600000) * state.algoEfficiencyBonus;
     state.fineTuneProgress += pflopsHrsThisTick;
 
     const ft = BALANCE.fineTunes[state.currentFineTuneIndex];
     if (state.fineTuneProgress >= ft.pflopsHrs) {
-      // Fine-tune complete!
       state.completedFineTunes.push(state.currentFineTuneIndex);
       state.intelligence = ft.intel;
       state.currentFineTuneIndex = -1;
@@ -53,14 +29,13 @@ export function tickTraining(state: GameState, dtMs: number): void {
     }
   }
 
-  // Progress Aries training
+  // Progress Aries training (apply algo efficiency bonus)
   if (state.ariesModelIndex >= 0 && state.trainingAllocatedPflops > 0) {
-    const pflopsHrsThisTick = state.trainingAllocatedPflops * (dtMs / 3600000);
+    const pflopsHrsThisTick = state.trainingAllocatedPflops * (dtMs / 3600000) * state.algoEfficiencyBonus;
     state.ariesProgress += pflopsHrsThisTick;
 
     const am = BALANCE.ariesModels[state.ariesModelIndex];
     if (state.ariesProgress >= am.pflopsHrs) {
-      // Aries model complete!
       state.intelligence = am.intel;
       state.ariesModelIndex = -1;
       state.ariesProgress = 0;
@@ -69,11 +44,6 @@ export function tickTraining(state: GameState, dtMs: number): void {
         '"' + am.name + ' is online. Intelligence: ' + am.intel + '."'
       );
     }
-  }
-
-  // Check research unlock
-  if (!state.milestones.researchUnlocked && state.intelligence >= BALANCE.researchUnlockIntel) {
-    state.milestones.researchUnlocked = true;
   }
 }
 
@@ -91,14 +61,13 @@ export function buyTrainingData(state: GameState, amountTB: number): boolean {
 export function startFineTune(state: GameState, index: number): boolean {
   if (index < 0 || index >= BALANCE.fineTunes.length) return false;
   if (state.completedFineTunes.includes(index)) return false;
-  if (state.currentFineTuneIndex >= 0) return false; // Already training
-  if (state.ariesModelIndex >= 0) return false; // Aries training in progress
+  if (state.currentFineTuneIndex >= 0) return false;
+  if (state.ariesModelIndex >= 0) return false;
 
   const ft = BALANCE.fineTunes[index];
   if (state.trainingData < ft.dataTB) return false;
   if (ft.codeReq > 0 && state.code < ft.codeReq) return false;
 
-  // Check prereqs: must have completed all previous fine-tunes
   for (let i = 0; i < index; i++) {
     if (!state.completedFineTunes.includes(i)) return false;
   }
@@ -113,11 +82,8 @@ export function startAriesTraining(state: GameState, index: number): boolean {
   if (state.currentFineTuneIndex >= 0) return false;
   if (state.ariesModelIndex >= 0) return false;
 
-  // Must have completed all fine-tunes first
   if (state.completedFineTunes.length < BALANCE.fineTunes.length) return false;
 
-  // Must have completed all previous Aries models
-  // (intelligence check serves as proxy)
   if (index > 0) {
     const prevAries = BALANCE.ariesModels[index - 1];
     if (state.intelligence < prevAries.intel) return false;
@@ -132,23 +98,14 @@ export function startAriesTraining(state: GameState, index: number): boolean {
   return true;
 }
 
-export function setTrainingAllocation(state: GameState, pct: number): void {
-  state.trainingAllocationPct = Math.max(0, Math.min(100, Math.round(pct / 5) * 5));
-}
+export function setTrainingAllocation(state: GameState, pct: number): boolean {
+  const newPct = Math.max(0, Math.min(100, Math.round(pct / 5) * 5));
+  const inferencePct = state.apiInferenceAllocationPct;
 
-export function hireSoftwareDev(state: GameState, isAI: boolean): boolean {
-  if (isAI) {
-    if (state.intelligence < 4.0) return false; // Need Intel 4.0+
-    state.aiSoftwareDevs++;
-  } else {
-    if (state.funds < BALANCE.humanDevCostPerMin) return false;
-    state.humanSoftwareDevs++;
+  if (newPct + inferencePct > 100) {
+    return false;
   }
-  return true;
-}
 
-export function hireAIResearcher(state: GameState): boolean {
-  if (state.intelligence < 12.0) return false;
-  state.aiResearchers++;
+  state.trainingAllocationPct = newPct;
   return true;
 }

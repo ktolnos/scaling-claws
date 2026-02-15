@@ -214,8 +214,7 @@
   background: var(--bg-input);
   border-radius: 2px;
   overflow: hidden;
-  flex: 1;
-  min-width: 80px;
+  min-width: 0;
   border: 1px solid var(--border-subtle);
 }
 

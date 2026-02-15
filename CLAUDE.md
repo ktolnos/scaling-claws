@@ -30,6 +30,20 @@ scaling-claws/src/
 - **GameLoop** ticks at 100ms. UI reads state on a 500ms setInterval.
 - **No runtime dependencies.** Zero node_modules in production.
 
+## UI Panel Rules — No DOM Rebuild in `update()`
+The UI refreshes every 500ms. Destroying and recreating DOM nodes inside `update()` kills CSS `:hover` / `:focus` state, causing buttons to flicker when the user interacts with them.
+
+**DO:**
+- Create all DOM elements once in `build()`. Store refs (e.g. `private fooBtn!: HTMLButtonElement`).
+- In `update()`, mutate existing nodes: set `.textContent`, `.disabled`, `.style.display`, `.innerHTML` on leaf text elements only.
+- For dynamic lists (research, bulk-buy tiers), use a **reconcile** pattern: keep a `Map<id, refs>`, add new rows, remove stale rows, update existing rows in place.
+- For bulk-buy button groups where the tier amounts change, guard rebuilds with a `lastTiers` key — only call `innerHTML = ''` when tiers actually change, then update `.disabled` in place each tick.
+
+**DON'T:**
+- `section.innerHTML = ''` followed by `createElement` + `appendChild` inside `update()`.
+- `appendChild(existingNode)` to reorder every tick (moves the node, resets hover).
+- `cloneNode` + `replaceWith` on buttons every tick (use it sparingly, only when the click handler's *identity* truly changes, e.g. switching from fine-tune to Aries training).
+
 ## TypeScript Gotchas (tsconfig strict settings)
 - `verbatimModuleSyntax: true` → use `import type { X }` for type-only imports
 - `erasableSyntaxOnly: true` → NO `enum` keyword. Use `as const` objects + type unions instead.
@@ -49,7 +63,7 @@ Full game spec is in `/DESIGN.md` (938 lines). Covers all 10 game phases, UI lay
 ```bash
 cd scaling-claws
 npm run dev      # Vite dev server with HMR
-npm run build    # TypeScript check + production bundle
+npm run build    # TypeScript check + production bundle (use `source ~/.bashrc && cd ~/scaling-claws/scaling-claws/ && npx vite build` if typecheck missing)
 npm run preview  # Preview production build
 ```
 
@@ -70,52 +84,18 @@ TrainingSystem (fine-tune sequence, Aries models, training allocation, data purc
 ### Milestone: Job System & UI Refactor ✅
 Refactored job assignments to be manual. Replaced recurring per-agent subscriptions with **One-Time Upfront Payments** (managed in AgentsPanel). Implemented **upfront cost** for both hiring agents and tier upgrades. Redesigned **JobsPanel** with horizontal layout, mini 2x4 agent progress grids, Engineers now are a regular job with hiring rules (Robotics II).
 
-### Milestone 4: Research + Supply Chain 🔧 (IN PROGRESS)
+### Milestone 4: Research + Supply Chain ✅
+- ResearchSystem: `tickResearch()` computes bonuses (algo efficiency, GPU FLOPS, synth data), `purchaseResearch()` with prereq checks, `getAvailableResearch()`, `setSynthDataAllocation()`
+- SupplySystem: `tickSupply()` auto-produces GPUs from fabs/litho + robots from factories, actions for buying litho/wafer/fabs/mines/factories/robots
+- ComputeSystem extended: `gpuFlopsBonus` applied to PFLOPS calc, subscription selling (demand/growth/churn/income/reserved PFLOPS), supply chain engineer requirements, `setSubscriberPrice()`, `buyAds()`
+- TrainingSystem: `algoEfficiencyBonus` applied to fine-tune + Aries training progress
+- SupplyPanel: GPU Production (litho, wafers, output rate), Facilities (fabs, mines), Robotics (factories, robot count)
+- TrainingPanel: Research section with available/completed research, synth data controls
+- ComputePanel: Subscription selling section (subscribers, price, demand, ads, reserved PFLOPS)
+- GameLoop: tickResearch + tickSupply wired in correct order
+- main.ts: SupplyPanel registered on `supplyChainUnlocked` milestone (save-load + mid-game)
 
-**Done so far:**
-- GameState extended: `completedResearch[]`, `synthDataUnlocked`, `synthDataRate`, `synthDataAllocPflops`, `algoEfficiencyBonus`, `gpuFlopsBonus`, `lithoMachines`, `waferFabs`, `siliconMines`, `robotFactories`, `robots`, `gpuProductionPerMin`, `waferBatches`, `subSellingUnlocked`, `subscriberCount`, `subscriberPrice`, `subscriberDemand`, `subscriberAwareness`, `subscriberReservedPflops`, `subscriberIncomePerMin`, `softwareDevCount`, milestones `supplyChainUnlocked` + `subSellingUnlocked`
-- BalanceConfig extended: `ResearchId` type + `ResearchIds` const, `ResearchConfig` interface, full research tree (25 entries), AI Coder job type ($2K/120s/Intel 15), supply chain costs (litho, wafer, fab, mine, robot factory, robot), subscription selling config (price, PFLOPS/sub, ads, growth rate), synth data config
-- All compiles clean with `npx tsc --noEmit`
-
-**Remaining tasks:**
-
-1. **Create `ResearchSystem.ts`** (`src/game/systems/`)
-   - `tickResearch(state, dt)`: compute research bonuses from `completedResearch` (algo efficiency multiplier, GPU FLOPS bonus, solar bonus, synth data rate)
-   - `purchaseResearch(state, id)`: spend Science, check prereqs, add to `completedResearch[]`, trigger milestone flags (e.g., `supplyChainUnlocked` on chipFab1)
-   - Synth data tick: if `synthDataUnlocked`, allocate PFLOPS from freeCompute → produce TB/min, add to `trainingData`
-
-2. **Create `SupplySystem.ts`** (`src/game/systems/`)
-   - `tickSupply(state, dt)`: auto-produce GPUs from fabs (fabs × fabOutputPerMin × chipFab bonus), auto-produce robots from factories, consume wafer batches
-   - Actions: `buyLithoMachine(state)`, `buyWaferBatch(state, amount)`, `buildFab(state)`, `buildSiliconMine(state)`, `buildRobotFactory(state)`, `buyRobot(state, amount)`
-   - GPU auto-production should increase `state.gpuCount` (capped by capacity)
-
-3. **Extend `ComputeSystem.ts`** for subscription selling
-   - In `tickGpuEra()`: if `subSellingUnlocked`, compute `subscriberDemand` from awareness + price, grow `subscriberCount` toward demand, compute `subscriberReservedPflops` and `subscriberIncomePerMin`, add subscriber income to funds, subtract reserved PFLOPS from `freeCompute`
-   - Actions: `setSubscriberPrice(state, price)`, `buyAds(state)`
-   - Check sub selling unlock: Intel ≥ 8 + Code ≥ 200
-   - Engineer requirements: add fab/mine/factory engineers to existing calc
-
-4. **Extend `TrainingSystem.ts`**
-   - Apply `algoEfficiencyBonus` to training progress (multiply pflopsHrs by bonus)
-   - Apply `gpuFlopsBonus` to totalPflops computation (done in ComputeSystem)
-
-5. **Create `SupplyPanel.ts`** (`src/ui/panels/`)
-   - Shows when `milestones.supplyChainUnlocked` is true
-   - Sections: GPU Production (litho machines, wafer buying, GPU output rate), Wafer Fabs, Silicon Mines, Robotics (robot factories, robot count, robot selling)
-
-6. **Extend `TrainingPanel.ts`** with RESEARCH section
-   - When `milestones.researchUnlocked`, show research section below training
-   - List available research (prereqs met, not completed), show cost in Science
-   - Show completed research list
-   - Change header to "TRAINING & RESEARCH" when research is unlocked
-   - Add synth data toggle/display when synthData1 is completed
-
-7. **Extend `ComputePanel.ts`** with subscription selling section
-   - When `subSellingUnlocked`: show subscriber count, price slider, demand, ad buying, reserved PFLOPS, subscriber income/min
-
-8. **Wire into GameLoop** — add `tickResearch()` and `tickSupply()` calls
-9. **Wire into main.ts** — register SupplyPanel when `supplyChainUnlocked`, handle mid-game unlocks
-10. **Type check + build verification**
+Manager job added: agents assigned to 'manager' auto-nudge stuck agents (6 nudges/min each, never get stuck). Unlocks at 3+ agents. Manager² removed.
 
 ### Milestone 5: Space 🔲
 SpaceSystem, SpaceEnergyPanel (merged Space+Energy). Rockets, satellites, lunar base, Mercury operations. EarthMoonSpace visual, EarthSurface visual.

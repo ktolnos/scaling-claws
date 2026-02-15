@@ -69,17 +69,16 @@ Everywhere quantities are purchased, buttons scale with progress:
 - At 1,000 owned: `[+10] [+100] [+1K]`
 - Always 3 buttons visible, shifting upward
 
+TODO: replace some buttons with bulk buy (Jobs, hire agent). Switch the jobs progress bars to 1 column (max 3 + text) in gpu era to fit the screen. 
 ---
 
 ## CPU Cores & Agent Hosting
 
-Agents require CPU cores to run. Each agent needs 1 core (2 cores for Ultra Max / Ultra Pro Max tier agents).
+Agents require CPU cores to run. Each agent needs 1 core.
 
-**Starting laptop:** 6 cores. The player can immediately run multiple agents as soon as they can afford subscriptions — no hardware gating in the first minutes.
+**Starting laptop:** 4 cores. The player can immediately run multiple agents as soon as they can afford subscriptions — no hardware gating in the first minutes.
 
-**Mic-mini PCs:** $80 each, adds 8 cores. The player buys these to scale past the laptop's 6-core limit.
-
-Core allocation is automatic: agents claim cores in priority order (highest-tier first). If cores run out, lower-tier agents go idle.
+**Mic-mini PCs:** $500 each, adds 8 cores. The player buys these to scale past the laptop's 4-core limit.
 
 After the GPU transition, CPU cores become irrelevant — GPU instances replace them as the agent-hosting resource.
 
@@ -145,8 +144,7 @@ Human Engineers: $200/min each. AI Engineer agents: Intel 3.0+, costs compute. R
 
 **Nudge button:** Fixes 1 stuck agent per click.
 **Stuck rate:** Intel 0.5 → ~1 in 4. Intel 2.5 → ~1 in 12. Intel 10+ → ~1 in 100. Intel 50+ → effectively never.
-**Manager agents:** ~6 nudges/min. One Manager keeps ~10–15 agents running.
-**Manager² agents:** ~10 nudges/min. Self-healing. One Manager² keeps ~8 Managers running.
+**Manager agents:** ~6 nudges/min each. Managers never get stuck. Unlocks at 3+ agents. Assign agents to the Manager job like any other role.
 
 **UI at different stages:**
 
@@ -171,7 +169,7 @@ Late:
 │  AI Coder  $2K/task 120s  Agents: 200 (197/2/1) │
 │  AI Researcher  Agents: 500 → 🔬 900/min        │
 │  Software Dev (AI) Agents: 20 → Code: 64/min    │
-│  Manager²: 8  |  Manager: 40                    │
+│  Manager: 40                                    │
 │  Engineers: 50 AI | Robot Ops: 20 (2K robots)   │
 │  Job income: $8.5M/min                          │
 └──────────────────────────────────────────────────┘
@@ -207,22 +205,6 @@ Starts as subscription management. Transforms into GPU/compute management via an
 - Upgrading to a new tier requires an **upfront payment** equal to 1 minute of the new tier's cost for all current agents.
 - Tier intelligence is the primary gate for job visibility.
 - Agent assignment to specific jobs (like Engineers) may have additional local requirements.
-
-**Subscription tiers:**
-
-| Tier | Cost | Intel | Limit | Cores/Agent | Unlocked |
-|------|------|-------|-------|-------------|----------|
-| Free | $0 | 0.5 | 10 tasks/day | 1 | Start |
-| Pro | $100 | 1.0 | 50 tasks/day | 1 | Start |
-| Ultra | $500 | 2.0 | No limit | 1 | Start |
-| Ultra Max | $2000 | 2.5 | No limit | 2 | Start |
-| Ultra Pro Max | $5000 | 2.5 | No limit | 2 | Start |
-
-All tiers are available from the start — the only gate is money. The laptop's 6 cores let you immediately run up to 6 agents (or 3 at Ultra Max/UPM tier). Ultra Max and Ultra Pro Max have the same Intelligence (2.5) but Ultra Pro Max unlocks Manager² agents.
-
-**Wait logic:** Agents are purchased upfront. If funds reach $0, existing agents keep working, but you cannot hire new ones or upgrade tiers. Paid tiers do not cancel.
-
-**Why Ultra Pro Max at same Intel as Ultra Max?** Ultra Pro Max unlocks Manager² (the self-healing management layer). That's the premium you pay — not raw intelligence, but automation capability.
 
 ### The GPU Transition
 
@@ -304,7 +286,7 @@ Instances = floor(total_compute / PFLOPS_per_instance). More GPUs = more instanc
 
 **Subscriptions (selling):** Unlocked at Intel 8.0+, requires 200 Code. Each subscriber reserves a fixed PFLOPS from free compute. Revenue = subscribers × price.
 
-**Training allocation:** `[−5%]` and `[+5%]` buttons. Training only consumes compute when a run is active.
+**Training allocation:** buttons to add and remove GPUs to training (flexible, scale with current number). Training only consumes compute when a run is active.
 
 ---
 
@@ -464,7 +446,7 @@ The panel becomes SPACE & ENERGY with orbital arrays, lunar base, Mercury operat
 
 ## Visual Panels
 
-The game features **4 visual panels** that exist separately from the UI panels. They are decorative/atmospheric backgrounds that evolve as the player progresses. Each visual panel unlocks at a specific milestone and is always visible once unlocked (displayed above or alongside the UI panels).
+The game features **4 visual panels** that exist separately from the UI panels. They are decorative/atmospheric backgrounds that evolve as the player progresses. Each visual panel unlocks at a specific milestone and is always visible once unlocked (displayed above the UI panels, replaces the previous UI panel).
 
 ### Visual Panel 1: In-Datacenter View
 
@@ -562,48 +544,9 @@ The view pulls back to show the Milky Way as a spiral. Light spreads outward fro
 
 The game maintains ~1 meaningful click per 1–2 seconds throughout. **No dead time for optimal players.**
 
-### Phase 1: Quick Start (~0–3 min)
-
-**Setup:** 1 Free agent, 6 CPU cores. Sixxer Basic ($6, 20s). Player starts with $50.
-
-Second 0: Game starts. 1 Free agent auto-begins a task. Player watches.
-Second 20: First task completes (+$6, total $56). Second task auto-starts. **Meanwhile:** Player can immediately buy a Pro sub ($20/min) — they have $56 and income is coming.
-
-**Key design: the laptop's 6 cores eliminate hardware gating.** With 6 cores, the player can run 5 Pro agents (1 core each) + 1 Free agent immediately — the only gate is money. This means the first ~3 minutes are spent buying subs as fast as income allows, not waiting for hardware.
-
-Second 30–40: Buy first Pro sub. Now 2 agents working Sixxer Basic.
-Minute 1: Income is ~$18/min (from Free) + ~$18/min (from Pro) = ~$36/min. Sub cost: $20/min. Net: ~$16/min. Buy second Pro sub at minute 1.5 ($20). Three agents.
-Minute 2: Income ~$54/min, cost ~$40/min. Net ~$14/min. Agents are getting stuck (~1 in 4 tasks at Intel 0.5). **Nudge clicking begins** — player clicks Nudge every few seconds. This is the core early-game activity.
-Minute 2.5: Buy third Pro sub. 4 agents, 2 cores remaining.
-Minute 3: Fourth Pro sub. 5 agents, 1 core remaining (laptop maxed). Income ~$90/min, cost ~$80/min. **Buy first Mic-mini ($80)** — this takes ~4 seconds of saving from net income.
-
-**Clicks:** Nudge (every 2–5s), buy subs (every 20–30s), buy Mic-mini (every 30–60s). ~1 click per 2s. No dead time.
-
-### Phase 2: Subscription Scaling (~3–10 min)
-
-Player buys Mic-minis and scales subs. Each Mic-mini ($80) adds 8 cores. Intel 1.0 (Pro) unlocks Sixxer Standard ($18/30s).
-
-**Minute 5:** 2 Mic-minis (22 cores total), 8 agents on Standard. Income ~$290/min. Cost ~$160/min (Pro subs). Net ~$130/min.
-
-**Minute 7:** First Ultra sub ($50/min, Intel 2.0). Unlocks Manager agents and Sixxer Advanced ($45/40s). Player reassigns agents to Advanced. Nudge clicking decreases as Manager handles some. Buy more Mic-minis.
-
-**Minute 9:** 3 Mic-minis, ~10 agents. Mix of Advanced and Standard. Income ~$500/min. Cost ~$300/min. **Key: player should always have something to buy.** If they're saving for an Ultra sub ($50/min), a Mic-mini ($80) is always purchasable as a micro-goal.
-
-**Clicks:** Nudge, buy sub, buy Mic-mini, reassign agents. ~1 click per 2s.
-
-### Phase 3: Ultra Pro Max & Automation (~10–18 min)
-
-Player reaches Ultra Pro Max ($200/min, Intel 2.5). Manager² unlocks. 10–14 agents running. Nudge clicks decrease (Manager² self-heals).
-
-**Minute 14:** ~12 agents on Enterprise ($120/55s) = ~$1,570/min. Costs ~$800/min subs. Net ~$770/min.
-
-**Minute 16–18:** Player accumulates ~$10K–15K. Meanwhile, they're still buying Mic-minis for more cores, buying subs, managing agents. The "Go Self-Hosted" button appears when they can afford 12 GPUs × $3,000 = $36,000. Net income is high enough they reach this in ~25 seconds of saving.
-
-**No waiting:** The player is always buying something — another sub, another Mic-mini, reassigning agents. The GPU transition is a decision, not a wait.
-
 ### Phase 4: GPU Transition (~18–25 min)
 
-Player clicks [Go Self-Hosted]. All sub costs vanish instantly. Net income jumps.
+Player clicks [Go Self-Hosted]. 
 
 **Post-transition:** Player buys GPUs ($3,000 each) as fast as money comes in. At ~$1,500/min net (Enterprise tasks), that's 1 GPU every 2 seconds. Click click click. Upgrade to DeepKick-647B at 16 GPUs. Agents do Enterprise faster.
 
@@ -938,4 +881,4 @@ The universe is thinking.
 
 ---
 
-*"You started with $50 and a free account. You ended with everything. The Intelligence says it was worth it. You're not sure what that means anymore."*
+*"You started with no money and a basic account. You ended with everything. The Intelligence says it was worth it. You're not sure what that means anymore."*
