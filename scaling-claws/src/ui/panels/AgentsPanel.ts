@@ -1,4 +1,5 @@
 import type { GameState } from '../../game/GameState.ts';
+import { getTotalAssignedAgents } from '../../game/GameState.ts';
 import type { Panel } from '../PanelManager.ts';
 import { BALANCE, getNextTier } from '../../game/BalanceConfig.ts';
 import { formatMoney } from '../../game/utils.ts';
@@ -307,7 +308,7 @@ export class AgentsPanel implements Panel {
     // -- Subscription Tier --
     const currentTier = BALANCE.tiers[state.subscriptionTier];
     this.subTierNameEl.textContent = currentTier.displayName;
-    this.subTierIntelEl.textContent = `Intel ${currentTier.intel.toFixed(1)}`;
+    this.subTierIntelEl.textContent = `Intel ${(Math.round(currentTier.intel * 10) / 10).toString()}`;
     this.subTierCostEl.textContent = `$${currentTier.cost} upfront`;
     
     // Upgrade Info
@@ -318,9 +319,9 @@ export class AgentsPanel implements Panel {
       // "The cost should be paid upfront (upgrade pays for the subscription for 1 minute)"
       
       this.upgradeBtn.style.display = 'block';
-      const agentCount = state.agents.length;
+      const agentCount = state.totalAgents;
       const upgradeCost = nextTier.cost * agentCount;
-      this.upgradeBtn.textContent = `Upgrade to ${nextTier.displayName} (${agentCount}×${formatMoney(nextTier.cost)} = ${formatMoney(upgradeCost)}, ${nextTier.intel.toFixed(1)} Intel)`;
+      this.upgradeBtn.textContent = `Upgrade to ${nextTier.displayName} (${agentCount}×${formatMoney(nextTier.cost)} = ${formatMoney(upgradeCost)}, ${(Math.round(nextTier.intel * 10) / 10).toString()} Intel)`;
       
       this.upgradeBtn.disabled = state.funds < upgradeCost;
       
@@ -331,9 +332,9 @@ export class AgentsPanel implements Panel {
     }
 
     // -- Agent Controls --
-    this.agentCountEl.textContent = state.agents.length.toString();
-    const assignedCount = state.agents.filter(a => a.assignedJob !== 'unassigned').length;
-    let unassignedCount = state.agents.length - assignedCount;
+    this.agentCountEl.textContent = state.totalAgents.toString();
+    const assignedCount = getTotalAssignedAgents(state);
+    let unassignedCount = state.agentPools['unassigned'].totalCount;
 
     if (state.isPostGpuTransition) {
       // In GPU era, unassigned agents are limited by compute slots
@@ -363,15 +364,17 @@ export class AgentsPanel implements Panel {
     this.micMiniBuyBtn.disabled = state.funds < BALANCE.micMini.cost;
 
     // Summary
-    const totalAgents = state.agents.length;
+    const totalAgents = state.totalAgents;
     this.totalAgentsEl.textContent = 'Total agents: ' + totalAgents;
     this.totalCostEl.textContent = 'Income potential: ' + formatMoney(state.incomePerMin) + '/min';
 
     // Go Self-Hosted
-    const gpuCost = totalAgents * BALANCE.gpuCost;
+    const minGpus = BALANCE.models[0].minGpus;
+    const gpuCount = Math.max(minGpus, totalAgents);
+    const gpuCost = gpuCount * BALANCE.gpuCost;
     if (!state.isPostGpuTransition && state.intelligence >= BALANCE.selfHostedUnlockIntel) {
       this.selfHostedSection.classList.remove('hidden');
-      this.selfHostedCostEl.textContent = totalAgents + ' GPUs x ' + formatMoney(BALANCE.gpuCost) + ' = ' + formatMoney(gpuCost);
+      this.selfHostedCostEl.textContent = gpuCount + ' GPUs x ' + formatMoney(BALANCE.gpuCost) + ' = ' + formatMoney(gpuCost);
       this.selfHostedBtn.disabled = state.funds < gpuCost;
     } else {
       this.selfHostedSection.classList.add('hidden');

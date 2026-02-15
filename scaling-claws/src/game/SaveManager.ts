@@ -1,7 +1,14 @@
 import type { GameState } from './GameState.ts';
-import { createInitialState } from './GameState.ts';
 
 const SAVE_KEY = 'scaling-claws-save';
+
+/**
+ * SaveManager — Simple save/load without migrations or backward compatibility.
+ *
+ * During development, breaking changes to GameState are expected.
+ * DO NOT add migration code or version checks — players will start fresh.
+ * This keeps the codebase clean and saves will be stable after release.
+ */
 
 export function saveGame(state: GameState): void {
   try {
@@ -17,24 +24,17 @@ export function loadGame(): GameState | null {
     const json = localStorage.getItem(SAVE_KEY);
     if (!json) return null;
 
-    const parsed = JSON.parse(json) as Partial<GameState>;
+    const parsed = JSON.parse(json) as GameState;
 
-    // Basic validation: check essential fields exist
-    if (typeof parsed.funds !== 'number' || !Array.isArray(parsed.agents)) {
+    // Basic validation
+    if (typeof parsed.funds !== 'number' || !parsed.agentPools) {
       return null;
     }
 
-    // Merge with defaults to handle missing fields from older saves
-    const defaults = createInitialState();
-    const state: GameState = {
-      ...defaults,
-      ...parsed,
-    };
+    // Reset tick time to prevent offline catch-up issues
+    parsed.lastTickTime = Date.now();
 
-    // Fix lastTickTime to now (don't try to simulate offline time yet)
-    state.lastTickTime = Date.now();
-
-    return state;
+    return parsed;
   } catch (_e) {
     return null;
   }
@@ -51,14 +51,17 @@ export function exportSave(state: GameState): string {
 export function importSave(data: string): GameState | null {
   try {
     const json = atob(data);
-    const parsed = JSON.parse(json) as Partial<GameState>;
-    if (typeof parsed.funds !== 'number') return null;
-    const defaults = createInitialState();
-    return {
-      ...defaults,
-      ...parsed,
-      lastTickTime: Date.now(),
-    };
+    const parsed = JSON.parse(json) as GameState;
+
+    // Basic validation
+    if (typeof parsed.funds !== 'number' || !parsed.agentPools) {
+      return null;
+    }
+
+    // Reset tick time
+    parsed.lastTickTime = Date.now();
+
+    return parsed;
   } catch (_e) {
     return null;
   }

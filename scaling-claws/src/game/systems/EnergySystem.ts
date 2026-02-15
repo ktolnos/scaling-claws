@@ -9,7 +9,7 @@ export function tickEnergy(state: GameState, _dtMs: number): void {
 
   // Power supply: grid + plants + solar + home
   let supply = BALANCE.homePowerMW;
-  supply += state.gridBlocksOwned * BALANCE.gridBlockMW;
+  supply += state.gridPowerKW / 1000;
   supply += state.gasPlants * BALANCE.powerPlants.gas.outputMW;
   supply += state.nuclearPlants * BALANCE.powerPlants.nuclear.outputMW;
   supply += state.solarPanels * BALANCE.solarPanelMW;
@@ -23,17 +23,21 @@ export function tickEnergy(state: GameState, _dtMs: number): void {
   }
 }
 
-export function buyGridBlock(state: GameState): boolean {
-  const newCostPerMin = (state.gridBlocksOwned + 1) * BALANCE.gridCostPerBlockPerMin;
-  if (state.funds < newCostPerMin) return false;
+export function buyGridPower(state: GameState, amountKW: number): boolean {
+  const newTotalKW = state.gridPowerKW + amountKW;
+  const newTotalCostPerMin = newTotalKW * BALANCE.gridPowerCostPerKWPerMin;
+  if (state.funds < newTotalCostPerMin) return false;
 
-  state.gridBlocksOwned++;
+  state.gridPowerKW = newTotalKW;
   return true;
 }
 
-export function sellGridBlock(state: GameState): boolean {
-  if (state.gridBlocksOwned <= 0) return false;
-  state.gridBlocksOwned--;
+export function sellGridPower(state: GameState, amountKW: number): boolean {
+  if (state.gridPowerKW < amountKW) {
+    state.gridPowerKW = 0;
+  } else {
+    state.gridPowerKW -= amountKW;
+  }
   return true;
 }
 

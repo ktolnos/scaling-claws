@@ -2,13 +2,15 @@ import type { GameState } from '../../game/GameState.ts';
 import type { Panel } from '../PanelManager.ts';
 import { BALANCE } from '../../game/BalanceConfig.ts';
 import { formatMoney, formatNumber } from '../../game/utils.ts';
-import { buyGridBlock, sellGridBlock, buyGasPlant, buyNuclearPlant, buySolarFarm, buySolarPanel } from '../../game/systems/EnergySystem.ts';
-import { getBuyTiers } from '../components/BulkBuyGroup.ts';
+import { buyGridPower, sellGridPower, buyGasPlant, buyNuclearPlant, buySolarFarm, buySolarPanel } from '../../game/systems/EnergySystem.ts';
+import { BulkBuyGroup, getBuyTiers } from '../components/BulkBuyGroup.ts';
 
 interface PlantRowRefs {
   row: HTMLDivElement;
   info: HTMLSpanElement;
   btn: HTMLButtonElement;
+  btnMoney: HTMLSpanElement;
+  btnLabor: HTMLSpanElement;
 }
 
 interface SolarPanelRefs {
@@ -26,8 +28,8 @@ export class EnergyPanel implements Panel {
   private supplyEl!: HTMLSpanElement;
   private throttleEl!: HTMLDivElement;
   private gridEl!: HTMLSpanElement;
-  private gridBuyBtn!: HTMLButtonElement;
-  private gridSellBtn!: HTMLButtonElement;
+  private gridBuyGroup!: BulkBuyGroup;
+  private gridSellGroup!: BulkBuyGroup;
 
   private gasRow!: PlantRowRefs;
   private nuclearRow!: PlantRowRefs;
@@ -84,31 +86,32 @@ export class EnergyPanel implements Panel {
     // Grid contract
     const gridRow = document.createElement('div');
     gridRow.className = 'panel-row';
+    gridRow.style.fontSize = '0.82rem';
+
     const gridLabel = document.createElement('span');
     gridLabel.className = 'label';
     gridLabel.textContent = 'Grid contract:';
+    gridRow.appendChild(gridLabel);
+
+    const gridControls = document.createElement('div');
+    gridControls.style.display = 'flex';
+    gridControls.style.alignItems = 'center';
+    gridControls.style.gap = '6px';
+
+    this.gridSellGroup = new BulkBuyGroup((amt) => sellGridPower(this.state, amt), '-');
+    this.gridBuyGroup = new BulkBuyGroup((amt) => buyGridPower(this.state, amt), '+');
+
     this.gridEl = document.createElement('span');
     this.gridEl.className = 'value';
+    this.gridEl.style.fontWeight = 'bold';
+    this.gridEl.style.minWidth = '45px';
+    this.gridEl.style.textAlign = 'center';
 
-    const gridBtns = document.createElement('span');
-    gridBtns.style.display = 'flex';
-    gridBtns.style.gap = '4px';
-    gridBtns.style.alignItems = 'center';
+    gridControls.appendChild(this.gridSellGroup.el);
+    gridControls.appendChild(this.gridEl);
+    gridControls.appendChild(this.gridBuyGroup.el);
 
-    this.gridSellBtn = document.createElement('button');
-    this.gridSellBtn.textContent = '-5 MW';
-    this.gridSellBtn.style.fontSize = '0.75rem';
-    this.gridSellBtn.addEventListener('click', () => sellGridBlock(this.state));
-
-    this.gridBuyBtn = document.createElement('button');
-    this.gridBuyBtn.style.fontSize = '0.75rem';
-    this.gridBuyBtn.addEventListener('click', () => buyGridBlock(this.state));
-
-    gridBtns.appendChild(this.gridSellBtn);
-    gridBtns.appendChild(this.gridEl);
-    gridBtns.appendChild(this.gridBuyBtn);
-    gridRow.appendChild(gridLabel);
-    gridRow.appendChild(gridBtns);
+    gridRow.appendChild(gridControls);
     body.appendChild(gridRow);
 
     body.appendChild(this.createDivider());
@@ -167,11 +170,25 @@ export class EnergyPanel implements Panel {
 
     const btn = document.createElement('button');
     btn.style.fontSize = '0.75rem';
+    
+    const btnText = document.createElement('span');
+    btnText.textContent = 'Build ';
+    btn.appendChild(btnText);
+    
+    const btnMoney = document.createElement('span');
+    btn.appendChild(btnMoney);
+    
+    const btnSpace = document.createTextNode(' ');
+    btn.appendChild(btnSpace);
+    
+    const btnLabor = document.createElement('span');
+    btn.appendChild(btnLabor);
+
     btn.addEventListener('click', onClick);
     row.appendChild(btn);
 
     parent.appendChild(row);
-    return { row, info, btn };
+    return { row, info, btn, btnMoney, btnLabor };
   }
 
   private createDivider(): HTMLHRElement {
@@ -199,14 +216,14 @@ export class EnergyPanel implements Panel {
     }
 
     // Grid
-    const gridMW = state.gridBlocksOwned * BALANCE.gridBlockMW;
-    this.gridEl.textContent = formatMW(gridMW);
-    const nextGridCost = (state.gridBlocksOwned + 1) * BALANCE.gridCostPerBlockPerMin;
-    const gridMoneyMet = state.funds >= nextGridCost;
-    const gridMoneyColor = gridMoneyMet ? '' : 'var(--accent-red)';
-    this.gridBuyBtn.innerHTML = `+5 MW <span style="color: ${gridMoneyColor}">${formatMoney(BALANCE.gridCostPerBlockPerMin)}/min</span>`;
-    this.gridBuyBtn.disabled = !gridMoneyMet;
-    this.gridSellBtn.disabled = state.gridBlocksOwned <= 0;
+    const gridKW = state.gridPowerKW;
+    this.gridEl.textContent = formatMW(gridKW / 1000);
+    
+    this.gridBuyGroup.update(gridKW, (amt) => {
+      const nextTotalKW = gridKW + amt;
+      return state.funds >= nextTotalKW * BALANCE.gridPowerCostPerKWPerMin;
+    });
+    this.gridSellGroup.update(gridKW, (amt) => gridKW >= amt);
 
     // Power plants — update in place
     this.updatePlantRow(this.gasRow, 'Gas Plant', state.gasPlants, BALANCE.powerPlants.gas, state.labor);
@@ -247,17 +264,22 @@ export class EnergyPanel implements Panel {
     const laborMet = currentLabor >= config.laborCost;
     const moneyMet = this.state.funds >= config.cost;
 
-    refs.info.innerHTML = `${name}: ${count} ${mwText}`;
+    refs.info.textContent = `${name}: ${count} ${mwText}`;
     
     const moneyColor = moneyMet ? '' : 'var(--accent-red)';
     const laborColor = laborMet ? '' : 'var(--accent-red)';
-    refs.btn.innerHTML = `Build <span style="color: ${moneyColor}">${formatMoney(config.cost)}</span> <span style="color: ${laborColor}">(${formatNumber(config.laborCost)} labor)</span>`;
+    
+    refs.btnMoney.textContent = formatMoney(config.cost);
+    refs.btnMoney.style.color = moneyColor;
+    refs.btnLabor.textContent = ` + ${formatNumber(config.laborCost)} labor`;
+    refs.btnLabor.style.color = laborColor;
+    
     refs.btn.disabled = !moneyMet || !laborMet;
   }
 }
 
 function formatMW(mw: number): string {
-  if (mw < 1) return (mw * 1000).toFixed(0) + ' kW';
-  if (mw < 1000) return mw.toFixed(1) + ' MW';
-  return (mw / 1000).toFixed(1) + ' GW';
+  if (mw < 1) return Math.round(mw * 1000).toString() + ' kW';
+  if (mw < 1000) return (Math.round(mw * 10) / 10).toString() + ' MW';
+  return (Math.round((mw / 1000) * 10) / 10).toString() + ' GW';
 }

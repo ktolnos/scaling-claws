@@ -46,8 +46,8 @@ if (state.isPostGpuTransition) {
   panelManager.register('agents', new AgentsPanel(state, handleGpuTransition));
 }
 
-// If training already unlocked (loaded from save), show training panel
-if (state.intelligence >= BALANCE.trainingUnlockIntel) {
+// If training/research already unlocked (loaded from save), show training panel
+if (state.intelligence >= BALANCE.researchUnlockIntel) {
   panelManager.register('training', new TrainingPanel(state));
 }
 
@@ -57,7 +57,7 @@ if (state.completedResearch.includes('chipFab1')) {
 }
 
 // Track whether panels have been added (for mid-game unlocks)
-let trainingPanelAdded = state.intelligence >= BALANCE.trainingUnlockIntel;
+let trainingPanelAdded = state.intelligence >= BALANCE.researchUnlockIntel;
 let supplyPanelAdded = state.completedResearch.includes('chipFab1');
 
 // UI update loop
@@ -68,8 +68,8 @@ setInterval(() => {
   datacenterVisual.update(s);
   ticker.update(s);
 
-  // Check for mid-game training unlock
-  if (!trainingPanelAdded && s.intelligence >= BALANCE.trainingUnlockIntel) {
+  // Check for mid-game training/research unlock
+  if (!trainingPanelAdded && s.intelligence >= BALANCE.researchUnlockIntel) {
     panelManager.register('training', new TrainingPanel(s));
     trainingPanelAdded = true;
   }

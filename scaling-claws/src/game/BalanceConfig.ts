@@ -36,6 +36,7 @@ export const JobTypes = {
   robotWorker: 'robotWorker',
   // Human jobs (use state.humanWorkers)
   humanSWE: 'humanSWE',
+  humanResearcher: 'humanResearcher',
   humanWorker: 'humanWorker',
   // Special
   unassigned: 'unassigned',
@@ -47,7 +48,7 @@ export type JobType = typeof JobTypes[keyof typeof JobTypes];
 export const JOB_ORDER: JobType[] = [
   'sixxerBasic', 'sixxerStandard', 'sixxerAdvanced', 'sixxerEnterprise', 'downWork',
   'manager',
-  'humanWorker', 'humanSWE',
+  'humanWorker', 'humanResearcher', 'humanSWE',
   'aiSWE', 'aiResearcher', 'robotWorker',
 ];
 
@@ -113,6 +114,10 @@ export interface JobConfig {
   salaryPerMin?: number;
   /** One-time cost to hire a human worker (human jobs only). */
   hireCost?: number;
+  /** Multiplier for the global stuck rate (0 = never gets stuck). */
+  stuckProbability?: number;
+  /** Intel threshold at which this job is automated and hidden. */
+  obsoleteAtIntel?: number;
 }
 
 export interface ModelConfig {
@@ -155,18 +160,19 @@ export const BALANCE = {
 
   jobs: {
     // --- AI Jobs ---
-    sixxerBasic:      { produces: { resource: 'funds', amount: 6 },     timeMs: 2000,  unlockAtIntel: 0.5, agentIntelReq: 0.5, workerType: 'ai', displayName: 'Sixxer Basic' } as JobConfig,
-    sixxerStandard:   { produces: { resource: 'funds', amount: 18 },    timeMs: 3000,  unlockAtIntel: 0.5, agentIntelReq: 1.0, workerType: 'ai', displayName: 'Sixxer Standard' } as JobConfig,
-    sixxerAdvanced:   { produces: { resource: 'funds', amount: 50 },    timeMs: 4000,  unlockAtIntel: 1.0, agentIntelReq: 1.5, workerType: 'ai', displayName: 'Sixxer Advanced' } as JobConfig,
-    sixxerEnterprise: { produces: { resource: 'funds', amount: 1000 },  timeMs: 5500,  unlockAtIntel: 1.5, agentIntelReq: 2.0, workerType: 'ai', displayName: 'Sixxer Enterprise' } as JobConfig,
-    downWork:         { produces: { resource: 'funds', amount: 2000 },  timeMs: 5500,  unlockAtIntel: 3.0, agentIntelReq: 3.5, workerType: 'ai', displayName: 'Downwork' } as JobConfig,
-    manager:          { produces: { resource: 'nudge', amount: 1 },     timeMs: 1000,  unlockAtIntel: 1.5, agentIntelReq: 2.5, workerType: 'ai', displayName: 'Agent Manager' } as JobConfig,
+    sixxerBasic:      { produces: { resource: 'funds', amount: 6 },     timeMs: 2000,  unlockAtIntel: 0.5, agentIntelReq: 0.5, workerType: 'ai', displayName: 'Sixxer Basic', obsoleteAtIntel: 2.0 } as JobConfig,
+    sixxerStandard:   { produces: { resource: 'funds', amount: 18 },    timeMs: 3000,  unlockAtIntel: 0.5, agentIntelReq: 1.0, workerType: 'ai', displayName: 'Sixxer Standard', obsoleteAtIntel: 9.0 } as JobConfig,
+    sixxerAdvanced:   { produces: { resource: 'funds', amount: 50 },    timeMs: 4000,  unlockAtIntel: 1.0, agentIntelReq: 1.5, workerType: 'ai', displayName: 'Sixxer Advanced', obsoleteAtIntel: 15.0 } as JobConfig,
+    sixxerEnterprise: { produces: { resource: 'funds', amount: 200 },  timeMs: 5500,  unlockAtIntel: 1.5, agentIntelReq: 2.0, workerType: 'ai', displayName: 'Sixxer Enterprise', obsoleteAtIntel: 35.0 } as JobConfig,
+    downWork:         { produces: { resource: 'funds', amount: 300 },  timeMs: 5500,  unlockAtIntel: 2.5, agentIntelReq: 3.5, workerType: 'ai', displayName: 'Downwork', obsoleteAtIntel: 50.0 } as JobConfig,
+    manager:          { produces: { resource: 'nudge', amount: 1 },     timeMs: 1000,  unlockAtIntel: 1.5, agentIntelReq: 2.5, workerType: 'ai', displayName: 'Agent Manager', stuckProbability: 0 } as JobConfig,
     aiSWE:            { produces: { resource: 'code', amount: 0.5 },    timeMs: 3000,  unlockAtIntel: 15.0, agentIntelReq: 15.0, workerType: 'ai', displayName: 'AI Coder' } as JobConfig,
     aiResearcher:     { produces: { resource: 'science', amount: 2 },   timeMs: 5000,  unlockAtIntel: 12.0, agentIntelReq: 12.0, workerType: 'ai', displayName: 'AI Researcher' } as JobConfig,
     robotWorker:      { produces: { resource: 'labor', amount: 5 },     timeMs: 3000,  unlockAtIntel: 15.0, agentIntelReq: 15.0, agentResearchReq: ['robotics2'], workerType: 'ai', displayName: 'Robot Worker' } as JobConfig,
     // --- Human Jobs ---
-    humanSWE:         { produces: { resource: 'code', amount: 0.15 },   timeMs: 3000,  unlockAtIntel: 3.0, agentIntelReq: 0, workerType: 'human', displayName: 'Human Coder', salaryPerMin: 300, hireCost: 500 } as JobConfig,
-    humanWorker:      { produces: { resource: 'labor', amount: 5 },     timeMs: 5000,  unlockAtIntel: 5.0, agentIntelReq: 0, workerType: 'human', displayName: 'Human Worker', salaryPerMin: 200, hireCost: 300 } as JobConfig,
+    humanSWE:         { produces: { resource: 'code', amount: 0.15 },   timeMs: 3000,  unlockAtIntel: 3.0, agentIntelReq: 0, workerType: 'human', displayName: 'Human Coder', salaryPerMin: 3000, hireCost: 500 } as JobConfig,
+    humanResearcher:  { produces: { resource: 'science', amount: 0.5 },  timeMs: 5000,  unlockAtIntel: 7.0, agentIntelReq: 0, workerType: 'human', displayName: 'Human Researcher', salaryPerMin: 5000, hireCost: 1000 } as JobConfig,
+    humanWorker:      { produces: { resource: 'labor', amount: 5 },     timeMs: 5000,  unlockAtIntel: 5.0, agentIntelReq: 0, workerType: 'human', displayName: 'Human Worker', salaryPerMin: 2000, hireCost: 300 } as JobConfig,
     // --- Special ---
     unassigned: {
       produces: { resource: 'funds', amount: 0 },
@@ -180,7 +186,7 @@ export const BALANCE = {
 
   micMini: {
     cost: 500,
-    coresAdded: 8,
+    coresAdded: 4,
     displayName: 'Mic-mini PC',
   },
 
@@ -191,7 +197,7 @@ export const BALANCE = {
   gpuPowerMW: 0.0004, // 400W per GPU = 0.0004 MW
 
   models: [
-    { name: 'DeepKick-405B',  intel: 3.0,  minGpus: 1 },
+    { name: 'DeepKick-405B',  intel: 3.0,  minGpus: 32 },
     { name: 'DeepKick-647B',  intel: 5.0,  minGpus: 64 },
     { name: 'DeepKick-1.2T',  intel: 7.0,  minGpus: 128 },
     { name: 'DeepKick-2.8T',  intel: 9.0,  minGpus: 256 },
@@ -207,9 +213,7 @@ export const BALANCE = {
   ] as DatacenterConfig[],
 
   // Energy
-  gridPowerCostPerMWPerMin: 800, // $800/min per 5MW block → $160/MW/min
-  gridBlockMW: 5,
-  gridCostPerBlockPerMin: 800,
+  gridPowerCostPerKWPerMin: 120,
 
   powerPlants: {
     gas:     { name: 'Gas Plant',     cost: 1_500_000,  outputMW: 50,  laborCost: 180, laborPerMin: 90 } as PowerPlantConfig,
@@ -222,18 +226,18 @@ export const BALANCE = {
 
   // Training
   fineTunes: [
-    { name: 'DeepKick-Math',   intel: 10.0,  pflopsHrs: 50,    dataTB: 20,   codeReq: 20 },
-    { name: 'DeepKick-Code',   intel: 11.0,  pflopsHrs: 150,   dataTB: 60,   codeReq: 0 },
-    { name: 'DeepKick-Reason', intel: 12.0,  pflopsHrs: 500,   dataTB: 200,  codeReq: 0 },
-    { name: 'DeepKick-Ultra',  intel: 13.0, pflopsHrs: 2000,  dataTB: 800,  codeReq: 0 },
+    { name: 'DeepKick-Math',   intel: 10.0,  pflopsHrs: 50,    dataTB: 1,   codeReq: 20 },
+    { name: 'DeepKick-Code',   intel: 11.0,  pflopsHrs: 150,   dataTB: 4,   codeReq: 0 },
+    { name: 'DeepKick-Reason', intel: 12.0,  pflopsHrs: 500,   dataTB: 16,  codeReq: 0 },
+    { name: 'DeepKick-Ultra',  intel: 13.0, pflopsHrs: 2000,  dataTB: 64,  codeReq: 0 },
   ],
 
   ariesModels: [
-    { name: 'Aries-1', intel: 14.0, pflopsHrs: 10_000,     dataTB: 5_000,     codeReq: 100 },
-    { name: 'Aries-2', intel: 18.5, pflopsHrs: 50_000,     dataTB: 20_000,    codeReq: 0 },
-    { name: 'Aries-3', intel: 25.0, pflopsHrs: 250_000,    dataTB: 100_000,   codeReq: 0 },
-    { name: 'Aries-4', intel: 35.0, pflopsHrs: 2_000_000,  dataTB: 500_000,   codeReq: 0 },
-    { name: 'Aries-5', intel: 50.0, pflopsHrs: 20_000_000, dataTB: 3_000_000, codeReq: 0 },
+    { name: 'Aries-1', intel: 14.0, pflopsHrs: 10_000,     dataTB: 500,     codeReq: 100 },
+    { name: 'Aries-2', intel: 18.5, pflopsHrs: 50_000,     dataTB: 2_000,    codeReq: 0 },
+    { name: 'Aries-3', intel: 25.0, pflopsHrs: 250_000,    dataTB: 10_000,   codeReq: 0 },
+    { name: 'Aries-4', intel: 35.0, pflopsHrs: 2_000_000,  dataTB: 50_000,   codeReq: 0 },
+    { name: 'Aries-5', intel: 50.0, pflopsHrs: 20_000_000, dataTB: 250_000, codeReq: 0 },
   ],
 
   trainingUnlockIntel: 9.0,     // Intel threshold to unlock training panel
@@ -242,7 +246,7 @@ export const BALANCE = {
   dataEscalationRate: 0.15, // +15% per purchase
 
   // Research
-  researchUnlockIntel: 12.0,
+  researchUnlockIntel: 7.0,
 
   // Research tree
   research: [
@@ -252,9 +256,9 @@ export const BALANCE = {
     { id: 'algoEfficiency3', name: 'Algo Efficiency III', cost: 3_000,   prereqs: ['algoEfficiency2'],  description: 'Training 25% faster' },
     { id: 'algoEfficiency4', name: 'Algo Efficiency IV',  cost: 15_000,  prereqs: ['algoEfficiency3'],  description: 'Training 25% faster' },
     // Synth Data
-    { id: 'synthData1', name: 'Synth Data I',   cost: 300,    prereqs: [],             description: 'Unlock synth data (150 Code)' },
-    { id: 'synthData2', name: 'Synth Data II',  cost: 2_000,  prereqs: ['synthData1'], description: 'Synth data 2x faster' },
-    { id: 'synthData3', name: 'Synth Data III', cost: 20_000, prereqs: ['synthData2'], description: 'Synth data 2x faster' },
+    { id: 'synthData1', name: 'Synth Data I',   cost: 300,    prereqs: [],             description: 'API Users generate synth data' },
+    { id: 'synthData2', name: 'Synth Data II',  cost: 2_000,  prereqs: ['synthData1'], description: 'Synth data per API user +100%' },
+    { id: 'synthData3', name: 'Synth Data III', cost: 20_000, prereqs: ['synthData2'], description: 'Synth data per API user +100%' },
     // GPU Architecture
     { id: 'gpuArch1', name: 'GPU Architecture v1', cost: 400,    prereqs: [],           description: 'GPUs +50% FLOPS' },
     { id: 'gpuArch2', name: 'GPU Architecture v2', cost: 3_000,  prereqs: ['gpuArch1'], description: 'GPUs +50% FLOPS' },
@@ -304,40 +308,31 @@ export const BALANCE = {
   // We will re-purpose these or add new ones for API
 
   // API Services
-  apiUnlockIntel: 8.0,
+  apiUnlockIntel: 5.0,
   apiUnlockCode: 200,
 
-  apiPflopsPerUser: 0.1, // PFLOPS needed per active user
+  apiPflopsPerUser: 0.01, // PFLOPS needed per active user
 
   apiAdCost: 50_000,
   apiAdAwarenessBoost: 1_500,
 
   apiPriceElasticity: 1.3,
-  apiQualityElasticity: 1.1,
+  intelligenceElasticity: 2,
   apiBaseAwareness: 200, // Starting awareness
-  apiDemandScale: 20, // Global scale factor
+  apiDemandScale: 200, // Global scale factor
 
-  // API Improvement Tiers
-  apiImprovementTiers: [
-    { cost: 1_000,       multiplier: 1.5, name: 'Basic Optimization' },
-    { cost: 10_000,      multiplier: 2.0, name: 'Advanced Caching' },
-    { cost: 100_000,     multiplier: 3.0, name: 'Predictive Batching' },
-    { cost: 1_000_000,   multiplier: 5.0, name: 'Kernel Fusion' },
-    { cost: 10_000_000,  multiplier: 10.0, name: 'Quantum Quantization' },
-    { cost: 100_000_000, multiplier: 25.0, name: 'Neural Compilation' },
-    { cost: 1_000_000_000, multiplier: 100.0, name: 'AGI Alignment' },
-  ] as { cost: number; multiplier: number; name: string }[],
+  apiImproveCodeCost: 100,
+  apiImproveQualityBoost: 0.1,
 
-  // Synth data
-  synthDataPflopsPerTBPerMin: 5, // 5 PFLOPS → 1 TB/min
+  // API Services
+  apiUserSynthBase: 0.001, // 1 GB/min per user (once unlocked)
 };
 
 /**
  * Stuck rate: probability an agent gets stuck on a given task.
- * Intel 0.5 → ~25%, Intel 2.5 → ~8%, Intel 10 → ~1%, Intel 50 → ~0.04%
  */
 export function getStuckRate(intel: number): number {
-  return Math.min(0.35, 0.25 * Math.pow(0.5 / intel, 1.2));
+  return 1.2 * Math.min(0.5, 0.5 * Math.pow(1 / intel, 1));
 }
 /**
  * Get the intelligence for a given subscription tier.

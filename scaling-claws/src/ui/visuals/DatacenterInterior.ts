@@ -119,7 +119,7 @@ export class DatacenterInterior {
     this.stage4RackArea.style.alignItems = 'flex-end';
     this.stage4RackArea.style.justifyContent = 'center';
     this.stage4RackArea.style.gap = '8px';
-    this.stage4RackArea.style.padding = '0 16px 16px';
+    this.stage4RackArea.style.padding = '0 16px 8px';
     this.stage4RackArea.style.width = '100%';
     this.stage4RackArea.style.height = '100%';
     this.stage4El.appendChild(this.stage4RackArea);

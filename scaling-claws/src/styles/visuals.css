@@ -6,7 +6,7 @@
   display: flex;
   align-items: flex-end;
   justify-content: center;
-  padding: var(--spacing-md);
+  padding: var(--spacing-sm);
 }
 
 .visual-panel.hidden {
@@ -93,7 +93,7 @@
   display: flex;
   align-items: flex-end;
   justify-content: center;
-  padding: var(--spacing-md);
+  padding: var(--spacing-sm);
 }
 
 .visual-stage.hidden {
@@ -107,7 +107,7 @@
   bottom: 0;
   left: 0;
   right: 0;
-  height: 40px;
+  height: 24px;
   background: linear-gradient(180deg, #1a1820 0%, #13111a 100%);
   border-top: 1px solid #2a2830;
 }
@@ -115,7 +115,7 @@
 /* Coffee cup easter egg */
 .coffee-cup {
   position: absolute;
-  bottom: 42px;
+  bottom: 26px;
   right: 30%;
   width: 16px;
   height: 18px;
@@ -233,4 +233,41 @@
 @keyframes stuck-pulse {
   0%, 100% { opacity: 0.5; }
   50% { opacity: 1; }
+}
+
+/* Job Automation Swipe */
+.job-row.automated-swipe {
+  position: relative;
+  overflow: hidden;
+  animation: job-swipe-out 1.2s cubic-bezier(0.76, 0, 0.24, 1) forwards;
+  pointer-events: none;
+}
+
+.job-row.automated-swipe::after {
+  content: 'AUTOMATED';
+  position: absolute;
+  inset: 0;
+  background: var(--accent-purple);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 900;
+  font-size: 1.1rem;
+  letter-spacing: 0.2rem;
+  z-index: 10;
+  opacity: 0;
+  animation: automated-text-fade 0.5s ease-out forwards;
+}
+
+@keyframes job-swipe-out {
+  0% { transform: translateX(0); opacity: 1; }
+  40% { transform: translateX(0); opacity: 1; height: auto; margin-bottom: 4px; padding: 4px 6px; }
+  100% { transform: translateX(100%); opacity: 0; height: 0; margin-bottom: 0; padding: 0; }
+}
+
+@keyframes automated-text-fade {
+  0% { opacity: 0; transform: scale(0.6); }
+  40% { opacity: 1; transform: scale(1.05); }
+  100% { opacity: 1; transform: scale(1); }
 }

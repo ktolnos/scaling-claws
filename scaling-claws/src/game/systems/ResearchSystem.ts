@@ -8,19 +8,9 @@ export function tickResearch(state: GameState, _dtMs: number): void {
   // Compute research bonuses from completedResearch
   computeResearchBonuses(state);
 
-  // Synth data production
-  if (state.synthDataUnlocked && state.synthDataAllocPflops > 0) {
-    const synthMultiplier = getSynthDataMultiplier(state);
-    const tbPerMin = (state.synthDataAllocPflops / BALANCE.synthDataPflopsPerTBPerMin) * synthMultiplier;
-    state.synthDataRate = tbPerMin;
-    state.trainingData += tbPerMin * (_dtMs / 60000);
-  } else {
-    state.synthDataRate = 0;
-  }
-
-  // Compute sub selling unlock
-  state.subSellingUnlocked = state.intelligence >= BALANCE.subSellingUnlockIntel &&
-      state.code >= BALANCE.subSellingUnlockCode;
+  // Compute sub selling unlock (TODO: Incomplete feature - disabled for now)
+  // state.subSellingUnlocked = state.intelligence >= BALANCE.subSellingUnlockIntel &&
+  //     state.code >= BALANCE.subSellingUnlockCode;
 }
 
 function computeResearchBonuses(state: GameState): void {
@@ -34,22 +24,20 @@ function computeResearchBonuses(state: GameState): void {
 
   // GPU FLOPS: v1 +50%, v2 +50%, v3 +100%
   let gpuBonus = 1;
-  if (state.completedResearch.includes('gpuArch1')) gpuBonus *= 1.5;
-  if (state.completedResearch.includes('gpuArch2')) gpuBonus *= 1.5;
   if (state.completedResearch.includes('gpuArch3')) gpuBonus *= 2.0;
   state.gpuFlopsBonus = gpuBonus;
 
-  // Synth data unlock
-  state.synthDataUnlocked = state.completedResearch.includes('synthData1');
-
+  // Synth Data from research
+  let synthRate = 0;
+  if (state.completedResearch.includes('synthData1')) {
+    synthRate = BALANCE.apiUserSynthBase;
+    if (state.completedResearch.includes('synthData2')) synthRate *= 2;
+    if (state.completedResearch.includes('synthData3')) synthRate *= 2;
+  }
+  state.apiUserSynthRate = synthRate;
 }
 
-function getSynthDataMultiplier(state: GameState): number {
-  let mult = 1;
-  if (state.completedResearch.includes('synthData2')) mult *= 2;
-  if (state.completedResearch.includes('synthData3')) mult *= 2;
-  return mult;
-}
+
 
 export function getResearchConfig(id: ResearchId): ResearchConfig | undefined {
   return BALANCE.research.find(r => r.id === id);
@@ -89,7 +77,7 @@ export function purchaseResearch(state: GameState, id: ResearchId): boolean {
     );
   } else if (id === 'synthData1') {
     state.pendingFlavorTexts.push(
-      '"Synthetic data pipeline online. The model trains on its own imagination."'
+      '"Synthetic data pipeline online. Your users are now training the model for you."'
     );
   }
 
@@ -107,6 +95,4 @@ export function getAvailableResearch(state: GameState): ResearchConfig[] {
   });
 }
 
-export function setSynthDataAllocation(state: GameState, pflops: number): void {
-  state.synthDataAllocPflops = Math.max(0, Math.min(state.freeCompute, pflops));
-}
+

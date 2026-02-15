@@ -11,6 +11,8 @@ import { getBuyTiers } from '../components/BulkBuyGroup.ts';
 interface SimpleRowRefs {
   info: HTMLSpanElement;
   btn: HTMLButtonElement;
+  btnMoney: HTMLSpanElement;
+  btnLabor?: HTMLSpanElement;
 }
 
 interface BulkRowRefs {
@@ -133,11 +135,25 @@ export class SupplyPanel implements Panel {
 
     const btn = document.createElement('button');
     btn.style.fontSize = '0.72rem';
+    
+    const btnText = document.createElement('span');
+    btnText.textContent = 'Buy ';
+    btn.appendChild(btnText);
+    
+    const btnMoney = document.createElement('span');
+    btn.appendChild(btnMoney);
+    
+    const btnSpace = document.createTextNode(' ');
+    btn.appendChild(btnSpace);
+    
+    const btnLabor = document.createElement('span');
+    btn.appendChild(btnLabor);
+
     btn.addEventListener('click', onClick);
     row.appendChild(btn);
 
     parent.appendChild(row);
-    return { info, btn };
+    return { info, btn, btnMoney, btnLabor };
   }
 
   private buildBulkRow(parent: HTMLElement): BulkRowRefs {
@@ -175,7 +191,8 @@ export class SupplyPanel implements Panel {
     this.lithoRefs.info.textContent = 'Lithography machines: ' + state.lithoMachines;
     const lithoMoneyMet = state.funds >= BALANCE.lithoMachineCost;
     const lithoMoneyColor = lithoMoneyMet ? '' : 'var(--accent-red)';
-    this.lithoRefs.btn.innerHTML = `Buy <span style="color: ${lithoMoneyColor}">${formatMoney(BALANCE.lithoMachineCost)}</span>`;
+    this.lithoRefs.btnMoney.textContent = formatMoney(BALANCE.lithoMachineCost);
+    this.lithoRefs.btnMoney.style.color = lithoMoneyColor;
     this.lithoRefs.btn.disabled = !lithoMoneyMet;
 
     // Wafer batches
@@ -215,21 +232,33 @@ export class SupplyPanel implements Panel {
     // Fabs
     const fabLaborMet = state.labor >= BALANCE.fabLaborCost;
     const fabMoneyMet = state.funds >= BALANCE.fabCost;
-    this.fabRefs.info.innerHTML = 'Wafer fabs: ' + state.waferFabs;
+    this.fabRefs.info.textContent = 'Wafer fabs: ' + state.waferFabs;
     
     const fabMoneyColor = fabMoneyMet ? '' : 'var(--accent-red)';
     const fabLaborColor = fabLaborMet ? '' : 'var(--accent-red)';
-    this.fabRefs.btn.innerHTML = `Build <span style="color: ${fabMoneyColor}">${formatMoney(BALANCE.fabCost)}</span> <span style="color: ${fabLaborColor}">(${formatNumber(BALANCE.fabLaborCost)} labor)</span>`;
+    
+    this.fabRefs.btnMoney.textContent = formatMoney(BALANCE.fabCost);
+    this.fabRefs.btnMoney.style.color = fabMoneyColor;
+    if (this.fabRefs.btnLabor) {
+      this.fabRefs.btnLabor.textContent = ` + ${formatNumber(BALANCE.fabLaborCost)} labor`;
+      this.fabRefs.btnLabor.style.color = fabLaborColor;
+    }
     this.fabRefs.btn.disabled = !fabMoneyMet || !fabLaborMet;
 
     // Mines
     const mineLaborMet = state.labor >= BALANCE.siliconMineLaborCost;
     const mineMoneyMet = state.funds >= BALANCE.siliconMineCost;
-    this.mineRefs.info.innerHTML = 'Silicon mines: ' + state.siliconMines;
+    this.mineRefs.info.textContent = 'Silicon mines: ' + state.siliconMines;
 
     const mineMoneyColor = mineMoneyMet ? '' : 'var(--accent-red)';
     const mineLaborColor = mineLaborMet ? '' : 'var(--accent-red)';
-    this.mineRefs.btn.innerHTML = `Build <span style="color: ${mineMoneyColor}">${formatMoney(BALANCE.siliconMineCost)}</span> <span style="color: ${mineLaborColor}">(${formatNumber(BALANCE.siliconMineLaborCost)} labor)</span>`;
+    
+    this.mineRefs.btnMoney.textContent = formatMoney(BALANCE.siliconMineCost);
+    this.mineRefs.btnMoney.style.color = mineMoneyColor;
+    if (this.mineRefs.btnLabor) {
+      this.mineRefs.btnLabor.textContent = ` + ${formatNumber(BALANCE.siliconMineLaborCost)} labor`;
+      this.mineRefs.btnLabor.style.color = mineLaborColor;
+    }
     this.mineRefs.btn.disabled = !mineMoneyMet || !mineLaborMet;
   }
 
@@ -248,11 +277,17 @@ export class SupplyPanel implements Panel {
     // Factories
     const factLaborMet = state.labor >= BALANCE.robotFactoryLaborCost;
     const factMoneyMet = state.funds >= BALANCE.robotFactoryCost;
-    this.factoryRefs.info.innerHTML = 'Robot factories: ' + state.robotFactories;
+    this.factoryRefs.info.textContent = 'Robot factories: ' + state.robotFactories;
     
     const factMoneyColor = factMoneyMet ? '' : 'var(--accent-red)';
     const factLaborColor = factLaborMet ? '' : 'var(--accent-red)';
-    this.factoryRefs.btn.innerHTML = `Build <span style="color: ${factMoneyColor}">${formatMoney(BALANCE.robotFactoryCost)}</span> <span style="color: ${factLaborColor}">(${formatNumber(BALANCE.robotFactoryLaborCost)} labor)</span>`;
+    
+    this.factoryRefs.btnMoney.textContent = formatMoney(BALANCE.robotFactoryCost);
+    this.factoryRefs.btnMoney.style.color = factMoneyColor;
+    if (this.factoryRefs.btnLabor) {
+      this.factoryRefs.btnLabor.textContent = ` + ${formatNumber(BALANCE.robotFactoryLaborCost)} labor`;
+      this.factoryRefs.btnLabor.style.color = factLaborColor;
+    }
     this.factoryRefs.btn.disabled = !factMoneyMet || !factLaborMet;
 
     // Robots

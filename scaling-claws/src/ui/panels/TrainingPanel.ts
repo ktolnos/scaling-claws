@@ -8,7 +8,7 @@ import {
   setTrainingAllocation,
 } from '../../game/systems/TrainingSystem.ts';
 import {
-  getAvailableResearch, purchaseResearch, setSynthDataAllocation,
+  getAvailableResearch, purchaseResearch,
 } from '../../game/systems/ResearchSystem.ts';
 import { BulkBuyGroup } from '../components/BulkBuyGroup.ts';
 
@@ -50,7 +50,8 @@ export class TrainingPanel implements Panel {
   // Training section
   private progressRefs!: TrainingProgressRefs;
   private nextRefs!: TrainingNextRefs;
-  private lastTrainingMode: string = '';
+  private nextTrainingType: 'ft' | 'aries' | null = null;
+  private nextTrainingIdx: number = -1;
 
   // Data section
   private dataRefs!: DataRefs;
@@ -60,10 +61,6 @@ export class TrainingPanel implements Panel {
 
   // Research
   private researchSection!: HTMLDivElement;
-  private synthRow!: HTMLDivElement;
-  private synthInfo!: HTMLSpanElement;
-  private synthOffBtn!: HTMLButtonElement;
-  private synthIncBtn!: HTMLButtonElement;
   private researchListEl!: HTMLDivElement;
   private researchDoneEl!: HTMLDivElement;
   private researchRows: Map<ResearchId, { row: HTMLDivElement; btn: HTMLButtonElement }> = new Map();
@@ -169,7 +166,15 @@ export class TrainingPanel implements Panel {
     container.appendChild(reqs);
 
     const btn = document.createElement('button');
+    btn.className = 'btn-primary';
     btn.style.marginTop = '4px';
+    btn.addEventListener('click', () => {
+      if (this.nextTrainingType === 'ft') {
+        startFineTune(this.state, this.nextTrainingIdx);
+      } else if (this.nextTrainingType === 'aries') {
+        startAriesTraining(this.state, this.nextTrainingIdx);
+      }
+    });
     container.appendChild(btn);
 
     parent.appendChild(container);
@@ -270,37 +275,6 @@ export class TrainingPanel implements Panel {
     title.textContent = 'RESEARCH';
     container.appendChild(title);
 
-    // Synth data row (hidden initially)
-    this.synthRow = document.createElement('div');
-    this.synthRow.className = 'panel-row';
-    this.synthRow.style.fontSize = '0.82rem';
-    this.synthRow.style.display = 'none';
-
-    this.synthInfo = document.createElement('span');
-    this.synthInfo.className = 'label';
-    this.synthRow.appendChild(this.synthInfo);
-
-    const synthBtns = document.createElement('span');
-    synthBtns.style.display = 'flex';
-    synthBtns.style.gap = '3px';
-
-    this.synthOffBtn = document.createElement('button');
-    this.synthOffBtn.textContent = 'Off';
-    this.synthOffBtn.style.fontSize = '0.72rem';
-    this.synthOffBtn.addEventListener('click', () => setSynthDataAllocation(this.state, 0));
-    synthBtns.appendChild(this.synthOffBtn);
-
-    this.synthIncBtn = document.createElement('button');
-    this.synthIncBtn.style.fontSize = '0.72rem';
-    this.synthIncBtn.addEventListener('click', () => {
-      const incStep = Math.max(5, Math.round(this.state.freeCompute * 0.1));
-      setSynthDataAllocation(this.state, this.state.synthDataAllocPflops + incStep);
-    });
-    synthBtns.appendChild(this.synthIncBtn);
-
-    this.synthRow.appendChild(synthBtns);
-    container.appendChild(this.synthRow);
-
     // Research list container
     this.researchListEl = document.createElement('div');
     container.appendChild(this.researchListEl);
@@ -324,7 +298,7 @@ export class TrainingPanel implements Panel {
   update(state: GameState): void {
     this.state = state;
 
-    this.currentModelEl.textContent = this.getCurrentModelName(state) + ' (Intel ' + state.intelligence.toFixed(1) + ')';
+    this.currentModelEl.textContent = this.getCurrentModelName(state) + ' (Intel ' + (Math.round(state.intelligence * 10) / 10).toString() + ')';
 
     this.updateTraining(state);
     this.updateData(state);
@@ -353,7 +327,7 @@ export class TrainingPanel implements Panel {
       const pct = Math.min(100, (state.fineTuneProgress / ft.pflopsHrs) * 100);
       this.progressRefs.container.style.display = '';
       this.nextRefs.container.style.display = 'none';
-      this.progressRefs.label.innerHTML = 'Training: <strong>' + ft.name + '</strong> ' + pct.toFixed(1) + '%';
+      this.progressRefs.label.textContent = `Training: ${ft.name} ${(Math.round(pct * 10) / 10).toString()}%`;
       this.progressRefs.barFill.style.width = pct + '%';
       this.progressRefs.detail.textContent = formatNumber(state.fineTuneProgress) + ' / ' + formatNumber(ft.pflopsHrs) + ' PFLOPS-hrs';
     } else if (state.ariesModelIndex >= 0) {
@@ -361,7 +335,7 @@ export class TrainingPanel implements Panel {
       const pct = Math.min(100, (state.ariesProgress / am.pflopsHrs) * 100);
       this.progressRefs.container.style.display = '';
       this.nextRefs.container.style.display = 'none';
-      this.progressRefs.label.innerHTML = 'Training: <strong>' + am.name + '</strong> ' + pct.toFixed(1) + '%';
+      this.progressRefs.label.textContent = `Training: ${am.name} ${(Math.round(pct * 10) / 10).toString()}%`;
       this.progressRefs.barFill.style.width = pct + '%';
       this.progressRefs.detail.textContent = formatNumber(state.ariesProgress) + ' / ' + formatNumber(am.pflopsHrs) + ' PFLOPS-hrs';
     } else {
@@ -371,21 +345,22 @@ export class TrainingPanel implements Panel {
       if (nextFT !== null) {
         const ft = BALANCE.fineTunes[nextFT];
         this.nextRefs.container.style.display = '';
-        this.nextRefs.info.innerHTML = '<strong style="color:var(--accent-green)">' + ft.name + '</strong> (Intel ' + ft.intel + ')';
-        let reqText = formatNumber(ft.pflopsHrs) + ' PFLOPS-hrs + ' + formatNumber(ft.dataTB) + ' TB data';
-        if (ft.codeReq > 0) reqText += ' + ' + ft.codeReq + ' Code';
-        this.nextRefs.reqs.textContent = reqText;
+        this.nextRefs.info.textContent = `${ft.name} (Intel ${ft.intel})`;
+        this.nextRefs.info.style.color = 'var(--accent-green)';
+        this.nextRefs.info.style.fontWeight = 'bold';
+        
+        const dataBlocking = state.trainingData < ft.dataTB;
+        const dataStr = `<span style="${dataBlocking ? 'color: var(--accent-red);' : ''}">${formatNumber(ft.dataTB)} TB data</span>`;
+        let reqHtml = formatNumber(ft.pflopsHrs) + ' PFLOPS-hrs + ' + dataStr;
+        if (ft.codeReq > 0) {
+          const codeBlocking = state.code < ft.codeReq;
+          reqHtml += ` + <span style="${codeBlocking ? 'color: var(--accent-red);' : ''}">${ft.codeReq} Code</span>`;
+        }
+        this.nextRefs.reqs.innerHTML = reqHtml;
         this.nextRefs.btn.textContent = 'Start Fine-tune';
 
-        // Rebind click — use a mode key to avoid stale closures
-        const mode = 'ft-' + nextFT;
-        if (this.lastTrainingMode !== mode) {
-          this.lastTrainingMode = mode;
-          const newBtn = this.nextRefs.btn.cloneNode(true) as HTMLButtonElement;
-          this.nextRefs.btn.replaceWith(newBtn);
-          this.nextRefs.btn = newBtn;
-          newBtn.addEventListener('click', () => startFineTune(this.state, nextFT));
-        }
+        this.nextTrainingType = 'ft';
+        this.nextTrainingIdx = nextFT;
 
         const canStart = state.trainingData >= ft.dataTB && (ft.codeReq === 0 || state.code >= ft.codeReq);
         this.nextRefs.btn.disabled = !canStart;
@@ -394,25 +369,28 @@ export class TrainingPanel implements Panel {
         if (nextAries !== null) {
           const am = BALANCE.ariesModels[nextAries];
           this.nextRefs.container.style.display = '';
-          this.nextRefs.info.innerHTML = '<strong style="color:var(--accent-purple)">' + am.name + '</strong> (Intel ~' + am.intel + ')';
-          let reqText = formatNumber(am.pflopsHrs) + ' PFLOPS-hrs + ' + formatNumber(am.dataTB) + ' TB data';
-          if (am.codeReq > 0) reqText += ' + ' + am.codeReq + ' Code';
-          this.nextRefs.reqs.textContent = reqText;
+          this.nextRefs.info.textContent = `${am.name} (Intel ~${am.intel})`;
+          this.nextRefs.info.style.color = 'var(--accent-purple)';
+          this.nextRefs.info.style.fontWeight = 'bold';
+          
+          const dataBlocking = state.trainingData < am.dataTB;
+          const dataStr = `<span style="${dataBlocking ? 'color: var(--accent-red);' : ''}">${formatNumber(am.dataTB)} TB data</span>`;
+          let reqHtml = formatNumber(am.pflopsHrs) + ' PFLOPS-hrs + ' + dataStr;
+          if (am.codeReq > 0) {
+            const codeBlocking = state.code < am.codeReq;
+            reqHtml += ` + <span style="${codeBlocking ? 'color: var(--accent-red);' : ''}">${am.codeReq} Code</span>`;
+          }
+          this.nextRefs.reqs.innerHTML = reqHtml;
           this.nextRefs.btn.textContent = 'Start Training';
 
-          const mode = 'aries-' + nextAries;
-          if (this.lastTrainingMode !== mode) {
-            this.lastTrainingMode = mode;
-            const newBtn = this.nextRefs.btn.cloneNode(true) as HTMLButtonElement;
-            this.nextRefs.btn.replaceWith(newBtn);
-            this.nextRefs.btn = newBtn;
-            newBtn.addEventListener('click', () => startAriesTraining(this.state, nextAries));
-          }
+          this.nextTrainingType = 'aries';
+          this.nextTrainingIdx = nextAries;
 
           const canStart = state.trainingData >= am.dataTB && (am.codeReq === 0 || state.code >= am.codeReq);
           this.nextRefs.btn.disabled = !canStart;
         } else {
           this.nextRefs.container.style.display = 'none';
+          this.nextTrainingType = null;
         }
       }
     }
@@ -420,7 +398,12 @@ export class TrainingPanel implements Panel {
 
   private updateData(state: GameState): void {
     const pricePerTB = BALANCE.dataBaseCostPerTB * Math.pow(1 + BALANCE.dataEscalationRate, state.trainingDataPurchases);
-    this.dataRefs.info.innerHTML = 'Data: ' + formatNumber(state.trainingData) + ' TB <span style="font-size:0.75em;color:var(--text-muted)">Cost: ' + formatMoney(pricePerTB) + '/TB</span>';
+    let dataText = `Data: ${formatNumber(state.trainingData)} TB`;
+    if (state.synthDataRate > 0) {
+      dataText += ` (+${formatNumber(state.synthDataRate)}/m)`;
+    }
+    dataText += ` (Cost: ${formatMoney(pricePerTB)}/TB)`;
+    this.dataRefs.info.textContent = dataText;
 
     this.dataRefs.bulkBuy.update(state.trainingData, (amount) => {
       return state.funds >= amount * pricePerTB;
@@ -448,22 +431,7 @@ export class TrainingPanel implements Panel {
     }
     this.researchSection.classList.remove('hidden');
 
-    // Synth data
-    if (state.synthDataUnlocked) {
-      this.synthRow.style.display = '';
-      let synthText = 'Synth Data: ' + formatNumber(state.synthDataRate) + ' TB/min';
-      if (state.synthDataAllocPflops > 0) {
-        synthText += ' (' + formatNumber(state.synthDataAllocPflops) + ' PFLOPS)';
-      }
-      this.synthInfo.textContent = synthText;
-      this.synthOffBtn.disabled = state.synthDataAllocPflops === 0;
 
-      const incStep = Math.max(5, Math.round(state.freeCompute * 0.1));
-      this.synthIncBtn.textContent = '+' + formatNumber(incStep) + ' PFLOPS';
-      this.synthIncBtn.disabled = state.freeCompute <= 0;
-    } else {
-      this.synthRow.style.display = 'none';
-    }
 
     // Available research — reconcile existing rows
     const available = getAvailableResearch(state);
@@ -488,7 +456,14 @@ export class TrainingPanel implements Panel {
 
         const info = document.createElement('span');
         info.className = 'label';
-        info.innerHTML = '<strong>' + r.name + '</strong> <span style="font-size:0.72rem;color:var(--text-secondary)">' + r.description + '</span>';
+        const nameEl = document.createElement('strong');
+        nameEl.textContent = r.name + ' ';
+        const descEl = document.createElement('span');
+        descEl.style.fontSize = '0.72rem';
+        descEl.style.color = 'var(--text-secondary)';
+        descEl.textContent = r.description;
+        info.appendChild(nameEl);
+        info.appendChild(descEl);
         row.appendChild(info);
 
         const btn = document.createElement('button');

@@ -2,7 +2,7 @@ const SUFFIXES = ['', 'K', 'M', 'B', 'T', 'Q'];
 
 export function formatNumber(n: number): string {
   if (n < 0) return '-' + formatNumber(-n);
-  if (n < 1000) return Number.isInteger(n) ? n.toString() : (n < 10 ? n.toFixed(1) : Math.floor(n).toString());
+  if (n < 1000) return (Math.round(n * 10) / 10).toString();
 
   let tier = 0;
   let scaled = n;
@@ -12,10 +12,10 @@ export function formatNumber(n: number): string {
   }
 
   if (tier >= SUFFIXES.length) {
-    return n.toExponential(2);
+    return n.toExponential(1);
   }
 
-  return (scaled < 10 ? scaled.toFixed(2) : scaled < 100 ? scaled.toFixed(1) : Math.floor(scaled).toString()) + SUFFIXES[tier];
+  return (Math.round(scaled * 10) / 10).toString() + SUFFIXES[tier];
 }
 
 export function formatMoney(n: number): string {
@@ -37,7 +37,7 @@ export function formatTime(ms: number): string {
 }
 
 export function formatFlops(flops: number): string {
-  if (flops < 1e3) return flops.toFixed(1) + ' PFLOPS';
-  if (flops < 1e6) return (flops / 1e3).toFixed(1) + ' EFLOPS';
-  return (flops / 1e6).toFixed(1) + ' ZFLOPS';
+  if (flops < 1e3) return (Math.round(flops * 10) / 10).toString() + ' PFLOPS';
+  if (flops < 1e6) return (Math.round((flops / 1e3) * 10) / 10).toString() + ' EFLOPS';
+  return (Math.round((flops / 1e6) * 10) / 10).toString() + ' ZFLOPS';
 }

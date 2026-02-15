@@ -29,6 +29,9 @@ export class GameLoop {
     this.state.lastTickTime = now;
     this.state.tickCount++;
 
+    // Reset breakdowns before systems run
+    this.resetBreakdowns();
+
     // Run systems in order
     tickEnergy(this.state, dt);
     tickResearch(this.state, dt);   // Compute bonuses before they're used
@@ -36,6 +39,19 @@ export class GameLoop {
     tickTraining(this.state, dt);
     tickSupply(this.state, dt);
     tickJobs(this.state, dt);
+  }
+
+  private resetBreakdowns(): void {
+    const rb = this.state.resourceBreakdown;
+    rb.funds.income = [];
+    rb.funds.expense = [];
+    rb.code.income = [];
+    rb.code.expense = [];
+    rb.science.income = [];
+    rb.science.expense = [];
+    rb.labor.income = [];
+    rb.labor.expense = [];
+    rb.compute = [];
   }
 
   getState(): GameState {

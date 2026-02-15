@@ -1,4 +1,5 @@
 import type { GameState } from '../../game/GameState.ts';
+import { getTotalAssignedAgents } from '../../game/GameState.ts';
 import type { Panel } from '../PanelManager.ts';
 import { BALANCE } from '../../game/BalanceConfig.ts';
 import { formatMoney, formatNumber } from '../../game/utils.ts';
@@ -24,13 +25,16 @@ export class ComputePanel implements Panel {
   private datacenterHintEl!: HTMLDivElement;
 
   private upgradeBtn?: HTMLButtonElement;
+  private upgradeBtnText?: HTMLSpanElement;
+  private upgradeBtnReq?: HTMLSpanElement;
   private upgradeInfo?: HTMLElement;
-  private datacenterRows: HTMLElement[] = [];
+  private datacenterRows: { row: HTMLElement; btnText: HTMLSpanElement; btnMoney: HTMLSpanElement; btnLabor: HTMLSpanElement; btn: HTMLButtonElement }[] = [];
   private apiSection!: HTMLDivElement;
 
   // API sub-elements
   private apiLockedRow!: HTMLDivElement;
   private apiUnlockBtn!: HTMLButtonElement;
+  private apiUnlockBtnReq!: HTMLSpanElement;
   private apiUnlockedContainer!: HTMLDivElement;
   private apiInfoEl!: HTMLSpanElement;
   private priceDecreaseGroup!: BulkBuyGroup;
@@ -47,10 +51,10 @@ export class ComputePanel implements Panel {
   private apiDemandText!: HTMLDivElement;
 
   private apiAdInfo!: HTMLSpanElement;
-  private apiAdBtn!: HTMLButtonElement;
+  private apiAdBtnGroup!: BulkBuyGroup;
 
   private apiImproveRow!: HTMLDivElement;
-  private apiImproveBtn!: HTMLButtonElement;
+  private apiImproveBtnGroup!: BulkBuyGroup;
   private apiImproveInfo!: HTMLSpanElement;
 
   constructor(state: GameState) {
@@ -163,7 +167,12 @@ export class ComputePanel implements Panel {
     this.upgradeInfo.className = 'label';
     uRow.appendChild(this.upgradeInfo);
     this.upgradeBtn = document.createElement('button');
-    this.upgradeBtn.textContent = 'Upgrade';
+    this.upgradeBtnText = document.createElement('span');
+    this.upgradeBtnText.textContent = 'Upgrade ';
+    this.upgradeBtn.appendChild(this.upgradeBtnText);
+    this.upgradeBtnReq = document.createElement('span');
+    this.upgradeBtn.appendChild(this.upgradeBtnReq);
+
     this.upgradeBtn.addEventListener('click', () => {
       const nextIdx = this.state.currentModelIndex + 1;
       if (nextIdx < BALANCE.models.length) {
@@ -207,12 +216,26 @@ export class ComputePanel implements Panel {
 
         const btn = document.createElement('button');
         btn.style.fontSize = '0.75rem';
+        
+        const btnText = document.createElement('span');
+        btnText.textContent = 'Buy ';
+        btn.appendChild(btnText);
+        
+        const btnMoney = document.createElement('span');
+        btn.appendChild(btnMoney);
+        
+        const btnSpace = document.createTextNode(' ');
+        btn.appendChild(btnSpace);
+        
+        const btnLabor = document.createElement('span');
+        btn.appendChild(btnLabor);
+        
         btn.addEventListener('click', () => buyDatacenter(this.state, i));
         right.appendChild(btn);
 
         row.appendChild(right);
         this.datacenterSection.appendChild(row);
-        this.datacenterRows[i] = row;
+        this.datacenterRows[i] = { row, btnText, btnMoney, btnLabor, btn };
     }
 
     // API Services section
@@ -224,7 +247,7 @@ export class ComputePanel implements Panel {
     this.apiSection.appendChild(subDivider);
 
     const subTitle = document.createElement('div');
-    subTitle.className = 'panel-section-title';
+    subTitle.className = 'panel-section-title api-services';
     subTitle.textContent = 'API SERVICES';
     this.apiSection.appendChild(subTitle);
 
@@ -236,10 +259,17 @@ export class ComputePanel implements Panel {
     this.apiSection.appendChild(this.apiLockedRow);
 
     this.apiUnlockBtn = document.createElement('button');
-    this.apiUnlockBtn.textContent = `Launch API Service (${BALANCE.apiUnlockCode} Code)`;
     this.apiUnlockBtn.style.width = '100%';
     this.apiUnlockBtn.style.marginTop = '4px';
     this.apiUnlockBtn.style.display = 'none';
+    
+    const apiUnlockMainText = document.createElement('span');
+    apiUnlockMainText.textContent = 'Launch API Service ';
+    this.apiUnlockBtn.appendChild(apiUnlockMainText);
+    
+    this.apiUnlockBtnReq = document.createElement('span');
+    this.apiUnlockBtn.appendChild(this.apiUnlockBtnReq);
+    
     this.apiUnlockBtn.addEventListener('click', () => unlockApi(this.state));
     this.apiSection.appendChild(this.apiUnlockBtn);
 
@@ -367,16 +397,24 @@ export class ComputePanel implements Panel {
     this.apiImproveRow = document.createElement('div');
     this.apiImproveRow.className = 'panel-row';
     this.apiImproveRow.style.fontSize = '0.82rem';
-    this.apiImproveRow.style.marginTop = '4px';
     
     this.apiImproveInfo = document.createElement('span');
     this.apiImproveInfo.className = 'label';
     this.apiImproveRow.appendChild(this.apiImproveInfo);
 
-    this.apiImproveBtn = document.createElement('button');
-    this.apiImproveBtn.style.fontSize = '0.72rem';
-    this.apiImproveBtn.addEventListener('click', () => improveApi(this.state));
-    this.apiImproveRow.appendChild(this.apiImproveBtn);
+    const improveControls = document.createElement('span');
+    improveControls.style.display = 'flex';
+    improveControls.style.gap = '4px';
+    improveControls.style.alignItems = 'center';
+
+    const improveLabel = document.createElement('span');
+    improveLabel.innerHTML = `Optimization <span style="opacity:0.6;font-size:0.8em">(${formatNumber(BALANCE.apiImproveCodeCost)} Code)</span>:`;
+    improveControls.appendChild(improveLabel);
+
+    this.apiImproveBtnGroup = new BulkBuyGroup((amt) => improveApi(this.state, amt));
+    improveControls.appendChild(this.apiImproveBtnGroup.el);
+
+    this.apiImproveRow.appendChild(improveControls);
 
     this.apiUnlockedContainer.appendChild(this.apiImproveRow);
 
@@ -389,11 +427,19 @@ export class ComputePanel implements Panel {
     this.apiAdInfo.className = 'label';
     adRow.appendChild(this.apiAdInfo);
 
-    this.apiAdBtn = document.createElement('button');
-    this.apiAdBtn.textContent = 'Marketing ' + formatMoney(BALANCE.apiAdCost);
-    this.apiAdBtn.style.fontSize = '0.72rem';
-    this.apiAdBtn.addEventListener('click', () => buyAds(this.state));
-    adRow.appendChild(this.apiAdBtn);
+    const adControls = document.createElement('span');
+    adControls.style.display = 'flex';
+    adControls.style.gap = '4px';
+    adControls.style.alignItems = 'center';
+
+    const marketingLabel = document.createElement('span');
+    marketingLabel.innerHTML = `Marketing <span style="opacity:0.6;font-size:0.8em">${formatMoney(BALANCE.apiAdCost)}</span>:`;
+    adControls.appendChild(marketingLabel);
+
+    this.apiAdBtnGroup = new BulkBuyGroup((amt) => buyAds(this.state, amt));
+    adControls.appendChild(this.apiAdBtnGroup.el);
+
+    adRow.appendChild(adControls);
 
     this.apiUnlockedContainer.appendChild(adRow);
     this.apiSection.appendChild(this.apiUnlockedContainer);
@@ -414,13 +460,12 @@ export class ComputePanel implements Panel {
 
     const model = BALANCE.models[state.currentModelIndex];
 
-    this.modelNameEl.textContent = model.name + ' (Intel ' + model.intel + ')';
-    // this.modelIntelEl.textContent = model.intel.toFixed(1); // REMOVED
+    this.modelNameEl.textContent = model.name + ' (Intel ' + (Math.round(model.intel * 10) / 10).toString() + ')';
     this.gpuCountEl.textContent = state.gpuCount + ' / ' + state.gpuCapacity + ' capacity';
     
     if (state.isPostGpuTransition) {
       this.unassignedLabelEl.textContent = 'Unassigned Agents:';
-      const assignedCount = state.agents.filter(a => a.assignedJob !== 'unassigned').length;
+      const assignedCount = getTotalAssignedAgents(state);
       const unassignedCount = Math.max(0, state.activeAgentCount - assignedCount);
       
       this.unassignedCountEl.textContent = unassignedCount.toString();
@@ -431,7 +476,7 @@ export class ComputePanel implements Panel {
       }
     } else {
       this.unassignedLabelEl.textContent = 'Unassigned Agents:';
-      const unassignedCount = state.agents.filter(a => a.assignedJob === 'unassigned').length;
+      const unassignedCount = state.agentPools['unassigned'].totalCount;
       this.unassignedCountEl.textContent = unassignedCount.toString();
       if (unassignedCount > 0) {
         this.unassignedCountEl.style.color = 'var(--accent-green)';
@@ -479,12 +524,13 @@ export class ComputePanel implements Panel {
       const nextModel = BALANCE.models[nextModelIdx];
       if (this.upgradeInfo) {
           this.upgradeInfo.innerHTML = 'Upgrade: <strong style="color:var(--accent-green)">' + nextModel.name +
-            '</strong> (Intel ' + nextModel.intel + ')';
+            '</strong> (Intel ' + (Math.round(nextModel.intel * 10) / 10).toString() + ')';
       }
-      if (this.upgradeBtn) {
+      if (this.upgradeBtn && this.upgradeBtnReq) {
           const gpuMet = state.gpuCount >= nextModel.minGpus;
           const gpuColor = gpuMet ? '' : 'var(--accent-red)';
-          this.upgradeBtn.innerHTML = `Upgrade <span style="color: ${gpuColor}">(Requires ${nextModel.minGpus} GPUs)</span>`;
+          this.upgradeBtnReq.textContent = `(Requires ${nextModel.minGpus} GPUs)`;
+          this.upgradeBtnReq.style.color = gpuColor;
           this.upgradeBtn.disabled = !gpuMet;
       }
     } else {
@@ -505,26 +551,31 @@ export class ComputePanel implements Panel {
     // Datacenter purchase
     for (let i = 0; i < BALANCE.datacenters.length; i++) {
         const dc = BALANCE.datacenters[i];
-        const row = this.datacenterRows[i];
+        const refs = this.datacenterRows[i];
         // Only show if player is near needing it or already has previous tiers
         if (i === 0 || state.datacenters[i] > 0 || state.datacenters[Math.max(0, i - 1)] > 0) {
-            row.style.display = 'flex';
-            const info = row.querySelector('.label')!;
+            refs.row.style.display = 'flex';
+            const info = refs.row.querySelector('.label')!;
             const laborMet = state.labor >= dc.laborCost;
             const moneyMet = state.funds >= dc.cost;
 
-            info.innerHTML = `${dc.name} (${formatNumber(dc.gpuCapacity)} GPUs)`;
+            info.textContent = `${dc.name} (${formatNumber(dc.gpuCapacity)} GPUs)`;
 
-            const countSpan = row.querySelector('.value')!;
+            const countSpan = refs.row.querySelector('.value')!;
             countSpan.textContent = 'x' + state.datacenters[i];
 
-            const btn = row.querySelector('button')!;
+            const btn = refs.btn;
             const moneyColor = moneyMet ? '' : 'var(--accent-red)';
             const laborColor = laborMet ? '' : 'var(--accent-red)';
-            btn.innerHTML = `Buy <span style="color: ${moneyColor}">${formatMoney(dc.cost)}</span> <span style="color: ${laborColor}">(${formatNumber(dc.laborCost)} labor)</span>`;
+            
+            refs.btnMoney.textContent = formatMoney(dc.cost);
+            refs.btnMoney.style.color = moneyColor;
+            refs.btnLabor.textContent = `+ ${formatNumber(dc.laborCost)} labor`;
+            refs.btnLabor.style.color = laborColor;
+            
             btn.disabled = !moneyMet || !laborMet;
         } else {
-            row.style.display = 'none';
+            refs.row.style.display = 'none';
         }
     }
 
@@ -554,14 +605,15 @@ export class ComputePanel implements Panel {
 
       let html = `Sell API access to monetize your model.<br><br>` +
         `<span style="color: ${intelMet ? 'var(--accent-green)' : 'var(--accent-red)'}">` +
-        `Intelligence ${BALANCE.apiUnlockIntel.toFixed(1)}+</span> ` +
-        `(${state.intelligence.toFixed(1)})`;
+        `Intelligence ${(Math.round(BALANCE.apiUnlockIntel * 10) / 10).toString()}+</span> ` +
+        `(${(Math.round(state.intelligence * 10) / 10).toString()})`;
 
       if (intelMet) {
         this.apiUnlockBtn.style.display = 'block';
         this.apiUnlockBtn.disabled = !codeMet;
         const color = codeMet ? 'var(--accent-green)' : 'var(--accent-red)';
-        this.apiUnlockBtn.innerHTML = `Launch API Service <span style="color:${color}">(${BALANCE.apiUnlockCode} Code)</span>`;
+        this.apiUnlockBtnReq.textContent = `(${BALANCE.apiUnlockCode} Code)`;
+        this.apiUnlockBtnReq.style.color = color;
       } else {
         // Only show code requirement text if button is hidden (i.e. if Intelligence not met)
         html += `<br><span style="color: ${codeMet ? 'var(--accent-green)' : 'var(--accent-red)'}">` +
@@ -603,24 +655,14 @@ export class ComputePanel implements Panel {
     // Price
     this.apiPriceVal.textContent = formatMoney(state.apiPrice);
     this.priceDecreaseGroup.update(state.apiPrice, (amt) => state.apiPrice - amt >= 0.1);
-    this.priceIncreaseGroup.update(state.apiPrice, (amt) => state.apiPrice + amt <= 1000);
+    this.priceIncreaseGroup.update(state.apiPrice, () => true);
 
     // Ads
     this.apiAdInfo.textContent = 'Awareness: ' + formatNumber(state.apiAwareness);
-    this.apiAdBtn.disabled = state.funds < BALANCE.apiAdCost;
+    this.apiAdBtnGroup.update(state.apiAwareness, (amt) => state.funds >= amt * BALANCE.apiAdCost);
 
     // Improvements
-    const nextLevel = state.apiImprovementLevel + 1;
-    if (nextLevel < BALANCE.apiImprovementTiers.length) {
-        const tier = BALANCE.apiImprovementTiers[nextLevel];
-        this.apiImproveRow.style.display = 'flex';
-        this.apiImproveInfo.textContent = `Quality: ${state.apiQuality}x`;
-        const codeMet = state.code >= tier.cost;
-        const codeColor = codeMet ? '' : 'var(--accent-red)';
-        this.apiImproveBtn.innerHTML = `Improve API <span style="color: ${codeColor}">(${formatNumber(tier.cost)} Code)</span>`;
-        this.apiImproveBtn.disabled = !codeMet;
-    } else {
-         this.apiImproveRow.style.display = 'none';
-    }
+    this.apiImproveInfo.textContent = `Quality: ${(Math.round(state.apiQuality * 10) / 10).toString()}x`;
+    this.apiImproveBtnGroup.update(state.apiImprovementLevel, (amt) => state.code >= amt * BALANCE.apiImproveCodeCost);
   }
 }

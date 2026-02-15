@@ -21,9 +21,16 @@ export class TopBar {
 
   private build(): void {
     this.container.innerHTML = '';
+    
+    // Detailed Breakdown Panel (Hidden initially)
+    const breakdownPanel = document.createElement('div');
+    breakdownPanel.id = 'top-bar-breakdown';
+    breakdownPanel.className = 'hidden';
+    this.container.appendChild(breakdownPanel);
 
     // Funds
     const fundsItem = this.createResourceItem('Funds');
+    fundsItem.dataset.resource = 'funds';
     this.fundsValueEl = fundsItem.querySelector('.value')!;
     this.fundsIncomeEl = fundsItem.querySelector('[data-role="income"]')!;
     this.fundsExpenseEl = fundsItem.querySelector('[data-role="expense"]')!;
@@ -44,21 +51,25 @@ export class TopBar {
 
     // FLOPS (hidden initially)
     this.flopsItem = this.createItem('FLOPS');
+    this.flopsItem.dataset.resource = 'compute';
     this.flopsItem.classList.add('hidden');
     this.container.appendChild(this.flopsItem);
 
     // Code (hidden initially)
     this.codeItem = this.createResourceItem('Code');
+    this.codeItem.dataset.resource = 'code';
     this.codeItem.classList.add('hidden');
     this.container.appendChild(this.codeItem);
 
     // Science (hidden initially)
     this.scienceItem = this.createResourceItem('Science');
+    this.scienceItem.dataset.resource = 'science';
     this.scienceItem.classList.add('hidden');
     this.container.appendChild(this.scienceItem);
 
     // Labor (hidden initially)
     this.laborItem = this.createResourceItem('Labor');
+    this.laborItem.dataset.resource = 'labor';
     this.laborItem.classList.add('hidden');
     this.container.appendChild(this.laborItem);
 
@@ -78,6 +89,16 @@ export class TopBar {
       }
     };
     this.container.appendChild(restartBtn);
+
+    // Hover logic for expansion
+    this.container.onmouseenter = () => {
+      this.container.classList.add('is-expanded');
+      breakdownPanel.classList.remove('hidden');
+    };
+    this.container.onmouseleave = () => {
+      this.container.classList.remove('is-expanded');
+      breakdownPanel.classList.add('hidden');
+    };
   }
 
   /** Creates a simple item with label + value + rate (for intel, efficiency, flops). */
@@ -151,7 +172,7 @@ export class TopBar {
     this.fundsExpenseEl.textContent = totalExpense > 0 ? '-' + formatMoney(totalExpense) + '/m' : '';
 
     // Intelligence
-    this.intelValueEl.textContent = state.intelligence.toFixed(1);
+    this.intelValueEl.textContent = (Math.round(state.intelligence * 10) / 10).toString();
 
     // Efficiency: show after GPU transition
     if (state.isPostGpuTransition) {
@@ -197,5 +218,57 @@ export class TopBar {
       incomeEl.textContent = state.laborPerMin > 0 ? '+' + formatNumber(state.laborPerMin) + '/m' : '';
       expenseEl.textContent = state.laborConsumedPerMin > 0 ? '-' + formatNumber(state.laborConsumedPerMin) + '/m' : '';
     }
+
+    // Update Breakdown Panel
+    const breakdownEl = this.container.querySelector('#top-bar-breakdown')!;
+    if (this.container.classList.contains('is-expanded')) {
+       this.renderBreakdown(breakdownEl, state);
+    }
+  }
+
+  private renderBreakdown(container: Element, state: GameState): void {
+    let html = '<div class="breakdown-grid">';
+    
+    // Funds
+    html += this.renderBreakdownSection('Funds ($/min)', state.resourceBreakdown.funds, formatMoney);
+    
+    // Code
+    html += this.renderBreakdownSection('Code (u/min)', state.resourceBreakdown.code, formatNumber);
+    
+    // Science
+    html += this.renderBreakdownSection('Science (u/min)', state.resourceBreakdown.science, formatNumber);
+    
+    // Labor
+    html += this.renderBreakdownSection('Labor (u/min)', state.resourceBreakdown.labor, formatNumber);
+
+    // Compute
+    if (state.isPostGpuTransition) {
+      html += '<div class="breakdown-section">';
+      html += '<div class="section-title">Compute (PFLOPS)</div>';
+      for (const item of state.resourceBreakdown.compute) {
+        html += `<div class="breakdown-row"><span class="label">${item.label}</span><span class="value">${(Math.round(item.pflops * 10) / 10).toString()}</span></div>`;
+      }
+      html += '</div>';
+    }
+
+    html += '</div>';
+    container.innerHTML = html;
+  }
+
+  private renderBreakdownSection(title: string, data: { income: any[], expense: any[] }, formatter: (v: number) => string): string {
+    if (data.income.length === 0 && data.expense.length === 0) return '';
+    
+    let html = '<div class="breakdown-section">';
+    html += `<div class="section-title">${title}</div>`;
+    
+    for (const item of data.income) {
+      html += `<div class="breakdown-row"><span class="label">${item.label}</span><span class="value income">+${formatter(item.ratePerMin)}</span></div>`;
+    }
+    for (const item of data.expense) {
+      html += `<div class="breakdown-row"><span class="label">${item.label}</span><span class="value expense">-${formatter(item.ratePerMin)}</span></div>`;
+    }
+    
+    html += '</div>';
+    return html;
   }
 }

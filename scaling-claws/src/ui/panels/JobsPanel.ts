@@ -1,4 +1,5 @@
 import type { GameState } from '../../game/GameState.ts';
+import { getTotalAssignedAgents } from '../../game/GameState.ts';
 import type { Panel } from '../PanelManager.ts';
 import { BALANCE } from '../../game/BalanceConfig.ts';
 import type { JobType } from '../../game/BalanceConfig.ts';
@@ -213,12 +214,7 @@ export class JobsPanel implements Panel {
   update(state: GameState): void {
     this.state = state;
 
-    // Group AI agents by job
-    const aiByJob = new Map<JobType, typeof state.agents>();
-    for (const a of state.agents) {
-      if (!aiByJob.has(a.assignedJob)) aiByJob.set(a.assignedJob, []);
-      aiByJob.get(a.assignedJob)!.push(a);
-    }
+    // AI agents are already grouped in agentPools (no grouping needed!)
 
     // Group human workers by job
     const humanByJob = new Map<JobType, typeof state.humanWorkers>();
@@ -227,12 +223,27 @@ export class JobsPanel implements Panel {
       humanByJob.get(w.assignedJob)!.push(w);
     }
 
-    // Remove rows for locked jobs
-    for (const [jobType] of this.jobRows) {
-      if (!state.unlockedJobs.includes(jobType)) {
-        const refs = this.jobRows.get(jobType)!;
-        refs.row.remove();
-        this.jobRows.delete(jobType);
+    // Remove rows for locked or automated jobs
+    for (const [jobType, refs] of this.jobRows) {
+      const isUnlocked = state.unlockedJobs.includes(jobType);
+      const isAutomated = state.automatedJobs.includes(jobType);
+
+      if (!isUnlocked) {
+        if (isAutomated && !refs.row.classList.contains('automated-swipe')) {
+          // Play animation
+          refs.row.classList.add('automated-swipe');
+          // Remove after animation
+          setTimeout(() => {
+            if (this.jobRows.has(jobType)) {
+              refs.row.remove();
+              this.jobRows.delete(jobType);
+            }
+          }, 1200);
+        } else if (!isAutomated) {
+          // Just remove if it's not automated (maybe it was just hidden by some other logic)
+          refs.row.remove();
+          this.jobRows.delete(jobType);
+        }
       }
     }
 
@@ -316,22 +327,31 @@ export class JobsPanel implements Panel {
         });
         refs.removeGroup.update(count, (amount) => count >= amount);
       } else {
-        // AI job
-        const agents = aiByJob.get(jobType) || [];
-        const count = agents.length;
+        // AI job - use agentPools directly
+        const pool = state.agentPools[jobType];
+        const count = pool.totalCount;
         refs.countEl.textContent = formatNumber(count);
 
+        // Show sample progress bars (always 4 or fewer)
         const barsToShow = Math.min(count, MAX_PROGRESS_BARS);
         for (let i = 0; i < MAX_PROGRESS_BARS; i++) {
           if (i < barsToShow) {
             refs.progressBars[i].el.style.display = '';
-            const agent = agents[i];
-            if (agent.isIdle) {
+
+            // Determine if sample should show as idle
+            // (idle fraction applies to samples statistically)
+            const isIdle = count > 0 && pool.idleCount > 0 && (pool.idleCount / count) > 0.5;
+
+            if (isIdle) {
               refs.progressBars[i].update(0, false);
               refs.progressBars[i].el.style.opacity = '0.5';
             } else {
               refs.progressBars[i].el.style.opacity = '1';
-              refs.progressBars[i].update(agent.progress, agent.isStuck);
+              // Use sample agent data
+              refs.progressBars[i].update(
+                pool.samples.progress[i],
+                pool.samples.stuck[i]
+              );
             }
           } else {
             refs.progressBars[i].el.style.display = 'none';
@@ -347,9 +367,9 @@ export class JobsPanel implements Panel {
 
         const agentEligible = state.intelligence >= config.agentIntelReq &&
           (!config.agentResearchReq || config.agentResearchReq.every(r => state.completedResearch.includes(r)));
-          
-        const unassignedHired = state.agents.filter(a => a.assignedJob === 'unassigned').length;
-        const assignedCount = state.agents.filter(a => a.assignedJob !== 'unassigned').length;
+
+        const unassignedHired = state.agentPools['unassigned'].totalCount;
+        const assignedCount = getTotalAssignedAgents(state);
         const availableSlots = state.activeAgentCount - assignedCount;
 
         refs.addGroup.update(count, (_amount) => agentEligible && unassignedHired > 0 && availableSlots > 0);
