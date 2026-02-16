@@ -2,6 +2,7 @@ import type { GameState } from '../GameState.ts';
 import { getTotalAssignedAgents } from '../GameState.ts';
 import { BALANCE, getBestModel, getTotalGpuCapacity, JOB_ORDER } from '../BalanceConfig.ts';
 import type { SubscriptionTier } from '../BalanceConfig.ts';
+import { toBigInt, divB, mulB, scaleB, fromBigInt, scaleBigInt } from '../utils.ts';
 
 export function tickCompute(state: GameState, dtMs: number): void {
   if (state.isPostGpuTransition) {
@@ -17,7 +18,7 @@ function tickSubscriptionEra(state: GameState, _dtMs: number): void {
   // Human salary expenses (from jobs)
   state.expensePerMin = state.humanSalaryPerMin;
   
-  if (state.humanSalaryPerMin > 0) {
+  if (state.humanSalaryPerMin > 0n) {
     state.resourceBreakdown.funds.expense.push({ label: 'Human Salaries', ratePerMin: state.humanSalaryPerMin });
   }
 
@@ -32,9 +33,17 @@ function tickSubscriptionEra(state: GameState, _dtMs: number): void {
 // --- GPU Era ---
 
 function tickGpuEra(state: GameState, dtMs: number): void {
+
   // Compute GPU metrics (apply GPU architecture research bonus)
-  state.installedGpuCount = Math.min(state.gpuCount, state.gpuCapacity);
-  state.totalPflops = state.installedGpuCount * BALANCE.pflopsPerGpu * state.gpuFlopsBonus * state.powerThrottle;
+  state.installedGpuCount = state.gpuCount < state.gpuCapacity ? state.gpuCount : state.gpuCapacity;
+  
+  // totalPflops = GPUs * pflopsPerGpu * bonus * throttle
+  // gpuCount is scaled, pflopsPerGpu is number? 
+  // Let's check BALANCE again. pflopsPerGpu is 2.0 (number).
+  let pflops = scaleB(state.installedGpuCount, BALANCE.pflopsPerGpu);
+  pflops = scaleB(pflops, state.gpuFlopsBonus);
+  pflops = scaleB(pflops, state.powerThrottle);
+  state.totalPflops = pflops;
 
   // Only set intelligence from model if no training has been done yet
   if (state.completedFineTunes.length === 0 && state.ariesModelIndex === -1 && state.currentFineTuneIndex === -1) {
@@ -52,28 +61,26 @@ function tickGpuEra(state: GameState, dtMs: number): void {
   }
 
   // Allocation Logic (Percentages)
-  const trainingPct = state.trainingAllocationPct;
-  const inferencePct = state.apiUnlocked ? state.apiInferenceAllocationPct : 0;
-  // Constraint check (just in case they got out of sync, though setters should prevent this)
-  // const totalAllocatedPct = Math.min(100, trainingPct + inferencePct);
+  const trainingPct = toBigInt(state.trainingAllocationPct);
+  const inferencePct = state.apiUnlocked ? toBigInt(state.apiInferenceAllocationPct) : 0n;
   
-  state.trainingAllocatedPflops = Math.floor(state.totalPflops * (trainingPct / 100));
-  state.apiReservedPflops = Math.floor(state.totalPflops * (inferencePct / 100));
+  state.trainingAllocatedPflops = divB(mulB(state.totalPflops, trainingPct), 100n);
+  state.apiReservedPflops = divB(mulB(state.totalPflops, inferencePct), 100n);
   
   // Calculate "Rest" of compute (available for Agents and Synth Data)
-  const restPflops = Math.max(0, state.totalPflops - state.trainingAllocatedPflops - state.apiReservedPflops);
-  state.freeCompute = restPflops; 
+  const restPflops = state.totalPflops - state.trainingAllocatedPflops - state.apiReservedPflops;
+  state.freeCompute = restPflops < 0n ? 0n : restPflops; 
 
-  const agentsAllocatedPflops = restPflops;
+  const agentsAllocatedPflops = state.freeCompute;
 
   // Poplate Compute Breakdown
-  if (state.trainingAllocatedPflops > 0) {
+  if (state.trainingAllocatedPflops > 0n) {
     state.resourceBreakdown.compute.push({ label: 'Training', pflops: state.trainingAllocatedPflops });
   }
-  if (state.apiReservedPflops > 0) {
+  if (state.apiReservedPflops > 0n) {
     state.resourceBreakdown.compute.push({ label: 'API Services', pflops: state.apiReservedPflops });
   }
-  if (agentsAllocatedPflops > 0) {
+  if (agentsAllocatedPflops > 0n) {
     state.resourceBreakdown.compute.push({ label: 'AI Agents', pflops: agentsAllocatedPflops });
   }
 
@@ -87,187 +94,139 @@ function tickGpuEra(state: GameState, dtMs: number): void {
   // Agent Efficiency
   // 1 Agent requires 1 GPU worth of compute (pflopsPerGpu) to run at 100% efficiency
   const assignedAgents = getTotalAssignedAgents(state);
-  const pflopsNeeded = assignedAgents * BALANCE.pflopsPerGpu;
+  const pflopsNeeded = scaleB(assignedAgents, BALANCE.pflopsPerGpu);
   
-  let computeEfficiency = 1;
-  if (pflopsNeeded > 0) {
-     computeEfficiency = Math.min(1, agentsAllocatedPflops / pflopsNeeded);
+  let computeEfficiency = 1.0;
+  if (pflopsNeeded > 0n) {
+     computeEfficiency = Math.min(1.0, Number(agentsAllocatedPflops) / Number(pflopsNeeded));
   }
 
   state.agentEfficiency = state.powerThrottle * computeEfficiency;
 
-  // Labor consumption from facilities
-  let laborConsumedPerMin = 0;
-  for (let i = 0; i < state.datacenters.length; i++) {
-    const rate = state.datacenters[i] * BALANCE.datacenters[i].laborPerMin;
-    if (rate > 0) {
-      laborConsumedPerMin += rate;
-      state.resourceBreakdown.labor.expense.push({ label: BALANCE.datacenters[i].name, ratePerMin: rate });
-    }
-  }
-  
-  const facilityLabor = [
-    { label: 'Gas Plants', count: state.gasPlants, rate: BALANCE.powerPlants.gas.laborPerMin },
-    { label: 'Nuclear Plants', count: state.nuclearPlants, rate: BALANCE.powerPlants.nuclear.laborPerMin },
-    { label: 'Solar Farms', count: state.solarFarms, rate: BALANCE.powerPlants.solar.laborPerMin },
-    { label: 'Chip Fabs', count: state.waferFabs, rate: BALANCE.fabLaborPerMin },
-    { label: 'Silicon Mines', count: state.siliconMines, rate: BALANCE.siliconMineLaborPerMin },
-    { label: 'Robot Factories', count: state.robotFactories, rate: BALANCE.robotFactoryLaborPerMin },
-  ];
-
-  for (const f of facilityLabor) {
-    if (f.count > 0) {
-      const totalRate = f.count * f.rate;
-      laborConsumedPerMin += totalRate;
-      state.resourceBreakdown.labor.expense.push({ label: f.label, ratePerMin: totalRate });
-    }
-  }
-  state.laborConsumedPerMin = laborConsumedPerMin;
-  
-  // Labor Throttle: if stockpile is 0 and we are net negative, throttle
-  if (state.labor <= 0 && state.laborConsumedPerMin > state.laborPerMin) {
-    state.laborThrottle = state.laborPerMin / (state.laborConsumedPerMin || 1);
-  } else {
-    state.laborThrottle = 1;
-  }
-
-  // Deduct labor
-  state.labor -= laborConsumedPerMin * (dtMs / 60000);
-  if (state.labor < 0) state.labor = 0;
+  // Labor consumption from facilities - REMOVED (Ongoing labor costs removed)
 
   // API Services
   if (state.apiUnlocked) {
     // Demand calculation (Economics based)
-    // Quality = API improvement multiplier * model intelligence
     const effectiveAwareness = BALANCE.apiBaseAwareness + state.apiAwareness;
     
-    // Demand = (Awareness^a) * (Quality) * (Intelligence^b / Price^c) * Scale
     const demand = Math.pow(effectiveAwareness, BALANCE.apiAwarenessElasticity) * 
       state.apiQuality *
       (Math.pow(state.intelligence, BALANCE.intelligenceElasticity) / 
        Math.pow(state.apiPrice, BALANCE.apiPriceElasticity)) * 
       BALANCE.apiDemandScale;
     
-    state.apiDemand = Math.floor(demand);
+    state.apiDemand = toBigInt(demand);
 
-    // Reserved PFLOPS based on allocation (already calculated above)
-    // state.apiReservedPflops = ... 
-    
     // Available capacity for users
-    const capacityUsers = Math.floor(state.apiReservedPflops / BALANCE.apiPflopsPerUser);
+    const capacityUsers = divB(state.apiReservedPflops, toBigInt(BALANCE.apiPflopsPerUser));
 
     // Active users limited by demand and capacity
-    state.apiUserCount = Math.min(state.apiDemand, capacityUsers);
+    state.apiUserCount = state.apiDemand < capacityUsers ? state.apiDemand : capacityUsers;
 
     // Synth Data from API users
-    state.synthDataRate = state.apiUserCount * state.apiUserSynthRate;
-    state.trainingData += state.synthDataRate * (dtMs / 60000);
+    state.apiUserSynthRate = BALANCE.apiUserSynthBase; 
+    state.synthDataRate = mulB(state.apiUserCount, state.apiUserSynthRate);
+    state.trainingData += mulB(state.synthDataRate, toBigInt(dtMs)) / 60000n;
 
     // Income
-    state.apiIncomePerMin = state.apiUserCount * state.apiPrice; 
+    state.apiIncomePerMin = mulB(state.apiUserCount, toBigInt(state.apiPrice)); 
     
-    if (state.apiIncomePerMin > 0) {
+    if (state.apiIncomePerMin > 0n) {
       state.resourceBreakdown.funds.income.push({ label: 'API Services', ratePerMin: state.apiIncomePerMin });
     }
 
-    state.funds += state.apiIncomePerMin * (dtMs / 60000);
-    state.totalEarned += state.apiIncomePerMin * (dtMs / 60000);
+    const income = mulB(state.apiIncomePerMin, toBigInt(dtMs)) / 60000n;
+    state.funds += income;
+    state.totalEarned += income;
   } else {
-    state.synthDataRate = 0;
+    state.synthDataRate = 0n;
   }
 
   // Expenses: human salaries + grid power
-  if (state.humanSalaryPerMin > 0) {
+  if (state.humanSalaryPerMin > 0n) {
     state.resourceBreakdown.funds.expense.push({ label: 'Human Salaries', ratePerMin: state.humanSalaryPerMin });
   }
 
   let totalExpensePerMin = state.humanSalaryPerMin;
-  const gridCost = state.gridPowerKW * BALANCE.gridPowerCostPerKWPerMin;
-  if (gridCost > 0) {
+  const gridCost = mulB(state.gridPowerKW, toBigInt(BALANCE.gridPowerCostPerKWPerMin));
+  if (gridCost > 0n) {
     totalExpensePerMin += gridCost;
     state.resourceBreakdown.funds.expense.push({ label: 'Grid Power', ratePerMin: gridCost });
   }
   state.expensePerMin = totalExpensePerMin;
 
   // Deduct costs
-  const cost = totalExpensePerMin * (dtMs / 60000);
+  const cost = mulB(totalExpensePerMin, toBigInt(dtMs)) / 60000n;
   state.funds -= cost;
 
-  if (state.funds <= 0) {
-    state.funds = 0;
+  if (state.funds < 0n) {
+    state.funds = 0n;
   }
 }
 
 function allocateCores(state: GameState): void {
-  const totalCores = state.cpuCoresTotal;
-  const coresPerAgent = BALANCE.tiers[state.subscriptionTier].coresPerAgent;
-  const maxAgents = Math.floor(totalCores / coresPerAgent);
+  const totalCores = state.cpuCoresTotal; // assumed scaled
+  const coresPerAgent = toBigInt(BALANCE.tiers[state.subscriptionTier].coresPerAgent);
+  const maxAgents = divB(totalCores, coresPerAgent);
 
   let remainingSlots = maxAgents;
 
-  // Allocate by job priority (O(job types))
+  // Allocate by job priority
   for (const jobType of JOB_ORDER) {
     const pool = state.agentPools[jobType];
     if (!pool) continue;
 
     if (remainingSlots >= pool.totalCount) {
-      // All agents in this job get cores
-      pool.idleCount = 0;
+      pool.idleCount = 0n;
       remainingSlots -= pool.totalCount;
     } else {
-      // Partial allocation
       pool.idleCount = pool.totalCount - remainingSlots;
-      remainingSlots = 0;
+      remainingSlots = 0n;
       break;
     }
   }
 
-  // Also allocate remaining slots to unassigned pool
   const unassignedPool = state.agentPools['unassigned'];
   if (remainingSlots >= unassignedPool.totalCount) {
-    unassignedPool.idleCount = 0;
+    unassignedPool.idleCount = 0n;
     remainingSlots -= unassignedPool.totalCount;
   } else {
     unassignedPool.idleCount = unassignedPool.totalCount - remainingSlots;
-    remainingSlots = 0;
+    remainingSlots = 0n;
   }
 
   const allocatedAgents = maxAgents - remainingSlots;
-  state.usedCores = allocatedAgents * coresPerAgent;
+  state.usedCores = mulB(allocatedAgents, coresPerAgent);
   state.activeAgentCount = allocatedAgents;
 }
 
-function allocateGpuSlots(state: GameState, agentsAllocatedPflops: number): void {
-  // In GPU era, agents are limited by available PFLOPS
-  const maxActiveAgents = Math.floor(agentsAllocatedPflops / BALANCE.pflopsPerGpu);
+function allocateGpuSlots(state: GameState, agentsAllocatedPflops: bigint): void {
+  const maxActiveAgents = divB(agentsAllocatedPflops, toBigInt(BALANCE.pflopsPerGpu));
 
   let remainingSlots = maxActiveAgents;
 
-  // Allocate by job priority (O(job types))
   for (const jobType of JOB_ORDER) {
     const pool = state.agentPools[jobType];
     if (!pool) continue;
 
     if (remainingSlots >= pool.totalCount) {
-      // All agents in this job get GPU slots
-      pool.idleCount = 0;
+      pool.idleCount = 0n;
       remainingSlots -= pool.totalCount;
     } else {
-      // Partial allocation
       pool.idleCount = pool.totalCount - remainingSlots;
-      remainingSlots = 0;
+      remainingSlots = 0n;
       break;
     }
   }
 
-  // Also allocate remaining slots to unassigned pool
   const unassignedPool = state.agentPools['unassigned'];
   if (remainingSlots >= unassignedPool.totalCount) {
-    unassignedPool.idleCount = 0;
+    unassignedPool.idleCount = 0n;
     remainingSlots -= unassignedPool.totalCount;
   } else {
     unassignedPool.idleCount = unassignedPool.totalCount - remainingSlots;
-    remainingSlots = 0;
+    remainingSlots = 0n;
   }
 
   state.activeAgentCount = maxActiveAgents - remainingSlots;
@@ -278,9 +237,8 @@ function allocateGpuSlots(state: GameState, agentsAllocatedPflops: number): void
 export function hireAgent(state: GameState): boolean {
   const tierConfig = BALANCE.tiers[state.subscriptionTier];
 
-  // Check hardware capacity
   if (!state.isPostGpuTransition) {
-    if ((state.totalAgents + 1) * tierConfig.coresPerAgent > state.cpuCoresTotal) {
+    if (mulB(state.totalAgents + scaleBigInt(1n), toBigInt(tierConfig.coresPerAgent)) > state.cpuCoresTotal) {
       return false;
     }
   } else {
@@ -295,14 +253,12 @@ export function hireAgent(state: GameState): boolean {
 
   state.funds -= tierConfig.cost;
 
-  // Add to unassigned pool (O(1))
   const unassignedPool = state.agentPools['unassigned'];
-  unassignedPool.totalCount++;
-  state.totalAgents++;
+  unassignedPool.totalCount += scaleBigInt(1n);
+  state.totalAgents += scaleBigInt(1n);
 
-  // Initialize sample agents if this is one of the first 4
-  if (unassignedPool.totalCount <= 4) {
-    const idx = unassignedPool.totalCount - 1;
+  if (unassignedPool.totalCount <= scaleBigInt(4n)) {
+    const idx = Math.floor(fromBigInt(unassignedPool.totalCount)) - 1;
     unassignedPool.samples.progress[idx] = 0;
     unassignedPool.samples.stuck[idx] = false;
   }
@@ -311,18 +267,16 @@ export function hireAgent(state: GameState): boolean {
 }
 
 export function decreaseAgents(state: GameState): boolean {
-  if (state.totalAgents <= 0) return false;
+  if (state.totalAgents <= 0n) return false;
 
-  // Remove from unassigned pool (O(1))
   const unassignedPool = state.agentPools['unassigned'];
-  if (unassignedPool.totalCount > 0) {
-    unassignedPool.totalCount--;
-    state.totalAgents--;
+  if (unassignedPool.totalCount > 0n) {
+    unassignedPool.totalCount -= scaleBigInt(1n);
+    state.totalAgents -= scaleBigInt(1n);
 
-    // Clear sample if we removed one of the displayed agents
-    if (unassignedPool.totalCount < 4) {
-      unassignedPool.samples.progress[unassignedPool.totalCount] = 0;
-      unassignedPool.samples.stuck[unassignedPool.totalCount] = false;
+    if (unassignedPool.totalCount < scaleBigInt(4n)) {
+      unassignedPool.samples.progress[Math.floor(fromBigInt(unassignedPool.totalCount))] = 0;
+      unassignedPool.samples.stuck[Math.floor(fromBigInt(unassignedPool.totalCount))] = false;
     }
 
     return true;
@@ -333,7 +287,7 @@ export function decreaseAgents(state: GameState): boolean {
 
 export function upgradeTier(state: GameState, tier: SubscriptionTier): boolean {
   const nextConfig = BALANCE.tiers[tier];
-  const upgradeCost = nextConfig.cost * state.totalAgents;
+  const upgradeCost = mulB(nextConfig.cost, state.totalAgents);
 
   if (state.funds < upgradeCost) {
     return false;
@@ -346,11 +300,11 @@ export function upgradeTier(state: GameState, tier: SubscriptionTier): boolean {
 }
 
 export function buyMicMini(state: GameState): boolean {
-  if (state.micMiniCount >= 7) return false;
+  if (state.micMiniCount >= scaleBigInt(7n)) return false;
   if (state.funds < BALANCE.micMini.cost) return false;
 
   state.funds -= BALANCE.micMini.cost;
-  state.micMiniCount++;
+  state.micMiniCount += scaleBigInt(1n);
   state.cpuCoresTotal += BALANCE.micMini.coresAdded;
 
   return true;
@@ -359,8 +313,8 @@ export function buyMicMini(state: GameState): boolean {
 export function goSelfHosted(state: GameState): boolean {
   const minGpus = BALANCE.models[0].minGpus;
   const agentCount = state.totalAgents;
-  const gpuCount = Math.max(minGpus, agentCount);
-  const totalCost = gpuCount * BALANCE.gpuCost;
+  const gpuCount = minGpus > agentCount ? minGpus : agentCount;
+  const totalCost = mulB(gpuCount, BALANCE.gpuCost);
 
   if (state.funds < totalCost) return false;
 
@@ -378,29 +332,29 @@ export function goSelfHosted(state: GameState): boolean {
 }
 
 export function buyGpu(state: GameState, amount: number): boolean {
-  const cost = amount * BALANCE.gpuCost;
+  const amountB = toBigInt(amount);
+  const cost = mulB(amountB, BALANCE.gpuCost);
   if (state.funds < cost) return false;
 
-  state.funds -= amount * BALANCE.gpuCost;
-  state.gpuCount += amount;
+  state.funds -= cost;
+  state.gpuCount += amountB;
 
-  // Auto-add agents for new GPUs (O(1))
+  // Auto-add agents for new GPUs
   const agentsToAdd = state.gpuCount - state.totalAgents;
-  if (agentsToAdd > 0) {
+  if (agentsToAdd > 0n) {
     const unassignedPool = state.agentPools['unassigned'];
     const oldCount = unassignedPool.totalCount;
 
     unassignedPool.totalCount += agentsToAdd;
     state.totalAgents += agentsToAdd;
 
-    // Initialize sample agents if needed (first 4 only)
-    for (let i = oldCount; i < Math.min(oldCount + agentsToAdd, 4); i++) {
+    for (let i = Math.floor(fromBigInt(oldCount)); i < Math.min(Math.floor(fromBigInt(oldCount + agentsToAdd)), 4); i++) {
       unassignedPool.samples.progress[i] = 0;
       unassignedPool.samples.stuck[i] = false;
     }
   }
 
-  if (state.gpuCount <= amount) {
+  if (state.gpuCount <= amountB) {
     state.pendingFlavorTexts.push(
       '"GPU #1 has arrived. Your apartment\'s circuit breaker has opinions about this."'
     );
@@ -429,11 +383,12 @@ export function buyDatacenter(state: GameState, tier: number): boolean {
 
   state.funds -= config.cost;
   state.labor -= config.laborCost;
-  state.datacenters[tier]++;
+  state.datacenters[tier] += scaleBigInt(1n);
   state.gpuCapacity = getTotalGpuCapacity(state.datacenters);
 
   return true;
 }
+
 
 // --- API Actions ---
 
@@ -443,7 +398,8 @@ export function setApiPrice(state: GameState, price: number): void {
 }
 
 export function buyAds(state: GameState, amount: number = 1): boolean {
-  const totalCost = amount * BALANCE.apiAdCost;
+  const amountB = toBigInt(amount);
+  const totalCost = mulB(amountB, BALANCE.apiAdCost);
   if (state.funds < totalCost) return false;
   state.funds -= totalCost;
   state.apiAwareness += amount * BALANCE.apiAdAwarenessBoost;
@@ -464,7 +420,8 @@ export function setApiAllocation(state: GameState, pct: number): boolean {
 }
 
 export function improveApi(state: GameState, amount: number = 1): boolean {
-  const totalCost = amount * BALANCE.apiImproveCodeCost;
+  const amountB = toBigInt(amount);
+  const totalCost = mulB(amountB, BALANCE.apiImproveCodeCost);
   if (state.code < totalCost) return false;
 
   state.code -= totalCost;

@@ -1,7 +1,7 @@
 import type { GameState } from '../../game/GameState.ts';
 import type { Panel } from '../PanelManager.ts';
 import { BALANCE } from '../../game/BalanceConfig.ts';
-import { formatMoney, formatNumber } from '../../game/utils.ts';
+import { formatMoney, formatNumber, fromBigInt, mulB } from '../../game/utils.ts';
 import {
   buyLithoMachine, buyWafers, buySilicon, buildFab,
   buildSiliconMine, buildRobotFactory, buyRobot,
@@ -238,30 +238,31 @@ export class SupplyPanel implements Panel {
     // Litho
     this.lithoInfoEl.textContent = formatNumber(state.lithoMachines);
     this.lithoPriceEl.textContent = `${formatMoney(BALANCE.lithoMachineCost)} ea | ${BALANCE.lithoWaferConsumptionPerMin} waf/m | ${BALANCE.waferGpus} GPUs/waf`;
-    this.lithoBuyGroup.update(state.lithoMachines, (amt) => state.funds >= amt * BALANCE.lithoMachineCost);
-    this.updateRateDisplay(this.lithoRateEl, state.lithoActualRate, state.lithoMachines > 0);
+    const lithoNum = Math.floor(fromBigInt(state.lithoMachines));
+    this.lithoBuyGroup.update(lithoNum, (amt) => state.funds >= BigInt(amt) * BALANCE.lithoMachineCost);
+    this.updateRateDisplay(this.lithoRateEl, state.lithoActualRate, state.lithoMachines > 0n);
 
     // Silicon
     const silProd = state.siliconProductionPerMin;
     const silDem = state.siliconDemandPerMin;
-    const silAmt = Math.floor(state.silicon);
-    this.siliconInfoEl.textContent = formatNumber(silAmt);
-    this.siliconInfoEl.style.color = silAmt <= 0 ? 'var(--accent-red)' : '';
+    this.siliconInfoEl.textContent = formatNumber(state.silicon);
+    this.siliconInfoEl.style.color = state.silicon <= 0n ? 'var(--accent-red)' : '';
     this.siliconRateEl.textContent = `(+${formatNumber(silProd)}, -${formatNumber(silDem)})/m`;
     this.siliconPriceEl.textContent = `${formatMoney(BALANCE.siliconCost)} each`;
-    this.siliconBuyGroup.update(state.silicon, (amt) => state.funds >= amt * BALANCE.siliconCost);
+    const silNum = Math.floor(fromBigInt(state.silicon));
+    this.siliconBuyGroup.update(silNum, (amt) => state.funds >= BigInt(amt) * BALANCE.siliconCost);
 
     // Wafers
     const wafProd = state.waferProductionPerMin;
     const wafDem = state.waferDemandPerMin;
-    const wafAmt = Math.floor(state.wafers);
-    this.waferInfoEl.textContent = formatNumber(wafAmt);
-    this.waferInfoEl.style.color = wafAmt <= 0 ? 'var(--accent-red)' : '';
+    this.waferInfoEl.textContent = formatNumber(state.wafers);
+    this.waferInfoEl.style.color = state.wafers <= 0n ? 'var(--accent-red)' : '';
     this.waferRateEl.textContent = `(+${formatNumber(wafProd)}, -${formatNumber(wafDem)})/m`;
     this.waferPriceEl.textContent = `${formatMoney(BALANCE.waferCost)} each`;
-    this.waferBuyGroup.update(state.wafers, (amt) => state.funds >= amt * BALANCE.waferCost);
+    const wafNum = Math.floor(fromBigInt(state.wafers));
+    this.waferBuyGroup.update(wafNum, (amt) => state.funds >= BigInt(amt) * BALANCE.waferCost);
 
-    if (state.gpuProductionPerMin > 0) {
+    if (state.gpuProductionPerMin > 0n) {
       this.gpuOutputEl.textContent = 'GPU output: ' + formatNumber(state.gpuProductionPerMin) + '/min';
       this.gpuOutputEl.style.display = '';
     } else {
@@ -289,20 +290,22 @@ export class SupplyPanel implements Panel {
     // Fabs
     this.fabInfoEl.textContent = formatNumber(state.waferFabs);
     const fabPriceStr = `${formatMoney(BALANCE.fabCost)} + ${formatNumber(BALANCE.fabLaborCost)} labor`;
-    this.fabPriceEl.textContent = `${fabPriceStr} ea | ${BALANCE.fabOutputPerMin} wafers/m`;
-    this.fabBuyGroup.update(state.waferFabs, (amt) => 
-      state.funds >= amt * BALANCE.fabCost && state.labor >= amt * BALANCE.fabLaborCost
+    this.fabPriceEl.textContent = `${fabPriceStr} ea | ${formatNumber(BALANCE.fabOutputPerMin)} wafers/m`;
+    const fabNum = Math.floor(fromBigInt(state.waferFabs));
+    this.fabBuyGroup.update(fabNum, (amt) => 
+      state.funds >= BigInt(amt) * BALANCE.fabCost && state.labor >= BigInt(amt) * BALANCE.fabLaborCost
     );
-    this.updateRateDisplay(this.fabRateEl, state.fabActualRate, state.waferFabs > 0);
+    this.updateRateDisplay(this.fabRateEl, state.fabActualRate, state.waferFabs > 0n);
 
     // Mines
     this.mineInfoEl.textContent = formatNumber(state.siliconMines);
     const minePriceStr = `${formatMoney(BALANCE.siliconMineCost)} + ${formatNumber(BALANCE.siliconMineLaborCost)} labor`;
-    this.minePriceEl.textContent = `${minePriceStr} ea | ${BALANCE.siliconMineOutputPerMin} silicon/m`;
-    this.mineBuyGroup.update(state.siliconMines, (amt) => 
-      state.funds >= amt * BALANCE.siliconMineCost && state.labor >= amt * BALANCE.siliconMineLaborCost
+    this.minePriceEl.textContent = `${minePriceStr} ea | ${formatNumber(BALANCE.siliconMineOutputPerMin)} silicon/m`;
+    const mineNum = Math.floor(fromBigInt(state.siliconMines));
+    this.mineBuyGroup.update(mineNum, (amt) => 
+      state.funds >= BigInt(amt) * BALANCE.siliconMineCost && state.labor >= BigInt(amt) * BALANCE.siliconMineLaborCost
     );
-    this.updateRateDisplay(this.mineRateEl, state.mineActualRate, state.siliconMines > 0);
+    this.updateRateDisplay(this.mineRateEl, state.mineActualRate, state.siliconMines > 0n);
   }
 
   private updateRobotics(state: GameState): void {
@@ -320,17 +323,19 @@ export class SupplyPanel implements Panel {
     // Factories
     this.factoryInfoEl.textContent = formatNumber(state.robotFactories);
     const factPriceStr = `${formatMoney(BALANCE.robotFactoryCost)} + ${formatNumber(BALANCE.robotFactoryLaborCost)} labor`;
-    this.factoryPriceEl.textContent = `${factPriceStr} ea | ${BALANCE.robotFactoryOutputPerMin} robots/m`;
-    this.factoryBuyGroup.update(state.robotFactories, (amt) => 
-      state.funds >= amt * BALANCE.robotFactoryCost && state.labor >= amt * BALANCE.robotFactoryLaborCost
+    this.factoryPriceEl.textContent = `${factPriceStr} ea | ${formatNumber(BALANCE.robotFactoryOutputPerMin)} robots/m`;
+    const factoryNum = Math.floor(fromBigInt(state.robotFactories));
+    this.factoryBuyGroup.update(factoryNum, (amt) => 
+      state.funds >= BigInt(amt) * BALANCE.robotFactoryCost && state.labor >= BigInt(amt) * BALANCE.robotFactoryLaborCost
     );
-    this.updateRateDisplay(this.factoryRateEl, state.factoryActualRate, state.robotFactories > 0);
+    this.updateRateDisplay(this.factoryRateEl, state.factoryActualRate, state.robotFactories > 0n);
 
     // Robots
-    const roboProd = state.robotFactories * BALANCE.robotFactoryOutputPerMin;
-    this.robotInfoEl.textContent = formatNumber(Math.floor(state.robots));
+    const roboProd = mulB(state.robotFactories, BALANCE.robotFactoryOutputPerMin);
+    this.robotInfoEl.textContent = formatNumber(state.robots);
     this.robotRateEl.textContent = `(+${formatNumber(roboProd)}/min)`;
     this.robotPriceEl.textContent = `${formatMoney(BALANCE.robotCost)} each`;
-    this.robotBuyGroup.update(state.robots, (amt) => state.funds >= amt * BALANCE.robotCost);
+    const robotNum = Math.floor(fromBigInt(state.robots));
+    this.robotBuyGroup.update(robotNum, (amt) => state.funds >= BigInt(amt) * BALANCE.robotCost);
   }
 }

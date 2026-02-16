@@ -3,7 +3,7 @@ import { getTotalAssignedAgents } from '../../game/GameState.ts';
 import type { Panel } from '../PanelManager.ts';
 import { BALANCE } from '../../game/BalanceConfig.ts';
 import type { JobType } from '../../game/BalanceConfig.ts';
-import { formatNumber, formatMoney } from '../../game/utils.ts';
+import { formatNumber, formatMoney, fromBigInt, scaleBigInt } from '../../game/utils.ts';
 import { ProgressBar } from '../components/ProgressBar.ts';
 import { BulkBuyGroup } from '../components/BulkBuyGroup.ts';
 import { flashElement } from '../UIUtils.ts';
@@ -305,7 +305,7 @@ export class JobsPanel implements Panel {
         refs.countEl.textContent = formatNumber(count);
 
         // Update progress bars
-        const barsToShow = Math.min(count, MAX_PROGRESS_BARS);
+        const barsToShow = Math.min(Math.floor(fromBigInt(count)), MAX_PROGRESS_BARS);
         for (let i = 0; i < MAX_PROGRESS_BARS; i++) {
           if (i < barsToShow) {
             refs.progressBars[i].el.style.display = '';
@@ -316,19 +316,21 @@ export class JobsPanel implements Panel {
         }
 
         // Overflow
-        if (count > MAX_PROGRESS_BARS) {
-          refs.overflowEl.textContent = '...' + (count - MAX_PROGRESS_BARS) + ' more';
+        const maxBarsB = scaleBigInt(BigInt(MAX_PROGRESS_BARS));
+        if (count > maxBarsB) {
+          refs.overflowEl.textContent = '...' + formatNumber(count - maxBarsB) + ' more';
           refs.overflowEl.style.display = '';
         } else {
           refs.overflowEl.style.display = 'none';
         }
 
         // BulkBuy groups
-        refs.addGroup.update(count, (_amount) => {
-          const hireCost = config.hireCost ?? 0;
+        const countNum = Math.floor(fromBigInt(count));
+        refs.addGroup.update(countNum, (_amount) => {
+          const hireCost = config.hireCost ?? 0n;
           return state.funds >= hireCost && state.intelligence >= config.unlockAtIntel;
         });
-        refs.removeGroup.update(count, (amount) => count >= amount);
+        refs.removeGroup.update(countNum, (amount) => countNum >= amount);
       } else {
         // AI job - use agentPools directly
         const pool = state.agentPools[jobType];
@@ -336,14 +338,14 @@ export class JobsPanel implements Panel {
         refs.countEl.textContent = formatNumber(count);
 
         // Show sample progress bars (always 4 or fewer)
-        const barsToShow = Math.min(count, MAX_PROGRESS_BARS);
+        const barsToShow = Math.min(Math.floor(fromBigInt(count)), MAX_PROGRESS_BARS);
         for (let i = 0; i < MAX_PROGRESS_BARS; i++) {
           if (i < barsToShow) {
             refs.progressBars[i].el.style.display = '';
 
             // Determine if sample should show as idle
             // (idle fraction applies to samples statistically)
-            const isIdle = count > 0 && pool.idleCount > 0 && (pool.idleCount / count) > 0.5;
+            const isIdle = count > 0n && pool.idleCount > 0n && (fromBigInt(pool.idleCount) / fromBigInt(count)) > 0.5;
 
             if (isIdle) {
               refs.progressBars[i].update(0, false);
@@ -361,13 +363,15 @@ export class JobsPanel implements Panel {
           }
         }
 
-        if (count > MAX_PROGRESS_BARS) {
-          refs.overflowEl.textContent = '...' + (count - MAX_PROGRESS_BARS) + ' more';
+        const maxBarsB = scaleBigInt(BigInt(MAX_PROGRESS_BARS));
+        if (count > maxBarsB) {
+          refs.overflowEl.textContent = '...' + formatNumber(count - maxBarsB) + ' more';
           refs.overflowEl.style.display = '';
         } else {
           refs.overflowEl.style.display = 'none';
         }
 
+        const countNum = Math.floor(fromBigInt(count));
         const agentEligible = state.intelligence >= config.agentIntelReq &&
           (!config.agentResearchReq || config.agentResearchReq.every(r => state.completedResearch.includes(r)));
 
@@ -375,8 +379,8 @@ export class JobsPanel implements Panel {
         const assignedCount = getTotalAssignedAgents(state);
         const availableSlots = state.activeAgentCount - assignedCount;
 
-        refs.addGroup.update(count, (_amount) => agentEligible && unassignedHired > 0 && availableSlots > 0);
-        refs.removeGroup.update(count, (amount) => count >= amount);
+        refs.addGroup.update(countNum, (_amount) => agentEligible && unassignedHired > 0n && availableSlots > 0n);
+        refs.removeGroup.update(countNum, (amount) => countNum >= amount);
       }
     }
 

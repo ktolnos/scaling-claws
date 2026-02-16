@@ -1,5 +1,6 @@
 import type { GameState } from '../../game/GameState.ts';
 import { laptopSvg, micMiniSvg, serverRackSvg } from '../../assets/sprites.ts';
+import { fromBigInt, formatNumber } from '../../game/utils.ts';
 
 type Stage = 'laptop' | 'micmini' | 'rack' | 'datacenter' | 'fullroom';
 
@@ -136,7 +137,8 @@ export class DatacenterInterior {
 
     // Stage-specific updates
     if (this.currentStage === 'laptop' || this.currentStage === 'micmini') {
-      while (this.renderedMicMinis < state.micMiniCount) {
+      const mcNum = Math.floor(fromBigInt(state.micMiniCount));
+      while (this.renderedMicMinis < mcNum) {
         const unit = document.createElement('div');
         unit.className = 'mic-mini-unit';
         unit.innerHTML = micMiniSvg;
@@ -146,11 +148,12 @@ export class DatacenterInterior {
     }
 
     if (this.currentStage === 'rack') {
-      this.gpuCountLabel.textContent = state.gpuCount + ' GPUs';
+      this.gpuCountLabel.textContent = formatNumber(state.gpuCount) + ' GPUs';
     }
 
     if (this.currentStage === 'datacenter' || this.currentStage === 'fullroom') {
-      const targetRacks = Math.max(1, Math.min(12, Math.ceil(state.gpuCount / 32)));
+      const gcNum = fromBigInt(state.gpuCount);
+      const targetRacks = Math.max(1, Math.min(12, Math.ceil(gcNum / 32)));
       while (this.rackCount < targetRacks) {
         const rack = document.createElement('div');
         rack.className = 'rack-unit';
@@ -166,9 +169,9 @@ export class DatacenterInterior {
   }
 
   private getTargetStage(state: GameState): Stage {
-    const totalDCs = state.datacenters.reduce((a, b) => a + b, 0);
-    if (totalDCs >= 3) return 'fullroom';
-    if (totalDCs >= 1) return 'datacenter';
+    const totalDCs = state.datacenters.reduce((a: bigint, b: bigint) => a + b, 0n);
+    if (totalDCs >= 3n) return 'fullroom';
+    if (totalDCs >= 1n) return 'datacenter';
     if (state.isPostGpuTransition) return 'rack';
     if (state.micMiniCount > 0) return 'micmini';
     return 'laptop';

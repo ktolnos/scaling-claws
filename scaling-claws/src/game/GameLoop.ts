@@ -34,7 +34,7 @@ export class GameLoop {
     this.resetBreakdowns();
 
     // Run systems in order
-    tickEnergy(this.state, dt);
+    tickEnergy(this.state);
     tickResearch(this.state, dt);   // Compute bonuses before they're used
     tickCompute(this.state, dt);
     tickTraining(this.state, dt);

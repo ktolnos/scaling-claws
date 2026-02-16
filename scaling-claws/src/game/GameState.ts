@@ -3,10 +3,10 @@ import type { SubscriptionTier, JobType } from './BalanceConfig.ts';
 
 
 export interface JobPool {
-  totalCount: number;         // Total agents in this job
-  stuckCount: number;         // How many agents are currently stuck
-  idleCount: number;          // How many agents are idle (no CPU/GPU)
-  aggregateProgress: number;  // Collective progress tracker (0..infinity)
+  totalCount: bigint;         // Total agents in this job
+  stuckCount: bigint;         // How many agents are currently stuck
+  idleCount: bigint;          // How many agents are idle (no CPU/GPU)
+  aggregateProgress: bigint;  // Collective progress tracker
   samples: {                  // Only 4 sample agents for UI display
     progress: number[];       // [0..1, 0..1, 0..1, 0..1]
     stuck: boolean[];         // [bool, bool, bool, bool]
@@ -16,7 +16,7 @@ export interface JobPool {
 
 export interface ResourceRate {
   label: string;
-  ratePerMin: number;
+  ratePerMin: bigint;
 }
 
 export interface ResourceBreakdown {
@@ -24,12 +24,12 @@ export interface ResourceBreakdown {
   code: { income: ResourceRate[]; expense: ResourceRate[] };
   science: { income: ResourceRate[]; expense: ResourceRate[] };
   labor: { income: ResourceRate[]; expense: ResourceRate[] };
-  compute: { label: string; pflops: number }[];
+  compute: { label: string; pflops: bigint }[];
 }
 
 export interface HumanPool {
-  totalCount: number;
-  aggregateProgress: number;
+  totalCount: bigint;
+  aggregateProgress: bigint;
   samples: {
     progress: number[];
   };
@@ -37,8 +37,8 @@ export interface HumanPool {
 
 export interface GameState {
   // Core resources
-  funds: number;
-  totalEarned: number;
+  funds: bigint;
+  totalEarned: bigint;
 
   // Resource Breakdown for UI
   resourceBreakdown: ResourceBreakdown;
@@ -54,7 +54,7 @@ export interface GameState {
 
   // AI Agent Pools (new aggregate structure)
   agentPools: Record<JobType, JobPool>;
-  totalAgents: number;
+  totalAgents: bigint;
   poolsVersion: number;
 
   // Human Workers
@@ -66,74 +66,72 @@ export interface GameState {
   subscriptionTier: SubscriptionTier;
 
   // Hardware (pre-GPU)
-  cpuCoresTotal: number;
-  micMiniCount: number;
+  cpuCoresTotal: bigint;
+  micMiniCount: bigint;
 
   // GPU & Compute
-  gpuCount: number;
-  installedGpuCount: number;   // computed: min(gpuCount, gpuCapacity)
-  totalPflops: number;         // computed: installedGpuCount * pflopsPerGpu
+  gpuCount: bigint;
+  installedGpuCount: bigint;   // computed: min(gpuCount, gpuCapacity)
+  totalPflops: bigint;         // computed
   currentModelIndex: number;   // index into BALANCE.models
-  freeCompute: number;         // computed: totalPflops - training allocation
+  freeCompute: bigint;         // computed
   isPostGpuTransition: boolean;
 
   // Datacenters: count per tier [small, medium, large, mega]
-  datacenters: number[];
-  gpuCapacity: number;         // computed from datacenters
+  datacenters: bigint[];
+  gpuCapacity: bigint;         // computed from datacenters
   needsDatacenter: boolean;    // computed: gpuCount approaching capacity
 
   // Labor
-  labor: number;               // stockpile
-  laborPerMin: number;         // computed: production rate from workers
-  laborConsumedPerMin: number; // computed: consumption by facilities
-  laborThrottle: number;      // 0..1, 1 = no throttle
+  labor: bigint;               // stockpile
+  laborPerMin: bigint;         // computed
 
   // Energy
-  gridPowerKW: number;
-  gasPlants: number;
-  nuclearPlants: number;
-  solarFarms: number;
-  solarPanels: number;
-  powerDemandMW: number;       // computed from GPUs
-  powerSupplyMW: number;       // computed from all sources
+  gridPowerKW: bigint;
+  gasPlants: bigint;
+  nuclearPlants: bigint;
+  solarFarms: bigint;
+  solarPanels: bigint;
+  powerDemandMW: bigint;       // computed
+  powerSupplyMW: bigint;       // computed
   powerThrottle: number;       // 0..1, 1 = no throttle
 
   // Training
-  trainingData: number;           // TB of training data owned
+  trainingData: bigint;           // TB of training data owned
   trainingDataPurchases: number;  // for price escalation
   trainingAllocationPct: number;  // 0-100, step 5
-  trainingAllocatedPflops: number; // computed
+  trainingAllocatedPflops: bigint; // computed
   currentFineTuneIndex: number;   // -1 = none active, index into BALANCE.fineTunes
-  fineTuneProgress: number;       // PFLOPS-hrs completed
+  fineTuneProgress: bigint;       // PFLOPS-hrs completed
   completedFineTunes: number[];   // indices of completed fine-tunes
   ariesModelIndex: number;        // -1 = none, index into BALANCE.ariesModels
-  ariesProgress: number;          // PFLOPS-hrs into current Aries run
+  ariesProgress: bigint;          // PFLOPS-hrs into current Aries run
 
   // Code & Science (produced by jobs, consumed by training/research)
-  code: number;
-  codePerMin: number;             // computed: production from jobs
-  science: number;
-  sciencePerMin: number;          // computed: production from jobs
+  code: bigint;
+  codePerMin: bigint;
+  science: bigint;
+  sciencePerMin: bigint;
 
   // Research
   completedResearch: string[];
-  synthDataRate: number;          // computed: TB/min from synth data
+  synthDataRate: bigint;          // computed
   algoEfficiencyBonus: number;    // computed: multiplier for training speed
   gpuFlopsBonus: number;          // computed: multiplier for GPU PFLOPS
 
   // Supply Chain
-  lithoMachines: number;
-  waferFabs: number;
-  siliconMines: number;
-  robotFactories: number;
-  robots: number;
-  gpuProductionPerMin: number;    // computed: GPUs auto-produced per minute
-  silicon: number;                // silicon stockpile
-  siliconProductionPerMin: number;
-  siliconDemandPerMin: number;
-  wafers: number;                 // pending wafers → GPU production
-  waferProductionPerMin: number;
-  waferDemandPerMin: number;
+  lithoMachines: bigint;
+  waferFabs: bigint;
+  siliconMines: bigint;
+  robotFactories: bigint;
+  robots: bigint;
+  gpuProductionPerMin: bigint;    // computed
+  silicon: bigint;                // silicon stockpile
+  siliconProductionPerMin: bigint;
+  siliconDemandPerMin: bigint;
+  wafers: bigint;                 // pending wafers → GPU production
+  waferProductionPerMin: bigint;
+  waferDemandPerMin: bigint;
   lithoActualRate: number;
   fabActualRate: number;
   mineActualRate: number;
@@ -141,66 +139,69 @@ export interface GameState {
 
   // API Services
   apiUnlocked: boolean;
-  apiUserCount: number;
+  apiUserCount: bigint;
   apiPrice: number;        // Price factor (affects demand)
-  apiDemand: number;       // Computed demand
+  apiDemand: bigint;       // Computed demand
   apiAwareness: number;    // Awareness level
-  apiReservedPflops: number; // Computed PFLOPS used
-  apiIncomePerMin: number; // Computed income
+  apiReservedPflops: bigint; // Computed PFLOPS used
+  apiIncomePerMin: bigint; // Computed income
   apiInferenceAllocationPct: number; // 0-100
-  apiUserSynthRate: number; // Computed per-user synth rate (TB/min)
+  apiUserSynthRate: bigint; // Computed per-user synth rate
   apiImprovementLevel: number; // Index of current tier
   apiQuality: number;      // Current quality multiplier
 
   // Space
-  rockets: number;
-  satellites: number;
+  rockets: bigint;
+  satellites: bigint;
   lunarBase: boolean;
-  lunarRobots: number;
-  lunarGPUs: number;
-  lunarSolarPanels: number;
+  lunarRobots: bigint;
+  lunarGPUs: bigint;
+  lunarSolarPanels: bigint;
   lunarMassDriverRate: number;    // computed
   mercuryBase: boolean;
-  mercuryRobots: number;
+  mercuryRobots: bigint;
   mercuryMiningRate: number;      // computed
   spaceUnlocked: boolean;         // computed
   launchCostBonus: number;        // computed from research
 
   // Energy — separate grids
-  lunarPowerDemandMW: number;     // computed
-  lunarPowerSupplyMW: number;     // computed
+  lunarPowerDemandMW: bigint;     // computed
+  lunarPowerSupplyMW: bigint;     // computed
   lunarPowerThrottle: number;     // 0..1
-  orbitalPowerMW: number;         // computed (display only)
-  totalEnergyMW: number;          // computed: all grids combined
+  orbitalPowerMW: bigint;         // computed
+  totalEnergyMW: bigint;          // computed
 
   // Job tracking
-  completedTasks: number;
+  completedTasks: bigint;
   unlockedJobs: JobType[];
   automatedJobs: JobType[];
 
   // Manager tracking
-  managerCount: number;
+  managerCount: bigint;
 
   // Computed per tick (for UI display)
-  incomePerMin: number;
-  expensePerMin: number;
-  humanSalaryPerMin: number;     // computed: total human worker salaries
+  incomePerMin: bigint;
+  expensePerMin: bigint;
+  humanSalaryPerMin: bigint;     // computed
   intelligence: number;
   agentEfficiency: number;
-  stuckCount: number;
-  activeAgentCount: number;
-  usedCores: number;
+  stuckCount: bigint;
+  activeAgentCount: bigint;
+  usedCores: bigint;
 
   // Flavor text
   pendingFlavorTexts: string[];
   shownFlavorTexts: string[];
 }
 
+
+import { toBigInt, scaleBigInt } from './utils.ts';
+
 export function createInitialState(): GameState {
   const now = Date.now();
   return {
-    funds: BALANCE.startingFunds,
-    totalEarned: 0,
+    funds: toBigInt(BALANCE.startingFunds),
+    totalEarned: 0n,
 
     resourceBreakdown: {
       funds: { income: [], expense: [] },
@@ -220,144 +221,143 @@ export function createInitialState(): GameState {
 
     subscriptionTier: 'basic',
 
-    cpuCoresTotal: BALANCE.startingCpuCores,
-    micMiniCount: 0,
+    cpuCoresTotal: toBigInt(BALANCE.startingCpuCores),
+    micMiniCount: 0n,
 
     // GPU & Compute
-    gpuCount: 0,
-    installedGpuCount: 0,
-    totalPflops: 0,
+    gpuCount: 0n,
+    installedGpuCount: 0n,
+    totalPflops: 0n,
     currentModelIndex: 0,
-    freeCompute: 0,
+    freeCompute: 0n,
     isPostGpuTransition: false,
 
     // Datacenters
-    datacenters: [0, 0, 0, 0],
-    gpuCapacity: 32,
+    datacenters: [0n, 0n, 0n, 0n],
+    gpuCapacity: scaleBigInt(32n),
     needsDatacenter: false,
 
     // Labor
-    labor: 0,
-    laborPerMin: 0,
-    laborConsumedPerMin: 0,
-    laborThrottle: 1,
+    labor: 0n,
+    laborPerMin: 0n,
 
     // Energy
-    gridPowerKW: 0,
-    gasPlants: 0,
-    nuclearPlants: 0,
-    solarFarms: 0,
-    solarPanels: 0,
-    powerDemandMW: 0,
-    powerSupplyMW: 0,
+    gridPowerKW: 0n,
+    gasPlants: 0n,
+    nuclearPlants: 0n,
+    solarFarms: 0n,
+    solarPanels: 0n,
+    powerDemandMW: 0n,
+    powerSupplyMW: 0n,
     powerThrottle: 1,
 
     // Training
-    trainingData: 0,
+    trainingData: 0n,
     trainingDataPurchases: 0,
     trainingAllocationPct: 0,
-    trainingAllocatedPflops: 0,
+    trainingAllocatedPflops: 0n,
     currentFineTuneIndex: -1,
-    fineTuneProgress: 0,
+    fineTuneProgress: 0n,
     completedFineTunes: [],
     ariesModelIndex: -1,
-    ariesProgress: 0,
+    ariesProgress: 0n,
 
     // Code & Science
-    code: 0,
-    codePerMin: 0,
-    science: 0,
-    sciencePerMin: 0,
+    code: 0n,
+    codePerMin: 0n,
+    science: 0n,
+    sciencePerMin: 0n,
 
     // Research
     completedResearch: [],
-    synthDataRate: 0,
+    synthDataRate: 0n,
     algoEfficiencyBonus: 1,
     gpuFlopsBonus: 1,
 
     // Supply Chain
-    lithoMachines: 0,
-    waferFabs: 0,
-    siliconMines: 0,
-    robotFactories: 0,
-    robots: 0,
-    gpuProductionPerMin: 0,
-    silicon: 0,
-    siliconProductionPerMin: 0,
-    siliconDemandPerMin: 0,
-    wafers: 0,
-    waferProductionPerMin: 0,
-    waferDemandPerMin: 0,
+    lithoMachines: 0n,
+    waferFabs: 0n,
+    siliconMines: 0n,
+    robotFactories: 0n,
+    robots: 0n,
+    gpuProductionPerMin: 0n,
+    silicon: 0n,
+    siliconProductionPerMin: 0n,
+    siliconDemandPerMin: 0n,
+    wafers: 0n,
+    waferProductionPerMin: 0n,
+    waferDemandPerMin: 0n,
     lithoActualRate: 0,
     fabActualRate: 0,
     mineActualRate: 0,
     factoryActualRate: 0,
 
     // Space
-    rockets: 0,
-    satellites: 0,
+    rockets: 0n,
+    satellites: 0n,
     lunarBase: false,
-    lunarRobots: 0,
-    lunarGPUs: 0,
-    lunarSolarPanels: 0,
+    lunarRobots: 0n,
+    lunarGPUs: 0n,
+    lunarSolarPanels: 0n,
     lunarMassDriverRate: 0,
     mercuryBase: false,
-    mercuryRobots: 0,
+    mercuryRobots: 0n,
     mercuryMiningRate: 0,
     spaceUnlocked: false,
     launchCostBonus: 1,
 
     // Energy — separate grids
-    lunarPowerDemandMW: 0,
-    lunarPowerSupplyMW: 0,
+    lunarPowerDemandMW: 0n,
+    lunarPowerSupplyMW: 0n,
     lunarPowerThrottle: 1,
-    orbitalPowerMW: 0,
-    totalEnergyMW: 0,
+    orbitalPowerMW: 0n,
+    totalEnergyMW: 0n,
 
     // API Services
     apiUnlocked: false,
-    apiUserCount: 0,
+    apiUserCount: 0n,
     apiPrice: 35,
-    apiDemand: 0,
+    apiDemand: 0n,
     apiAwareness: 0,
-    apiReservedPflops: 0,
-    apiIncomePerMin: 0,
+    apiReservedPflops: 0n,
+    apiIncomePerMin: 0n,
     apiInferenceAllocationPct: 0,
-    apiUserSynthRate: 0,
+    apiUserSynthRate: 0n,
     apiImprovementLevel: -1,
     apiQuality: 1,
 
-    completedTasks: 0,
+    completedTasks: 0n,
     unlockedJobs: ['unassigned', 'sixxerBasic'],
     automatedJobs: [],
 
-    managerCount: 0,
+    managerCount: 0n,
 
-    incomePerMin: 0,
-    expensePerMin: 0,
-    humanSalaryPerMin: 0,
+    incomePerMin: 0n,
+    expensePerMin: 0n,
+    humanSalaryPerMin: 0n,
     intelligence: BALANCE.tiers.basic.intel,
     agentEfficiency: 1,
-    stuckCount: 0,
-    activeAgentCount: 1,
-    usedCores: 1,
+    stuckCount: 0n,
+    activeAgentCount: toBigInt(1),
+    usedCores: toBigInt(1),
 
     pendingFlavorTexts: [],
     shownFlavorTexts: [],
 
     // Agent pools (new structure)
     agentPools: initializeAgentPools(),
-    totalAgents: 1,
+    totalAgents: toBigInt(1),
     poolsVersion: 1,
   };
 }
 
+
 export function initializeJobPool(): JobPool {
   return {
-    totalCount: 0,
-    stuckCount: 0,
-    idleCount: 0,
-    aggregateProgress: 0,
+    totalCount: 0n,
+    stuckCount: 0n,
+    idleCount: 0n,
+    aggregateProgress: 0n,
     samples: {
       progress: [0, 0, 0, 0],
       stuck: [false, false, false, false],
@@ -374,7 +374,7 @@ function initializeAgentPools(): Record<JobType, JobPool> {
   }
 
   // Start with 1 agent in unassigned
-  pools['unassigned'].totalCount = 1;
+  pools['unassigned'].totalCount = toBigInt(1);
 
   return pools as Record<JobType, JobPool>;
 }
@@ -385,8 +385,8 @@ function initializeHumanPools(): Record<JobType, HumanPool> {
 
   for (const jobType of allJobTypes) {
     pools[jobType] = {
-      totalCount: 0,
-      aggregateProgress: 0,
+      totalCount: 0n,
+      aggregateProgress: 0n,
       samples: {
         progress: [0, 0, 0, 0],
       },
@@ -396,8 +396,9 @@ function initializeHumanPools(): Record<JobType, HumanPool> {
   return pools as Record<JobType, HumanPool>;
 }
 
-export function getTotalAssignedAgents(state: GameState): number {
+export function getTotalAssignedAgents(state: GameState): bigint {
   return state.totalAgents - state.agentPools['unassigned'].totalCount;
 }
 
 // NOTE: DO NOT add migrations here. The game is in active development and breaking changes to saves are currently acceptable.
+

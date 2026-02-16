@@ -1,4 +1,5 @@
 import type { GameState } from '../../game/GameState.ts';
+import { fromBigInt } from '../../game/utils.ts';
 import {
   datacenterBuildingSvg, gasPlantSvg, nuclearPlantSvg, solarFarmSvg,
   rocketSiloSvg, robotFactorySvg, siliconMineSvg, waferFabSvg,
@@ -69,7 +70,8 @@ export class EarthSurface {
   }
 
   update(state: GameState): void {
-    const totalDCs = state.datacenters.reduce((a, b) => a + b, 0);
+    const totalDCsB = state.datacenters.reduce((a, b) => a + b, 0n);
+    const totalDCs = Math.floor(fromBigInt(totalDCsB));
     const shouldShow = totalDCs >= 1;
 
     if (shouldShow && !this.isVisible) {
@@ -84,13 +86,13 @@ export class EarthSurface {
 
     // Add new buildings (never remove — incremental game)
     this.syncBuildings(state, 'datacenter', totalDCs, datacenterBuildingSvg);
-    this.syncBuildings(state, 'gas', state.gasPlants, gasPlantSvg);
-    this.syncBuildings(state, 'nuclear', state.nuclearPlants, nuclearPlantSvg);
-    this.syncBuildings(state, 'solar', state.solarFarms, solarFarmSvg);
-    this.syncBuildings(state, 'rocket', state.rockets, rocketSiloSvg);
-    this.syncBuildings(state, 'robotFactory', state.robotFactories, robotFactorySvg);
-    this.syncBuildings(state, 'mine', state.siliconMines, siliconMineSvg);
-    this.syncBuildings(state, 'fab', state.waferFabs, waferFabSvg);
+    this.syncBuildings(state, 'gas', Math.floor(fromBigInt(state.gasPlants)), gasPlantSvg);
+    this.syncBuildings(state, 'nuclear', Math.floor(fromBigInt(state.nuclearPlants)), nuclearPlantSvg);
+    this.syncBuildings(state, 'solar', Math.floor(fromBigInt(state.solarFarms)), solarFarmSvg);
+    this.syncBuildings(state, 'rocket', Math.floor(fromBigInt(state.rockets)), rocketSiloSvg);
+    this.syncBuildings(state, 'robotFactory', Math.floor(fromBigInt(state.robotFactories)), robotFactorySvg);
+    this.syncBuildings(state, 'mine', Math.floor(fromBigInt(state.siliconMines)), siliconMineSvg);
+    this.syncBuildings(state, 'fab', Math.floor(fromBigInt(state.waferFabs)), waferFabSvg);
 
     // Update zoom level based on total building count
     const totalBuildings = this.buildings.length;

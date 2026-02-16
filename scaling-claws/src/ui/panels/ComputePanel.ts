@@ -2,7 +2,7 @@ import type { GameState } from '../../game/GameState.ts';
 import { getTotalAssignedAgents } from '../../game/GameState.ts';
 import type { Panel } from '../PanelManager.ts';
 import { BALANCE } from '../../game/BalanceConfig.ts';
-import { formatMoney, formatNumber } from '../../game/utils.ts';
+import { formatMoney, formatNumber, fromBigInt, toBigInt, divB, scaleB, scaleBigInt } from '../../game/utils.ts';
 import { buyGpu, upgradeModel, buyDatacenter, setApiPrice, buyAds, setApiAllocation, improveApi, unlockApi } from '../../game/systems/ComputeSystem.ts';
 import { BulkBuyGroup, getBuyTiers } from '../components/BulkBuyGroup.ts';
 
@@ -490,7 +490,7 @@ export class ComputePanel implements Panel {
 
     if (state.isPostGpuTransition) {
       this.installedGpuRow.style.display = 'flex';
-      const installedPct = state.gpuCount > 0 ? Math.floor((state.installedGpuCount / state.gpuCount) * 100) : 100;
+      const installedPct = state.gpuCount > 0n ? Number(state.installedGpuCount * 100n / state.gpuCount) : 100;
       this.installedGpuCountEl.textContent = `${formatNumber(state.installedGpuCount)} (${installedPct}%) (Capacity: ${formatNumber(state.gpuCapacity)})`;
       if (state.installedGpuCount < state.gpuCount) {
         this.installedGpuCountEl.style.color = 'var(--accent-red)';
@@ -504,10 +504,11 @@ export class ComputePanel implements Panel {
     if (state.isPostGpuTransition) {
       this.unassignedLabelEl.textContent = 'Unassigned Agents:';
       const assignedCount = getTotalAssignedAgents(state);
-      const unassignedCount = Math.max(0, state.activeAgentCount - assignedCount);
+      const diff = state.activeAgentCount - assignedCount;
+      const unassignedCount = diff > 0n ? diff : 0n;
       
-      this.unassignedCountEl.textContent = unassignedCount.toString();
-      if (unassignedCount > 0) {
+      this.unassignedCountEl.textContent = formatNumber(unassignedCount);
+      if (unassignedCount > 0n) {
         this.unassignedCountEl.style.color = 'var(--accent-green)';
       } else {
         this.unassignedCountEl.style.color = '';
@@ -515,8 +516,8 @@ export class ComputePanel implements Panel {
     } else {
       this.unassignedLabelEl.textContent = 'Unassigned Agents:';
       const unassignedCount = state.agentPools['unassigned'].totalCount;
-      this.unassignedCountEl.textContent = unassignedCount.toString();
-      if (unassignedCount > 0) {
+      this.unassignedCountEl.textContent = formatNumber(unassignedCount);
+      if (unassignedCount > 0n) {
         this.unassignedCountEl.style.color = 'var(--accent-green)';
       } else {
         this.unassignedCountEl.style.color = '';
@@ -536,7 +537,8 @@ export class ComputePanel implements Panel {
     }
 
     // GPU buy buttons — rebuild if tiers changed, then update enabled state
-    const tiers = getBuyTiers(state.gpuCount);
+    const gpuNum = Math.floor(fromBigInt(state.gpuCount));
+    const tiers = getBuyTiers(gpuNum);
     const tiersKey = tiers.join(',');
     if (tiersKey !== this.lastGpuTiers) {
       this.lastGpuTiers = tiersKey;
@@ -552,7 +554,7 @@ export class ComputePanel implements Panel {
     const gpuBtns = this.buyGpuBtnGroup.querySelectorAll('button');
     gpuBtns.forEach(btn => {
       const amt = parseInt(btn.dataset.amount ?? '1');
-      btn.disabled = state.funds < amt * BALANCE.gpuCost;
+      btn.disabled = state.funds < BigInt(amt) * BALANCE.gpuCost;
     });
 
     // Model upgrade
@@ -565,9 +567,10 @@ export class ComputePanel implements Panel {
             '</strong> (Intel ' + (Math.round(nextModel.intel * 10) / 10).toString() + ')';
       }
       if (this.upgradeBtn && this.upgradeBtnReq) {
-          const gpuMet = state.gpuCount >= nextModel.minGpus;
+          const minGpusScaled = scaleBigInt(BigInt(nextModel.minGpus));
+          const gpuMet = state.gpuCount >= minGpusScaled;
           const gpuColor = gpuMet ? '' : 'var(--accent-red)';
-          this.upgradeBtnReq.textContent = `(Requires ${nextModel.minGpus} GPUs)`;
+          this.upgradeBtnReq.textContent = `(Requires ${formatNumber(minGpusScaled)} GPUs)`;
           this.upgradeBtnReq.style.color = gpuColor;
           this.upgradeBtn.disabled = !gpuMet;
       }
@@ -579,10 +582,10 @@ export class ComputePanel implements Panel {
     if (state.gpuCount > state.installedGpuCount) {
       this.datacenterHintEl.textContent = 'Unutilized GPUs! Buy datacenters to install them.';
       this.datacenterHintEl.style.color = 'var(--accent-red)';
-    } else if (state.gpuCount > state.gpuCapacity * 0.8) {
+    } else if (state.gpuCount > scaleB(state.gpuCapacity, 0.8)) {
       this.datacenterHintEl.textContent = 'At ' + formatNumber(state.gpuCapacity) + ' GPUs you\'ll need a datacenter.';
       this.datacenterHintEl.style.color = 'var(--accent-blue)';
-    } else if (state.gpuCapacity > state.gpuCount * 2) {
+    } else if (state.gpuCapacity > state.gpuCount * 2n) {
       this.datacenterHintEl.textContent = 'Hint: GPUs must be bought separately from datacenters.';
       this.datacenterHintEl.style.color = 'var(--accent-blue)';
     } else {
@@ -658,8 +661,8 @@ export class ComputePanel implements Panel {
       } else {
         // Only show code requirement text if button is hidden (i.e. if Intelligence not met)
         html += `<br><span style="color: ${codeMet ? 'var(--accent-green)' : 'var(--accent-red)'}">` +
-        `${BALANCE.apiUnlockCode} Code</span> ` +
-        `(${Math.floor(state.code)})`;
+        `${formatNumber(BALANCE.apiUnlockCode)} Code</span> ` +
+        `(${formatNumber(state.code)})`;
         this.apiUnlockBtn.style.display = 'none';
       }
       
@@ -673,7 +676,7 @@ export class ComputePanel implements Panel {
     this.apiUnlockedContainer.style.display = '';
 
     // Active Users & Income
-    this.apiInfoEl.textContent = 'Active Users: ' + formatNumber(Math.floor(state.apiUserCount)) +
+    this.apiInfoEl.textContent = 'Active Users: ' + formatNumber(state.apiUserCount) +
       ' @ ' + formatMoney(state.apiPrice) + '/min = ' + formatMoney(state.apiIncomePerMin) + '/min';
 
     // Allocation
@@ -682,10 +685,10 @@ export class ComputePanel implements Panel {
     this.apiAllocPlus.disabled = state.apiInferenceAllocationPct >= 95;
 
     // Demand Bar
-    const capacity = Math.floor(state.apiReservedPflops / BALANCE.apiPflopsPerUser);
+    const capacity = divB(state.apiReservedPflops, toBigInt(BALANCE.apiPflopsPerUser));
     this.apiDemandText.textContent = `Demand: ${formatNumber(state.apiDemand)} / Capacity: ${formatNumber(capacity)} Users`;
     
-    const utilization = capacity > 0 ? (state.apiUserCount / capacity) * 100 : 0;
+    const utilization = capacity > 0n ? Number(state.apiUserCount * 100n / capacity) : 0;
     this.apiDemandBarFill.style.width = Math.min(100, utilization) + '%';
     if (state.apiDemand > capacity) {
         this.apiDemandBarFill.style.background = 'var(--accent-red)'; // Capacity constrained
@@ -700,10 +703,10 @@ export class ComputePanel implements Panel {
 
     // Ads
     this.apiAdInfo.textContent = 'Awareness: ' + formatNumber(state.apiAwareness);
-    this.apiAdBtnGroup.update(state.apiAwareness, (amt) => state.funds >= amt * BALANCE.apiAdCost);
+    this.apiAdBtnGroup.update(state.apiAwareness, (amt) => state.funds >= BigInt(amt) * BALANCE.apiAdCost);
 
     // Improvements
     this.apiImproveInfo.textContent = `Quality: ${(Math.round(state.apiQuality * 10) / 10).toString()}x`;
-    this.apiImproveBtnGroup.update(state.apiImprovementLevel, (amt) => state.code >= amt * BALANCE.apiImproveCodeCost);
+    this.apiImproveBtnGroup.update(state.apiImprovementLevel, (amt) => state.code >= BigInt(amt) * BALANCE.apiImproveCodeCost);
   }
 }

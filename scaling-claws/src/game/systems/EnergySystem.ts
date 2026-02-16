@@ -1,34 +1,35 @@
 import type { GameState } from '../GameState.ts';
 import { BALANCE } from '../BalanceConfig.ts';
+import { toBigInt, mulB, scaleBigInt } from '../utils.ts';
 
-export function tickEnergy(state: GameState, _dtMs: number): void {
+export function tickEnergy(state: GameState): void { // Removed unused _dtMs
   if (!state.isPostGpuTransition) return;
 
   // Power demand: GPUs
-  state.powerDemandMW = state.installedGpuCount * BALANCE.gpuPowerMW;
+  state.powerDemandMW = mulB(state.installedGpuCount, toBigInt(BALANCE.gpuPowerMW));
 
   // Power supply: grid + plants + solar + home
-  let supply = BALANCE.homePowerMW;
-  supply += state.gridPowerKW / 1000;
-  supply += state.gasPlants * BALANCE.powerPlants.gas.outputMW;
-  supply += state.nuclearPlants * BALANCE.powerPlants.nuclear.outputMW;
-  supply += state.solarPanels * BALANCE.solarPanelMW;
+  let supply = toBigInt(BALANCE.homePowerMW);
+  supply += state.gridPowerKW / 1000n;
+  supply += mulB(state.gasPlants, BALANCE.powerPlants.gas.outputMW);
+  supply += mulB(state.nuclearPlants, BALANCE.powerPlants.nuclear.outputMW);
+  supply += mulB(state.solarPanels, toBigInt(BALANCE.solarPanelMW));
   state.powerSupplyMW = supply;
 
   // Throttle: if demand > supply, GPUs run at reduced capacity
-  if (state.powerDemandMW > 0 && state.powerSupplyMW < state.powerDemandMW) {
-    state.powerThrottle = state.powerSupplyMW / state.powerDemandMW;
+  if (state.powerDemandMW > 0n && state.powerSupplyMW < state.powerDemandMW) {
+    state.powerThrottle = Number(state.powerSupplyMW) / Number(state.powerDemandMW);
   } else {
-    state.powerThrottle = 1;
+    state.powerThrottle = 1.0;
   }
 
   // Lunar grid (independent of Earth)
-  state.lunarPowerDemandMW = state.lunarGPUs * BALANCE.gpuPowerMW;
-  state.lunarPowerSupplyMW = state.lunarSolarPanels * BALANCE.lunarSolarPanelMW;
-  if (state.lunarPowerDemandMW > 0 && state.lunarPowerSupplyMW < state.lunarPowerDemandMW) {
-    state.lunarPowerThrottle = state.lunarPowerSupplyMW / state.lunarPowerDemandMW;
+  state.lunarPowerDemandMW = mulB(state.lunarGPUs, toBigInt(BALANCE.gpuPowerMW));
+  state.lunarPowerSupplyMW = mulB(state.lunarSolarPanels, toBigInt(BALANCE.lunarSolarPanelMW));
+  if (state.lunarPowerDemandMW > 0n && state.lunarPowerSupplyMW < state.lunarPowerDemandMW) {
+    state.lunarPowerThrottle = Number(state.lunarPowerSupplyMW) / Number(state.lunarPowerDemandMW);
   } else {
-    state.lunarPowerThrottle = 1;
+    state.lunarPowerThrottle = 1.0;
   }
 
   // Total energy (for TopBar display)
@@ -36,8 +37,10 @@ export function tickEnergy(state: GameState, _dtMs: number): void {
 }
 
 export function buyGridPower(state: GameState, amountKW: number): boolean {
-  const newTotalKW = state.gridPowerKW + amountKW;
-  const newTotalCostPerMin = newTotalKW * BALANCE.gridPowerCostPerKWPerMin;
+  const amountKWB = toBigInt(amountKW);
+  const newTotalKW = state.gridPowerKW + amountKWB;
+  const newTotalCostPerMin = mulB(newTotalKW, toBigInt(BALANCE.gridPowerCostPerKWPerMin));
+  
   if (state.funds < newTotalCostPerMin) return false;
 
   state.gridPowerKW = newTotalKW;
@@ -45,10 +48,11 @@ export function buyGridPower(state: GameState, amountKW: number): boolean {
 }
 
 export function sellGridPower(state: GameState, amountKW: number): boolean {
-  if (state.gridPowerKW < amountKW) {
-    state.gridPowerKW = 0;
+  const amountKWB = toBigInt(amountKW);
+  if (state.gridPowerKW < amountKWB) {
+    state.gridPowerKW = 0n;
   } else {
-    state.gridPowerKW -= amountKW;
+    state.gridPowerKW -= amountKWB;
   }
   return true;
 }
@@ -59,7 +63,7 @@ export function buyGasPlant(state: GameState): boolean {
 
   state.funds -= BALANCE.powerPlants.gas.cost;
   state.labor -= BALANCE.powerPlants.gas.laborCost;
-  state.gasPlants++;
+  state.gasPlants += scaleBigInt(1n);
   return true;
 }
 
@@ -69,7 +73,7 @@ export function buyNuclearPlant(state: GameState): boolean {
 
   state.funds -= BALANCE.powerPlants.nuclear.cost;
   state.labor -= BALANCE.powerPlants.nuclear.laborCost;
-  state.nuclearPlants++;
+  state.nuclearPlants += scaleBigInt(1n);
   return true;
 }
 
@@ -79,16 +83,18 @@ export function buySolarFarm(state: GameState): boolean {
 
   state.funds -= BALANCE.powerPlants.solar.cost;
   state.labor -= BALANCE.powerPlants.solar.laborCost;
-  state.solarFarms++;
+  state.solarFarms += scaleBigInt(1n);
   return true;
 }
 
 export function buySolarPanel(state: GameState, amount: number): boolean {
-  if (state.solarFarms <= 0) return false;
-  const cost = amount * BALANCE.solarPanelCost;
+  if (state.solarFarms <= 0n) return false;
+  const amountB = toBigInt(amount);
+  const cost = mulB(amountB, BALANCE.solarPanelCost);
   if (state.funds < cost) return false;
 
   state.funds -= cost;
-  state.solarPanels += amount;
+  state.solarPanels += amountB;
   return true;
 }
+

@@ -1,7 +1,8 @@
 import type { GameState } from '../../game/GameState.ts';
 import type { Panel } from '../PanelManager.ts';
 import { BALANCE } from '../../game/BalanceConfig.ts';
-import { formatMoney, formatNumber, formatMW } from '../../game/utils.ts';
+import type { PowerPlantConfig } from '../../game/BalanceConfig.ts';
+import { formatMoney, formatNumber, formatMW, fromBigInt, toBigInt, mulB, scaleBigInt } from '../../game/utils.ts';
 import { buyGridPower, sellGridPower, buyGasPlant, buyNuclearPlant, buySolarFarm, buySolarPanel } from '../../game/systems/EnergySystem.ts';
 import {
   buildRocket, launchSatellite,
@@ -521,23 +522,27 @@ export class SpaceEnergyPanel implements Panel {
     }
 
     // Grid
-    this.gridEl.textContent = formatMW(state.gridPowerKW / 1000);
-    this.gridBuyGroup.update(state.gridPowerKW, (amt) => {
-      const nextTotalKW = state.gridPowerKW + amt;
-      return state.funds >= nextTotalKW * BALANCE.gridPowerCostPerKWPerMin;
+    this.gridEl.textContent = formatMW(state.gridPowerKW / 1000n);
+    const gridKWNum = Math.floor(fromBigInt(state.gridPowerKW));
+    this.gridBuyGroup.update(gridKWNum, (amt) => {
+      const amtB = toBigInt(amt);
+      const nextTotalKW = state.gridPowerKW + amtB;
+      const costPerMin = mulB(nextTotalKW, toBigInt(BALANCE.gridPowerCostPerKWPerMin));
+      return state.funds >= costPerMin;
     });
-    this.gridSellGroup.update(state.gridPowerKW, (amt) => state.gridPowerKW >= amt);
+    this.gridSellGroup.update(gridKWNum, (amt) => gridKWNum >= amt);
 
     // Plants
-    this.updatePlantRow(this.gasRow, 'Gas Plant', state.gasPlants, BALANCE.powerPlants.gas, state.labor);
-    this.updatePlantRow(this.nuclearRow, 'Nuclear Plant', state.nuclearPlants, BALANCE.powerPlants.nuclear, state.labor);
-    this.updatePlantRow(this.solarFarmRow, 'Solar Farm', state.solarFarms, BALANCE.powerPlants.solar, state.labor);
+    this.updatePlantRow(this.gasRow, 'Gas Plant', Math.floor(fromBigInt(state.gasPlants)), BALANCE.powerPlants.gas, state.labor);
+    this.updatePlantRow(this.nuclearRow, 'Nuclear Plant', Math.floor(fromBigInt(state.nuclearPlants)), BALANCE.powerPlants.nuclear, state.labor);
+    this.updatePlantRow(this.solarFarmRow, 'Solar Farm', Math.floor(fromBigInt(state.solarFarms)), BALANCE.powerPlants.solar, state.labor);
 
     // Solar panels
-    if (state.solarFarms > 0) {
+    if (state.solarFarms > 0n) {
       this.solarPanelRefs.row.style.display = '';
-      this.solarPanelRefs.info.textContent = 'Solar panels: ' + formatNumber(state.solarPanels) + ' (' + formatMW(state.solarPanels * BALANCE.solarPanelMW) + ')';
-      const tiers = getBuyTiers(state.solarPanels);
+      this.solarPanelRefs.info.textContent = 'Solar panels: ' + formatNumber(state.solarPanels) + ' (' + formatMW(mulB(state.solarPanels, toBigInt(BALANCE.solarPanelMW))) + ')';
+      const spNum = Math.floor(fromBigInt(state.solarPanels));
+      const tiers = getBuyTiers(spNum);
       const tiersKey = tiers.join(',');
       if (tiersKey !== this.solarPanelRefs.lastTiers) {
         this.solarPanelRefs.lastTiers = tiersKey;
@@ -551,16 +556,16 @@ export class SpaceEnergyPanel implements Panel {
         }
       }
       this.solarPanelRefs.btnGroup.querySelectorAll('button').forEach(btn => {
-        const amt = parseInt(btn.dataset.amount ?? '1');
-        (btn as HTMLButtonElement).disabled = state.funds < amt * BALANCE.solarPanelCost;
+        const amt = parseInt((btn as HTMLElement).dataset.amount ?? '1');
+        (btn as HTMLButtonElement).disabled = state.funds < mulB(toBigInt(amt), BALANCE.solarPanelCost);
       });
     } else {
       this.solarPanelRefs.row.style.display = 'none';
     }
   }
 
-  private updatePlantRow(refs: PlantRowRefs, name: string, count: number, config: { cost: number; outputMW: number; laborCost: number }, currentLabor: number): void {
-    const mwText = config.outputMW > 0 ? '+' + config.outputMW + ' MW' : '+panels MW';
+  private updatePlantRow(refs: PlantRowRefs, name: string, count: number, config: PowerPlantConfig, currentLabor: bigint): void {
+    const mwText = config.outputMW > 0n ? '+' + formatMW(config.outputMW) : '+panels MW';
     const laborMet = currentLabor >= config.laborCost;
     const moneyMet = this.state.funds >= config.cost;
     refs.info.textContent = `${name}: ${count} ${mwText}`;
@@ -578,7 +583,7 @@ export class SpaceEnergyPanel implements Panel {
     if (!hasSpace) return;
 
     // Rockets
-    this.rocketInfo.textContent = 'Rockets: ' + state.rockets;
+    this.rocketInfo.textContent = 'Rockets: ' + formatNumber(state.rockets);
     const rocketMoneyMet = state.funds >= BALANCE.rocketCost;
     const rocketLaborMet = state.labor >= BALANCE.rocketLaborCost;
     this.rocketBtnMoney.textContent = formatMoney(BALANCE.rocketCost);
@@ -588,15 +593,17 @@ export class SpaceEnergyPanel implements Panel {
     this.rocketBtn.disabled = !rocketMoneyMet || !rocketLaborMet;
 
     // Satellites
-    let satText = 'Satellites: ' + formatNumber(Math.floor(state.satellites));
+    let satText = 'Satellites: ' + formatNumber(state.satellites);
     if (state.lunarMassDriverRate > 0) {
       satText += ' (+' + formatNumber(state.lunarMassDriverRate) + '/min)';
     }
     this.satInfo.textContent = satText;
 
-    const satCost = BALANCE.satelliteCost * state.launchCostBonus;
-    this.satBulk.update(Math.floor(state.satellites), (amt) => {
-      return state.rockets >= 1 && state.funds >= satCost * amt && state.labor >= BALANCE.satelliteLaborCost * amt;
+    const satCost = mulB(BALANCE.satelliteCost, toBigInt(state.launchCostBonus));
+    const satNum = Math.floor(fromBigInt(state.satellites));
+    this.satBulk.update(satNum, (amt) => {
+      const amtB = toBigInt(amt);
+      return state.rockets >= scaleBigInt(1n) && state.funds >= mulB(satCost, amtB) && state.labor >= mulB(BALANCE.satelliteLaborCost, amtB);
     });
 
     // Orbital power
@@ -638,14 +645,18 @@ export class SpaceEnergyPanel implements Panel {
 
       // Robots
       this.lunarRobotInfo.textContent = 'Lunar robots: ' + formatNumber(state.lunarRobots);
-      this.lunarRobotBulk.update(state.lunarRobots, (amt) => {
-        return state.robots >= amt && state.funds >= amt * BALANCE.lunarRobotTransferCost;
+      const lrNum = Math.floor(fromBigInt(state.lunarRobots));
+      this.lunarRobotBulk.update(lrNum, (amt) => {
+        const amtB = toBigInt(amt);
+        return state.robots >= amtB && state.funds >= mulB(amtB, BALANCE.lunarRobotTransferCost);
       });
 
       // GPUs
       this.lunarGPUInfo.textContent = 'Lunar GPUs: ' + formatNumber(state.lunarGPUs);
-      this.lunarGPUBulk.update(state.lunarGPUs, (amt) => {
-        return state.gpuCount >= amt && state.funds >= amt * BALANCE.lunarGPUTransferCost;
+      const lgNum = Math.floor(fromBigInt(state.lunarGPUs));
+      this.lunarGPUBulk.update(lgNum, (amt) => {
+        const amtB = toBigInt(amt);
+        return state.gpuCount >= amtB && state.funds >= mulB(amtB, BALANCE.lunarGPUTransferCost);
       });
 
       // Power
@@ -661,9 +672,11 @@ export class SpaceEnergyPanel implements Panel {
       }
 
       // Lunar solar panels
-      this.lunarSolarInfo.textContent = 'Lunar solar: ' + formatNumber(state.lunarSolarPanels) + ' (' + formatMW(state.lunarSolarPanels * BALANCE.lunarSolarPanelMW) + ')';
-      this.lunarSolarBulk.update(state.lunarSolarPanels, (amt) => {
-        return state.funds >= amt * BALANCE.lunarSolarPanelCost;
+      this.lunarSolarInfo.textContent = 'Lunar solar: ' + formatNumber(state.lunarSolarPanels) + ' (' + formatMW(mulB(state.lunarSolarPanels, toBigInt(BALANCE.lunarSolarPanelMW))) + ')';
+      const lsNum = Math.floor(fromBigInt(state.lunarSolarPanels));
+      this.lunarSolarBulk.update(lsNum, (amt) => {
+        const amtB = toBigInt(amt);
+        return state.funds >= mulB(amtB, BALANCE.lunarSolarPanelCost);
       });
 
       // Mass driver
@@ -704,8 +717,10 @@ export class SpaceEnergyPanel implements Panel {
 
       // Robots
       this.mercuryRobotInfo.textContent = 'Mercury robots: ' + formatNumber(state.mercuryRobots);
-      this.mercuryRobotBulk.update(state.mercuryRobots, (amt) => {
-        return state.robots >= amt && state.funds >= amt * BALANCE.mercuryRobotTransferCost;
+      const mrNum = Math.floor(fromBigInt(state.mercuryRobots));
+      this.mercuryRobotBulk.update(mrNum, (amt) => {
+        const amtB = toBigInt(amt);
+        return state.robots >= amtB && state.funds >= mulB(amtB, BALANCE.mercuryRobotTransferCost);
       });
 
       // Mining rate

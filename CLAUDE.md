@@ -29,6 +29,12 @@ scaling-claws/src/
 - **Game logic** (src/game/) is completely decoupled from rendering (src/ui/).
 - **GameLoop** ticks at 100ms. UI reads state on a 500ms setInterval.
 - **No runtime dependencies.** Zero node_modules in production.
+- **Resource Scaling (BigInt):** All primary resources (funds, code, science, labor, counts) use `bigint` scaled by `SCALE` (1,000,000n). This supports 6 decimal places of precision while avoiding floating point errors.
+  - Use `toBigInt(number)` for conversion, `fromBigInt(bigint)` for UI/floats.
+  - Use `mulB(a, b)` and `divB(a, b)` for math between two scaled values.
+  - Use `scaleB(a, number)` to scale a BigInt by a raw multiplier.
+  - Use `scaleBigInt(literal_n)` for constants in `BalanceConfig.ts`.
+  - Tick math: `resource += mulB(ratePerMin, toBigInt(dtMs)) / 60000n`.
 
 ## UI Panel Rules — No DOM Rebuild in `update()`
 The UI refreshes every 500ms. Destroying and recreating DOM nodes inside `update()` kills CSS `:hover` / `:focus` state, causing buttons to flicker when the user interacts with them.
@@ -107,6 +113,9 @@ Manager job added: agents assigned to 'manager' auto-nudge stuck agents (6 nudge
 - EarthSurface visual: DOM/SVG buildings with CSS zoom transitions
 - EarthMoonSpace visual: DOM/CSS satellite orbits, Moon, lunar base dots, mass driver streaks
 - `formatMW()` extracted to shared utils
+
+### Milestone: BigInt Refactor ✅
+Full conversion of all numerical resources and counts to scaled `bigint`. Removed manual scaling literals and synchronized system math across Compute, Supply, Space, and Job systems. Updated `formatNumber` to handle BigInts by default.
 
 ### Milestone 6: Dyson Swarm + Endgame 🔲
 Mercury satellite production, Dyson power, Von Neumann exponential spread. InnerSolarSystem canvas visual. EndScreen with stats and Play Again.

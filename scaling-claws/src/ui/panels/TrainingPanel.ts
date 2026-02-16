@@ -2,7 +2,7 @@ import type { GameState } from '../../game/GameState.ts';
 import type { Panel } from '../PanelManager.ts';
 import { BALANCE } from '../../game/BalanceConfig.ts';
 import type { ResearchId } from '../../game/BalanceConfig.ts';
-import { formatMoney, formatNumber } from '../../game/utils.ts';
+import { formatMoney, formatNumber, fromBigInt, toBigInt, mulB, scaleB } from '../../game/utils.ts';
 import {
   buyTrainingData, startFineTune, startAriesTraining,
   setTrainingAllocation,
@@ -324,7 +324,7 @@ export class TrainingPanel implements Panel {
     if (state.currentFineTuneIndex >= 0) {
       // Show progress
       const ft = BALANCE.fineTunes[state.currentFineTuneIndex];
-      const pct = Math.min(100, (state.fineTuneProgress / ft.pflopsHrs) * 100);
+      const pct = Math.min(100, Number(state.fineTuneProgress * 1000n / ft.pflopsHrs) / 10.0);
       this.progressRefs.container.style.display = '';
       this.nextRefs.container.style.display = 'none';
       this.progressRefs.label.textContent = `Training: ${ft.name} ${(Math.round(pct * 10) / 10).toString()}%`;
@@ -332,7 +332,7 @@ export class TrainingPanel implements Panel {
       this.progressRefs.detail.textContent = formatNumber(state.fineTuneProgress) + ' / ' + formatNumber(ft.pflopsHrs) + ' PFLOPS-hrs';
     } else if (state.ariesModelIndex >= 0) {
       const am = BALANCE.ariesModels[state.ariesModelIndex];
-      const pct = Math.min(100, (state.ariesProgress / am.pflopsHrs) * 100);
+      const pct = Math.min(100, Number(state.ariesProgress * 1000n / am.pflopsHrs) / 10.0);
       this.progressRefs.container.style.display = '';
       this.nextRefs.container.style.display = 'none';
       this.progressRefs.label.textContent = `Training: ${am.name} ${(Math.round(pct * 10) / 10).toString()}%`;
@@ -366,7 +366,7 @@ export class TrainingPanel implements Panel {
         this.nextTrainingType = 'ft';
         this.nextTrainingIdx = nextFT;
 
-        const canStart = state.trainingData >= ft.dataTB && (ft.codeReq === 0 || state.code >= ft.codeReq) && (ft.scienceReq === 0 || state.science >= ft.scienceReq);
+        const canStart = state.trainingData >= ft.dataTB && (ft.codeReq === 0n || state.code >= ft.codeReq) && (ft.scienceReq === 0n || state.science >= ft.scienceReq);
         this.nextRefs.btn.disabled = !canStart;
       } else {
         const nextAries = this.getNextAries(state);
@@ -394,7 +394,7 @@ export class TrainingPanel implements Panel {
           this.nextTrainingType = 'aries';
           this.nextTrainingIdx = nextAries;
 
-          const canStart = state.trainingData >= am.dataTB && (am.codeReq === 0 || state.code >= am.codeReq) && (am.scienceReq === 0 || state.science >= am.scienceReq);
+          const canStart = state.trainingData >= am.dataTB && (am.codeReq === 0n || state.code >= am.codeReq) && (am.scienceReq === 0n || state.science >= am.scienceReq);
           this.nextRefs.btn.disabled = !canStart;
         } else {
           this.nextRefs.container.style.display = 'none';
@@ -405,7 +405,8 @@ export class TrainingPanel implements Panel {
   }
 
   private updateData(state: GameState): void {
-    const pricePerTB = BALANCE.dataBaseCostPerTB * Math.pow(1 + BALANCE.dataEscalationRate, state.trainingDataPurchases);
+    const priceEscalation = Math.pow(1 + BALANCE.dataEscalationRate, state.trainingDataPurchases);
+    const pricePerTB = scaleB(BALANCE.dataBaseCostPerTB, priceEscalation);
     let dataText = `Data: ${formatNumber(state.trainingData)} TB`;
     if (state.synthDataRate > 0) {
       dataText += ` (+${formatNumber(state.synthDataRate)}/m)`;
@@ -413,8 +414,8 @@ export class TrainingPanel implements Panel {
     dataText += ` (Cost: ${formatMoney(pricePerTB)}/TB)`;
     this.dataRefs.info.textContent = dataText;
 
-    this.dataRefs.bulkBuy.update(state.trainingData, (amount) => {
-      return state.funds >= amount * pricePerTB;
+    this.dataRefs.bulkBuy.update(Math.floor(fromBigInt(state.trainingData)), (amount) => {
+      return state.funds >= mulB(toBigInt(amount), pricePerTB);
     });
   }
 

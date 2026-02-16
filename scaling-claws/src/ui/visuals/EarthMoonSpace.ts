@@ -1,5 +1,6 @@
 import type { GameState } from '../../game/GameState.ts';
 import { earthSvg, moonSvg } from '../../assets/sprites.ts';
+import { fromBigInt } from '../../game/utils.ts';
 
 const MAX_SAT_ELEMENTS = 50;
 
@@ -80,7 +81,7 @@ export class EarthMoonSpace {
   }
 
   update(state: GameState): void {
-    const shouldShow = state.completedResearch.includes('spaceSystems1') && state.satellites > 0;
+    const shouldShow = state.completedResearch.includes('spaceSystems1') && state.satellites > 0n;
 
     if (shouldShow && !this.isVisible) {
       this.stageEl.classList.remove('hidden');
@@ -92,7 +93,7 @@ export class EarthMoonSpace {
 
     if (!this.isVisible) return;
 
-    const satCount = Math.floor(state.satellites);
+    const satCount = Math.floor(fromBigInt(state.satellites));
 
     // Add satellite dots (capped at MAX_SAT_ELEMENTS)
     const targetDots = Math.min(satCount, MAX_SAT_ELEMENTS);

@@ -7,15 +7,11 @@ export function tickResearch(state: GameState, _dtMs: number): void {
 
   // Compute research bonuses from completedResearch
   computeResearchBonuses(state);
-
-  // Compute sub selling unlock (TODO: Incomplete feature - disabled for now)
-  // state.subSellingUnlocked = state.intelligence >= BALANCE.subSellingUnlockIntel &&
-  //     state.code >= BALANCE.subSellingUnlockCode;
 }
 
 function computeResearchBonuses(state: GameState): void {
-  // Algo Efficiency: each tier is 25% faster → multiply by 1.25 per tier
-  let algoBonus = 1;
+  // Algo Efficiency: each tier is 25% faster
+  let algoBonus = 1.0;
   if (state.completedResearch.includes('algoEfficiency1')) algoBonus *= 1.25;
   if (state.completedResearch.includes('algoEfficiency2')) algoBonus *= 1.25;
   if (state.completedResearch.includes('algoEfficiency3')) algoBonus *= 1.25;
@@ -23,26 +19,26 @@ function computeResearchBonuses(state: GameState): void {
   state.algoEfficiencyBonus = algoBonus;
 
   // GPU FLOPS: v1 +50%, v2 +50%, v3 +100%
-  let gpuBonus = 1;
+  let gpuBonus = 1.0;
+  if (state.completedResearch.includes('gpuArch1')) gpuBonus *= 1.5;
+  if (state.completedResearch.includes('gpuArch2')) gpuBonus *= 1.5;
   if (state.completedResearch.includes('gpuArch3')) gpuBonus *= 2.0;
   state.gpuFlopsBonus = gpuBonus;
 
   // Synth Data from research
-  let synthRate = 0;
+  let synthRate = 0n;
   if (state.completedResearch.includes('synthData1')) {
     synthRate = BALANCE.apiUserSynthBase;
-    if (state.completedResearch.includes('synthData2')) synthRate *= 2;
-    if (state.completedResearch.includes('synthData3')) synthRate *= 2;
+    if (state.completedResearch.includes('synthData2')) synthRate *= 2n;
+    if (state.completedResearch.includes('synthData3')) synthRate *= 2n;
   }
   state.apiUserSynthRate = synthRate;
 
   // Launch cost reduction from space research
-  let launchBonus = 1;
+  let launchBonus = 1.0;
   if (state.completedResearch.includes('spaceRockets2')) launchBonus *= 0.6;
   state.launchCostBonus = launchBonus;
 }
-
-
 
 export function getResearchConfig(id: ResearchId): ResearchConfig | undefined {
   return BALANCE.research.find(r => r.id === id);
@@ -115,5 +111,6 @@ export function getAvailableResearch(state: GameState): ResearchConfig[] {
     return true;
   });
 }
+
 
 

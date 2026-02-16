@@ -1,19 +1,16 @@
 import type { GameState } from '../GameState.ts';
 import { BALANCE } from '../BalanceConfig.ts';
+import { toBigInt, mulB, divB, scaleB } from '../utils.ts';
 
 export function tickTraining(state: GameState, dtMs: number): void {
   if (!state.isPostGpuTransition) return;
 
-  // Compute training allocation - NOW HANDLED IN ComputeSystem.ts
-  // state.trainingAllocatedPflops is already set
-  
-  // Update freeCompute accounting - NOW HANDLED IN ComputeSystem.ts
-
-  // Code and science production is now handled by JobSystem (AI/Human SWE and AI Researcher jobs)
+  const hourB = 3600000n;
 
   // Progress fine-tune (apply algo efficiency bonus)
-  if (state.currentFineTuneIndex >= 0 && state.trainingAllocatedPflops > 0) {
-    const pflopsHrsThisTick = state.trainingAllocatedPflops * (dtMs / 3600000) * state.algoEfficiencyBonus;
+  if (state.currentFineTuneIndex >= 0 && state.trainingAllocatedPflops > 0n) {
+    let pflopsHrsThisTick = divB(mulB(state.trainingAllocatedPflops, toBigInt(dtMs)), hourB);
+    pflopsHrsThisTick = scaleB(pflopsHrsThisTick, state.algoEfficiencyBonus);
     state.fineTuneProgress += pflopsHrsThisTick;
 
     const ft = BALANCE.fineTunes[state.currentFineTuneIndex];
@@ -21,7 +18,7 @@ export function tickTraining(state: GameState, dtMs: number): void {
       state.completedFineTunes.push(state.currentFineTuneIndex);
       state.intelligence = ft.intel;
       state.currentFineTuneIndex = -1;
-      state.fineTuneProgress = 0;
+      state.fineTuneProgress = 0n;
 
       state.pendingFlavorTexts.push(
         '"' + ft.name + ' passed every benchmark. The clients are impressed."'
@@ -30,15 +27,16 @@ export function tickTraining(state: GameState, dtMs: number): void {
   }
 
   // Progress Aries training (apply algo efficiency bonus)
-  if (state.ariesModelIndex >= 0 && state.trainingAllocatedPflops > 0) {
-    const pflopsHrsThisTick = state.trainingAllocatedPflops * (dtMs / 3600000) * state.algoEfficiencyBonus;
+  if (state.ariesModelIndex >= 0 && state.trainingAllocatedPflops > 0n) {
+    let pflopsHrsThisTick = divB(mulB(state.trainingAllocatedPflops, toBigInt(dtMs)), hourB);
+    pflopsHrsThisTick = scaleB(pflopsHrsThisTick, state.algoEfficiencyBonus);
     state.ariesProgress += pflopsHrsThisTick;
 
     const am = BALANCE.ariesModels[state.ariesModelIndex];
     if (state.ariesProgress >= am.pflopsHrs) {
       state.intelligence = am.intel;
       state.ariesModelIndex = -1;
-      state.ariesProgress = 0;
+      state.ariesProgress = 0n;
 
       state.pendingFlavorTexts.push(
         '"' + am.name + ' is online. Intelligence: ' + am.intel + '."'
@@ -48,12 +46,15 @@ export function tickTraining(state: GameState, dtMs: number): void {
 }
 
 export function buyTrainingData(state: GameState, amountTB: number): boolean {
-  const pricePerTB = BALANCE.dataBaseCostPerTB * Math.pow(1 + BALANCE.dataEscalationRate, state.trainingDataPurchases);
-  const cost = amountTB * pricePerTB;
+  const priceEscalation = Math.pow(1 + BALANCE.dataEscalationRate, state.trainingDataPurchases);
+  const pricePerTB = scaleB(BALANCE.dataBaseCostPerTB, priceEscalation);
+  const amountTBB = toBigInt(amountTB);
+  
+  const cost = mulB(amountTBB, pricePerTB);
   if (state.funds < cost) return false;
 
   state.funds -= cost;
-  state.trainingData += amountTB;
+  state.trainingData += amountTBB;
   state.trainingDataPurchases++;
   return true;
 }
@@ -66,19 +67,15 @@ export function startFineTune(state: GameState, index: number): boolean {
 
   const ft = BALANCE.fineTunes[index];
   if (state.trainingData < ft.dataTB) return false;
-  if (ft.codeReq > 0 && state.code < ft.codeReq) return false;
-  if (ft.scienceReq > 0 && state.science < ft.scienceReq) return false;
+  if (ft.codeReq > 0n && state.code < ft.codeReq) return false;
+  if (ft.scienceReq > 0n && state.science < ft.scienceReq) return false;
 
   for (let i = 0; i < index; i++) {
     if (!state.completedFineTunes.includes(i)) return false;
   }
 
   state.currentFineTuneIndex = index;
-  state.fineTuneProgress = 0;
-  
-  // Consume requirements? The user called it "price" but similar to codeReq which isn't consumed.
-  // Given "science price", it might mean consumption. But "similar to codeReq" says no.
-  // Let's stick to requirement for now as "similar to codeReq" is more specific about mechanics.
+  state.fineTuneProgress = 0n;
   
   return true;
 }
@@ -97,11 +94,11 @@ export function startAriesTraining(state: GameState, index: number): boolean {
 
   const am = BALANCE.ariesModels[index];
   if (state.trainingData < am.dataTB) return false;
-  if (am.codeReq > 0 && state.code < am.codeReq) return false;
-  if (am.scienceReq > 0 && state.science < am.scienceReq) return false;
+  if (am.codeReq > 0n && state.code < am.codeReq) return false;
+  if (am.scienceReq > 0n && state.science < am.scienceReq) return false;
 
   state.ariesModelIndex = index;
-  state.ariesProgress = 0;
+  state.ariesProgress = 0n;
   return true;
 }
 
@@ -116,3 +113,4 @@ export function setTrainingAllocation(state: GameState, pct: number): boolean {
   state.trainingAllocationPct = newPct;
   return true;
 }
+

@@ -174,8 +174,8 @@ export class TopBar {
     this.fundsValueEl.textContent = formatMoney(state.funds);
     const totalIncome = state.incomePerMin;
     const totalExpense = state.expensePerMin;
-    this.fundsIncomeEl.textContent = totalIncome > 0 ? '+' + formatMoney(totalIncome) + '/m' : '';
-    this.fundsExpenseEl.textContent = totalExpense > 0 ? '-' + formatMoney(totalExpense) + '/m' : '';
+    this.fundsIncomeEl.textContent = totalIncome > 0n ? '+' + formatMoney(totalIncome) + '/m' : '';
+    this.fundsExpenseEl.textContent = totalExpense > 0n ? '-' + formatMoney(totalExpense) + '/m' : '';
 
     // Intelligence
     this.intelValueEl.textContent = (Math.round(state.intelligence * 10) / 10).toString();
@@ -196,33 +196,33 @@ export class TopBar {
     }
 
     // Code: show when player has code or code production
-    if (state.code > 0 || state.codePerMin > 0) {
+    if (state.code > 0n || state.codePerMin > 0n) {
       this.codeItem.classList.remove('hidden');
       this.codeItem.querySelector('.value')!.textContent = formatNumber(state.code);
       const incomeEl = this.codeItem.querySelector('[data-role="income"]') as HTMLSpanElement;
       const expenseEl = this.codeItem.querySelector('[data-role="expense"]') as HTMLSpanElement;
-      incomeEl.textContent = state.codePerMin > 0 ? '+' + formatNumber(state.codePerMin) + '/m' : '';
+      incomeEl.textContent = state.codePerMin > 0n ? '+' + formatNumber(state.codePerMin) + '/m' : '';
       expenseEl.textContent = '';
     }
 
     // Science: show when player has science or science production
-    if (state.science > 0 || state.sciencePerMin > 0) {
+    if (state.science > 0n || state.sciencePerMin > 0n) {
       this.scienceItem.classList.remove('hidden');
       this.scienceItem.querySelector('.value')!.textContent = formatNumber(state.science);
       const incomeEl = this.scienceItem.querySelector('[data-role="income"]') as HTMLSpanElement;
       const expenseEl = this.scienceItem.querySelector('[data-role="expense"]') as HTMLSpanElement;
-      incomeEl.textContent = state.sciencePerMin > 0 ? '+' + formatNumber(state.sciencePerMin) + '/m' : '';
+      incomeEl.textContent = state.sciencePerMin > 0n ? '+' + formatNumber(state.sciencePerMin) + '/m' : '';
       expenseEl.textContent = '';
     }
 
     // Labor: show when player has labor or labor production
-    if (state.labor > 0 || state.laborPerMin > 0 || state.laborConsumedPerMin > 0) {
+    if (state.labor > 0n || state.laborPerMin > 0n) {
       this.laborItem.classList.remove('hidden');
       this.laborItem.querySelector('.value')!.textContent = formatNumber(state.labor);
       const incomeEl = this.laborItem.querySelector('[data-role="income"]') as HTMLSpanElement;
       const expenseEl = this.laborItem.querySelector('[data-role="expense"]') as HTMLSpanElement;
-      incomeEl.textContent = state.laborPerMin > 0 ? '+' + formatNumber(state.laborPerMin) + '/m' : '';
-      expenseEl.textContent = state.laborConsumedPerMin > 0 ? '-' + formatNumber(state.laborConsumedPerMin) + '/m' : '';
+      incomeEl.textContent = state.laborPerMin > 0n ? '+' + formatNumber(state.laborPerMin) + '/m' : '';
+      expenseEl.textContent = '';
     }
 
     // Energy: show once space is unlocked (separate grids become interesting)
@@ -233,6 +233,7 @@ export class TopBar {
       const rateEl = this.energyItem.querySelector('.rate')!;
       rateEl.textContent = '';
     }
+
 
     // Update Breakdown Panel
     const breakdownEl = this.container.querySelector('#top-bar-breakdown')!;
@@ -248,13 +249,14 @@ export class TopBar {
     html += this.renderBreakdownSection('Funds ($/min)', state.resourceBreakdown.funds, formatMoney);
     
     // Code
-    html += this.renderBreakdownSection('Code (u/min)', state.resourceBreakdown.code, formatNumber);
+    html += this.renderBreakdownSection('Code (u/min)', state.resourceBreakdown.code, (v) => formatNumber(v));
     
     // Science
-    html += this.renderBreakdownSection('Science (u/min)', state.resourceBreakdown.science, formatNumber);
+    html += this.renderBreakdownSection('Science (u/min)', state.resourceBreakdown.science, (v) => formatNumber(v));
     
     // Labor
-    html += this.renderBreakdownSection('Labor (u/min)', state.resourceBreakdown.labor, formatNumber);
+    html += this.renderBreakdownSection('Labor (u/min)', state.resourceBreakdown.labor, (v) => formatNumber(v));
+
 
     // Energy
     if (state.spaceUnlocked) {
@@ -264,7 +266,7 @@ export class TopBar {
       if (state.lunarBase) {
         html += `<div class="breakdown-row"><span class="label">Lunar</span><span class="value">${formatMW(state.lunarPowerSupplyMW)} supply / ${formatMW(state.lunarPowerDemandMW)} demand</span></div>`;
       }
-      if (state.satellites > 0) {
+      if (state.satellites > 0n) {
         html += `<div class="breakdown-row"><span class="label">Orbital</span><span class="value">${formatMW(state.orbitalPowerMW)} (self-sufficient)</span></div>`;
       }
       html += '</div>';
@@ -275,8 +277,10 @@ export class TopBar {
       html += '<div class="breakdown-section">';
       html += '<div class="section-title">Compute (PFLOPS)</div>';
       for (const item of state.resourceBreakdown.compute) {
-        html += `<div class="breakdown-row"><span class="label">${item.label}</span><span class="value">${(Math.round(item.pflops * 10) / 10).toString()}</span></div>`;
+        const pflopsNum = typeof item.pflops === 'bigint' ? Number(item.pflops) / 1_000_000 : item.pflops;
+        html += `<div class="breakdown-row"><span class="label">${item.label}</span><span class="value">${(Math.round(pflopsNum * 10) / 10).toString()}</span></div>`;
       }
+
       html += '</div>';
     }
 
@@ -284,7 +288,7 @@ export class TopBar {
     container.innerHTML = html;
   }
 
-  private renderBreakdownSection(title: string, data: { income: any[], expense: any[] }, formatter: (v: number) => string): string {
+  private renderBreakdownSection(title: string, data: { income: any[], expense: any[] }, formatter: (v: bigint) => string): string {
     if (data.income.length === 0 && data.expense.length === 0) return '';
     
     let html = '<div class="breakdown-section">';
