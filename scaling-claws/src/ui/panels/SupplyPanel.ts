@@ -1,58 +1,47 @@
 import type { GameState } from '../../game/GameState.ts';
 import type { Panel } from '../PanelManager.ts';
 import { BALANCE } from '../../game/BalanceConfig.ts';
-import { formatMoney, formatNumber, fromBigInt, mulB } from '../../game/utils.ts';
-import {
-  buyLithoMachine, buyWafers, buySilicon, buildFab,
-  buildSiliconMine, buildRobotFactory, buyRobot,
-} from '../../game/systems/SupplySystem.ts';
+import { formatMoney, formatNumber, fromBigInt, toBigInt } from '../../game/utils.ts';
+import { buildFacility } from '../../game/systems/SupplySystem.ts';
 import { BulkBuyGroup } from '../components/BulkBuyGroup.ts';
+
+interface ResourceRowRefs {
+  info: HTMLSpanElement;
+  income: HTMLSpanElement;
+  expense: HTMLSpanElement;
+}
+
+interface FacilityRowRefs {
+  info: HTMLSpanElement;
+  buyGroup: BulkBuyGroup;
+  rate: HTMLSpanElement;
+  price: HTMLSpanElement;
+  limit: HTMLSpanElement;
+}
 
 export class SupplyPanel implements Panel {
   readonly el: HTMLElement;
   private state: GameState;
 
-  // GPU Production
-  private lithoBuyGroup!: BulkBuyGroup;
-  private lithoInfoEl!: HTMLSpanElement;
-  private lithoRateEl!: HTMLSpanElement;
-  private lithoPriceEl!: HTMLSpanElement;
+  // Resource Refs
+  private materialRefs!: ResourceRowRefs;
+  private solarPanelRefs!: ResourceRowRefs;
+  private robotRefs!: ResourceRowRefs;
+  private gpuRefs!: ResourceRowRefs;
+  private gpuSatelliteRefs!: ResourceRowRefs;
+  private rocketRefs!: ResourceRowRefs;
 
-  private siliconBuyGroup!: BulkBuyGroup;
-  private siliconInfoEl!: HTMLSpanElement;
-  private siliconRateEl!: HTMLSpanElement;
-  private siliconPriceEl!: HTMLSpanElement;
+  // Facility Refs
+  private gpuFactoryRefs!: FacilityRowRefs;
+  private solarFactoryRefs!: FacilityRowRefs;
+  private robotFactoryRefs!: FacilityRowRefs;
+  private rocketFactoryRefs!: FacilityRowRefs;
+  private gpuSatelliteFactoryRefs!: FacilityRowRefs;
+  private materialMineRefs!: FacilityRowRefs;
 
-  private waferBuyGroup!: BulkBuyGroup;
-  private waferInfoEl!: HTMLSpanElement;
-  private waferRateEl!: HTMLSpanElement;
-  private waferPriceEl!: HTMLSpanElement;
-  
-  private gpuOutputEl!: HTMLDivElement;
-
-  // Facilities
-  private fabBuyGroup!: BulkBuyGroup;
-  private fabInfoEl!: HTMLSpanElement;
-  private fabRateEl!: HTMLSpanElement;
-  private fabPriceEl!: HTMLSpanElement;
-
-  private mineBuyGroup!: BulkBuyGroup;
-  private mineInfoEl!: HTMLSpanElement;
-  private mineRateEl!: HTMLSpanElement;
-  private minePriceEl!: HTMLSpanElement;
-
-  // Robotics
-  private roboticsHint!: HTMLDivElement;
-  private roboticsContent!: HTMLDivElement;
-  private factoryBuyGroup!: BulkBuyGroup;
-  private factoryInfoEl!: HTMLSpanElement;
-  private factoryRateEl!: HTMLSpanElement;
-  private factoryPriceEl!: HTMLSpanElement;
-
-  private robotInfoEl!: HTMLSpanElement;
-  private robotBuyGroup!: BulkBuyGroup;
-  private robotRateEl!: HTMLSpanElement;
-  private robotPriceEl!: HTMLSpanElement;
+  // Containers
+  private resourcesContainer!: HTMLDivElement;
+  private facilitiesContainer!: HTMLDivElement;
 
   constructor(state: GameState) {
     this.state = state;
@@ -70,155 +59,166 @@ export class SupplyPanel implements Panel {
     const body = document.createElement('div');
     body.className = 'panel-body';
 
-    // GPU Production
-    const gpuTitle = document.createElement('div');
-    gpuTitle.className = 'panel-section-title';
-    gpuTitle.textContent = 'GPU PRODUCTION';
-    body.appendChild(gpuTitle);
+    // Resources Section
+    const resTitle = document.createElement('div');
+    resTitle.className = 'panel-section-title';
+    resTitle.textContent = 'RESOURCES';
+    body.appendChild(resTitle);
 
-    const gpuSection = document.createElement('div');
-    gpuSection.className = 'panel-section';
+    this.resourcesContainer = document.createElement('div');
+    this.resourcesContainer.className = 'panel-section';
+    this.resourcesContainer.style.display = 'grid';
+    this.resourcesContainer.style.gridTemplateColumns = '1fr 1fr';
+    this.resourcesContainer.style.columnGap = '16px';
+    this.resourcesContainer.style.rowGap = '4px';
 
-    const litho = this.buildBulkRow(gpuSection, 'Litho machines:', (amt) => buyLithoMachine(this.state, amt));
-    this.lithoInfoEl = litho.info;
-    this.lithoRateEl = litho.rate!;
-    this.lithoPriceEl = litho.price;
-    this.lithoBuyGroup = litho.buyGroup;
+    this.materialRefs = this.buildResourceRow(this.resourcesContainer, 'Material');
+    this.solarPanelRefs = this.buildResourceRow(this.resourcesContainer, 'Solar P.');
+    this.robotRefs = this.buildResourceRow(this.resourcesContainer, 'Robots');
+    this.gpuRefs = this.buildResourceRow(this.resourcesContainer, 'GPUs');
+    this.gpuSatelliteRefs = this.buildResourceRow(this.resourcesContainer, 'GPU Sats');
+    this.rocketRefs = this.buildResourceRow(this.resourcesContainer, 'Rockets');
 
-    const silicon = this.buildBulkRow(gpuSection, 'Silicon:', (amt) => buySilicon(this.state, amt));
-    this.siliconInfoEl = silicon.info;
-    this.siliconPriceEl = silicon.price;
-    this.siliconRateEl = silicon.rate!;
-    this.siliconBuyGroup = silicon.buyGroup;
-
-    const wafer = this.buildBulkRow(gpuSection, 'Wafers:', (amt) => buyWafers(this.state, amt));
-    this.waferInfoEl = wafer.info;
-    this.waferPriceEl = wafer.price;
-    this.waferRateEl = wafer.rate!;
-    this.waferBuyGroup = wafer.buyGroup;
-
-    this.gpuOutputEl = document.createElement('div');
-    this.gpuOutputEl.style.fontSize = '0.82rem';
-    this.gpuOutputEl.style.color = 'var(--accent-green)';
-    this.gpuOutputEl.style.marginTop = '4px';
-    gpuSection.appendChild(this.gpuOutputEl);
-
-    body.appendChild(gpuSection);
+    body.appendChild(this.resourcesContainer);
     body.appendChild(this.createDivider());
 
-    // Facilities
+    // Facilities Section
     const facTitle = document.createElement('div');
     facTitle.className = 'panel-section-title';
-    facTitle.textContent = 'FACILITIES';
+    facTitle.textContent = 'PRODUCTION FACILITIES';
     body.appendChild(facTitle);
 
-    const fabSection = document.createElement('div');
-    fabSection.className = 'panel-section';
+    this.facilitiesContainer = document.createElement('div');
+    this.facilitiesContainer.className = 'panel-section';
 
-    const fab = this.buildBulkRow(fabSection, 'Wafer fabs:', (amt) => buildFab(this.state, amt));
-    this.fabInfoEl = fab.info;
-    this.fabRateEl = fab.rate!;
-    this.fabPriceEl = fab.price;
-    this.fabBuyGroup = fab.buyGroup;
+    this.gpuFactoryRefs = this.buildFacilityRow(this.facilitiesContainer, 'GPU Factory', (amt) => buildFacility(this.state, 'gpuFactory', amt));
+    this.solarFactoryRefs = this.buildFacilityRow(this.facilitiesContainer, 'Solar Factory', (amt) => buildFacility(this.state, 'solarFactory', amt));
+    this.robotFactoryRefs = this.buildFacilityRow(this.facilitiesContainer, 'Robot Factory', (amt) => buildFacility(this.state, 'robotFactory', amt));
+    this.rocketFactoryRefs = this.buildFacilityRow(this.facilitiesContainer, 'Rocket Factory', (amt) => buildFacility(this.state, 'rocketFactory', amt));
+    this.gpuSatelliteFactoryRefs = this.buildFacilityRow(this.facilitiesContainer, 'Satellite Factory', (amt) => buildFacility(this.state, 'gpuSatelliteFactory', amt));
+    this.materialMineRefs = this.buildFacilityRow(this.facilitiesContainer, 'Material Mine', (amt) => buildFacility(this.state, 'materialMine', amt));
 
-    const mine = this.buildBulkRow(fabSection, 'Silicon mines:', (amt) => buildSiliconMine(this.state, amt));
-    this.mineInfoEl = mine.info;
-    this.mineRateEl = mine.rate!;
-    this.minePriceEl = mine.price;
-    this.mineBuyGroup = mine.buyGroup;
-
-    body.appendChild(fabSection);
-    body.appendChild(this.createDivider());
-
-    // Robotics
-    const roboTitle = document.createElement('div');
-    roboTitle.className = 'panel-section-title';
-    roboTitle.textContent = 'ROBOTICS';
-    body.appendChild(roboTitle);
-
-    const roboticsSection = document.createElement('div');
-    roboticsSection.className = 'panel-section';
-
-    this.roboticsHint = document.createElement('div');
-    this.roboticsHint.style.fontSize = '0.82rem';
-    this.roboticsHint.style.color = 'var(--text-muted)';
-    this.roboticsHint.textContent = 'Requires Robotics I research';
-    roboticsSection.appendChild(this.roboticsHint);
-
-    this.roboticsContent = document.createElement('div');
-    this.roboticsContent.style.display = 'none';
-
-    const factory = this.buildBulkRow(this.roboticsContent, 'Robot factories:', (amt) => buildRobotFactory(this.state, amt));
-    this.factoryInfoEl = factory.info;
-    this.factoryRateEl = factory.rate!;
-    this.factoryPriceEl = factory.price;
-    this.factoryBuyGroup = factory.buyGroup;
-
-    const robot = this.buildBulkRow(this.roboticsContent, 'Robots:', (amt) => buyRobot(this.state, amt));
-    this.robotInfoEl = robot.info;
-    this.robotPriceEl = robot.price;
-    this.robotRateEl = robot.rate!;
-    this.robotBuyGroup = robot.buyGroup;
-
-    roboticsSection.appendChild(this.roboticsContent);
-    body.appendChild(roboticsSection);
-
+    body.appendChild(this.facilitiesContainer);
     this.el.appendChild(body);
   }
 
-  private buildBulkRow(parent: HTMLElement, labelText: string, onAction: (amt: number) => void) {
-    const row = document.createElement('div');
-    row.className = 'panel-row';
-    row.style.fontSize = '0.82rem';
-    row.style.display = 'flex';
-    row.style.alignItems = 'center';
-    row.style.gap = '8px';
-    row.style.marginBottom = '6px';
-
-    const textCol = document.createElement('div');
-    textCol.style.display = 'flex';
-    textCol.style.flexDirection = 'column';
-    textCol.style.flex = '1';
-    textCol.style.overflow = 'hidden';
-
-    const topRow = document.createElement('div');
-    topRow.style.display = 'flex';
-    topRow.style.alignItems = 'baseline';
-    topRow.style.gap = '4px';
-
+  private buildResourceRow(parent: HTMLElement, labelText: string): ResourceRowRefs {
+    const container = document.createElement('div');
+    container.style.display = 'flex';
+    container.style.alignItems = 'baseline';
+    container.style.justifyContent = 'space-between';
+    container.style.fontSize = '0.9rem';
+    container.style.whiteSpace = 'nowrap';
+    
+    // Left: Label + Value
+    const left = document.createElement('div');
+    
     const label = document.createElement('span');
     label.className = 'label';
-    label.textContent = labelText;
-    topRow.appendChild(label);
+    label.textContent = labelText + ': ';
+    label.style.marginRight = '6px';
+    label.style.color = 'var(--text-muted)';
+    left.appendChild(label);
 
     const info = document.createElement('span');
     info.className = 'value';
     info.style.fontWeight = 'bold';
-    topRow.appendChild(info);
+    left.appendChild(info);
 
-    const rate = document.createElement('span');
-    rate.className = 'value';
-    rate.style.color = 'var(--text-muted)';
+    container.appendChild(left);
+
+    // Right: Income + Expense
+    const right = document.createElement('div');
+    right.style.display = 'flex';
+    right.style.gap = '6px';
+    right.style.fontSize = '0.8rem';
+
+    const income = document.createElement('span');
+    income.style.color = 'var(--accent-green)';
+    right.appendChild(income);
+
+    const expense = document.createElement('span');
+    expense.style.color = 'var(--accent-red)';
+    right.appendChild(expense);
+
+    container.appendChild(right);
+
+    parent.appendChild(container);
+    return { info, income, expense };
+  }
+
+  private buildFacilityRow(parent: HTMLElement, labelText: string, onAction: (amt: number) => void): FacilityRowRefs {
+    const container = document.createElement('div');
+    container.className = 'panel-row';
+    container.style.display = 'flex';
+    container.style.alignItems = 'flex-start'; // Align top
+    container.style.justifyContent = 'space-between';
+    container.style.marginBottom = '8px';
+    container.style.padding = '2px 0'; // Tighter vertical spacing
+
+    // --- Left Wrapper: Label, Info, Efficiency ---
+    const leftWrapper = document.createElement('div');
+    leftWrapper.style.display = 'flex';
+    leftWrapper.style.flexDirection = 'column';
+    leftWrapper.style.gap = '2px';
+
+    // Top: Label + Count + Limit
+    const headerLine = document.createElement('div');
+    headerLine.style.display = 'flex';
+    headerLine.style.alignItems = 'baseline';
+    headerLine.style.gap = '8px';
+
+    const label = document.createElement('span');
+    label.className = 'label';
+    label.textContent = labelText;
+    headerLine.appendChild(label);
+
+    const infoGroup = document.createElement('div');
+    infoGroup.style.display = 'flex';
+    infoGroup.style.gap = '4px';
+    infoGroup.style.alignItems = 'baseline';
+
+    const info = document.createElement('span');
+    info.className = 'value';
+    info.style.fontWeight = 'bold';
+    infoGroup.appendChild(info);
+
+    const limit = document.createElement('span');
+    limit.className = 'value';
+    limit.style.fontSize = '0.75rem';
+    infoGroup.appendChild(limit);
+
+    headerLine.appendChild(infoGroup);
+    leftWrapper.appendChild(headerLine);
+
+    // Bottom: Efficiency (Rate)
+    const rate = document.createElement('div');
     rate.style.fontSize = '0.72rem';
-    topRow.appendChild(rate);
+    rate.style.color = 'var(--text-muted)';
+    leftWrapper.appendChild(rate);
 
-    textCol.appendChild(topRow);
+    container.appendChild(leftWrapper);
 
-    const price = document.createElement('div');
-    price.style.fontSize = '0.68rem';
-    price.style.color = 'var(--text-muted)';
-    price.style.whiteSpace = 'nowrap';
-    price.style.overflow = 'hidden';
-    price.style.textOverflow = 'ellipsis';
-    textCol.appendChild(price);
-
-    row.appendChild(textCol);
+    // --- Right Wrapper: Buy Buttons + Price ---
+    const rightWrapper = document.createElement('div');
+    rightWrapper.style.display = 'flex';
+    rightWrapper.style.flexDirection = 'column';
+    rightWrapper.style.alignItems = 'flex-end'; // Align to right
+    rightWrapper.style.gap = '2px';
 
     const buyGroup = new BulkBuyGroup(onAction, '+');
-    row.appendChild(buyGroup.el);
+    rightWrapper.appendChild(buyGroup.el);
 
-    parent.appendChild(row);
-    return { info, rate, price, buyGroup };
+    const price = document.createElement('div');
+    price.style.fontSize = '0.70rem';
+    price.style.color = 'var(--text-muted)';
+    price.style.textAlign = 'right';
+    rightWrapper.appendChild(price);
+
+    container.appendChild(rightWrapper);
+
+    parent.appendChild(container);
+    return { info, rate, limit, buyGroup, price };
   }
 
   private createDivider(): HTMLHRElement {
@@ -229,113 +229,115 @@ export class SupplyPanel implements Panel {
 
   update(state: GameState): void {
     this.state = state;
-    this.updateGpuProduction(state);
-    this.updateFacilities(state);
-    this.updateRobotics(state);
+    
+    // Visibility Check
+    // "Unlock supply chain panel if any of the corresponding technologies are researched."
+    const techs = ['materialProcessing', 'solarTechnology', 'robotics1', 'chipManufacturing', 'rocketry', 'orbitalLogistics'];
+    const hasSupplyTech = techs.some(t => state.completedResearch.includes(t));
+    
+    if (!hasSupplyTech) {
+        this.el.style.display = 'none';
+        return;
+    }
+    this.el.style.display = '';
+
+    // Update Resources
+    // Update Resources
+    // Update Resources
+    this.updateResource(this.materialRefs, state.material, state.materialProductionPerMin, state.materialConsumptionPerMin);
+    this.updateResource(this.solarPanelRefs, state.solarPanels, state.solarPanelProductionPerMin, state.solarPanelConsumptionPerMin);
+    this.updateResource(this.robotRefs, state.robots, state.robotProductionPerMin, state.robotConsumptionPerMin);
+    this.updateResource(this.gpuRefs, state.gpuCount, state.gpuProductionPerMin, state.gpuConsumptionPerMin);
+    this.updateResource(this.gpuSatelliteRefs, state.gpuSatellites, state.gpuSatelliteProductionPerMin, state.gpuSatelliteConsumptionPerMin);
+    this.updateResource(this.rocketRefs, state.rockets, state.rocketProductionPerMin, state.rocketConsumptionPerMin);
+
+    // Update Facilities
+    // Update Facilities
+    // Logic for status reasons
+    const noMaterial = state.material < toBigInt(10) ? 'No Material' : ''; // Heuristic check
+    
+    // Solar: Material
+    let solarStatus = '';
+    if (state.solarFactories > 0n && state.solarFactoryRate < 1.0) {
+        if (state.material < toBigInt(10)) solarStatus = 'No Material';
+    }
+
+    let satStatus = '';
+    if (state.gpuSatelliteFactories > 0n && state.gpuSatelliteFactoryRate < 1.0) {
+        if (state.material < toBigInt(500)) satStatus = 'No Material';
+        else if (state.gpuCount < toBigInt(10)) satStatus = 'No GPU';
+    }
+
+    this.updateFacility(this.gpuFactoryRefs, state.gpuFactories, BALANCE.gpuFactoryCost, BALANCE.gpuFactoryLaborCost, BALANCE.gpuFactoryLimit, state.gpuFactoryRate, noMaterial);
+    this.updateFacility(this.solarFactoryRefs, state.solarFactories, BALANCE.solarFactoryCost, BALANCE.solarFactoryLaborCost, BALANCE.solarFactoryLimit, state.solarFactoryRate, solarStatus);
+    this.updateFacility(this.robotFactoryRefs, state.robotFactories, BALANCE.robotFactoryCost, BALANCE.robotFactoryLaborCost, BALANCE.robotFactoryLimit, state.robotFactoryRate, noMaterial);
+    this.updateFacility(this.rocketFactoryRefs, state.rocketFactories, BALANCE.rocketFactoryCost, BALANCE.rocketFactoryLaborCost, BALANCE.rocketFactoryLimit, state.rocketFactoryRate, noMaterial);
+    this.updateFacility(this.gpuSatelliteFactoryRefs, state.gpuSatelliteFactories, BALANCE.gpuSatelliteFactoryCost, BALANCE.gpuSatelliteFactoryLaborCost, BALANCE.gpuSatelliteFactoryLimit, state.gpuSatelliteFactoryRate, satStatus);
+    this.updateFacility(this.materialMineRefs, state.materialMines, BALANCE.materialMineCost, BALANCE.materialMineLaborCost, BALANCE.materialMineLimit, state.materialMineRate, '');
   }
 
-  private updateGpuProduction(state: GameState): void {
-    // Litho
-    this.lithoInfoEl.textContent = formatNumber(state.lithoMachines);
-    this.lithoPriceEl.textContent = `${formatMoney(BALANCE.lithoMachineCost)} ea | ${BALANCE.lithoWaferConsumptionPerMin} waf/m | ${BALANCE.waferGpus} GPUs/waf`;
-    const lithoNum = Math.floor(fromBigInt(state.lithoMachines));
-    this.lithoBuyGroup.update(lithoNum, (amt) => state.funds >= BigInt(amt) * BALANCE.lithoMachineCost);
-    this.updateRateDisplay(this.lithoRateEl, state.lithoActualRate, state.lithoMachines > 0n);
+  private updateResource(refs: ResourceRowRefs, current: bigint, income: bigint, expense: bigint) {
+    refs.info.textContent = formatNumber(current);
+    refs.income.textContent = income > 0n ? `+${formatNumber(income)}/m` : '';
+    refs.expense.textContent = expense > 0n ? `-${formatNumber(expense)}/m` : '';
+  }
 
-    // Silicon
-    const silProd = state.siliconProductionPerMin;
-    const silDem = state.siliconDemandPerMin;
-    this.siliconInfoEl.textContent = formatNumber(state.silicon);
-    this.siliconInfoEl.style.color = state.silicon <= 0n ? 'var(--accent-red)' : '';
-    this.siliconRateEl.textContent = `(+${formatNumber(silProd)}, -${formatNumber(silDem)})/m`;
-    this.siliconPriceEl.textContent = `${formatMoney(BALANCE.siliconCost)} each`;
-    const silNum = Math.floor(fromBigInt(state.silicon));
-    this.siliconBuyGroup.update(silNum, (amt) => state.funds >= BigInt(amt) * BALANCE.siliconCost);
-
-    // Wafers
-    const wafProd = state.waferProductionPerMin;
-    const wafDem = state.waferDemandPerMin;
-    this.waferInfoEl.textContent = formatNumber(state.wafers);
-    this.waferInfoEl.style.color = state.wafers <= 0n ? 'var(--accent-red)' : '';
-    this.waferRateEl.textContent = `(+${formatNumber(wafProd)}, -${formatNumber(wafDem)})/m`;
-    this.waferPriceEl.textContent = `${formatMoney(BALANCE.waferCost)} each`;
-    const wafNum = Math.floor(fromBigInt(state.wafers));
-    this.waferBuyGroup.update(wafNum, (amt) => state.funds >= BigInt(amt) * BALANCE.waferCost);
-
-    if (state.gpuProductionPerMin > 0n) {
-      this.gpuOutputEl.textContent = 'GPU output: ' + formatNumber(state.gpuProductionPerMin) + '/min';
-      this.gpuOutputEl.style.display = '';
+  private updateFacility(
+      refs: FacilityRowRefs,
+      current: bigint, cost: bigint, laborCost: bigint, limit: number, efficiency: number,
+      statusReason: string = ''
+  ) {
+    refs.info.textContent = formatNumber(current);
+    
+    // Limit check
+    if (current >= toBigInt(limit)) {
+        refs.limit.textContent = '/ MAX';
+        refs.limit.style.color = 'var(--accent-red)';
     } else {
-      this.gpuOutputEl.style.display = 'none';
+        refs.limit.textContent = `/ ${limit}`;
+        refs.limit.style.color = 'var(--text-muted)';
     }
-  }
 
-  private updateRateDisplay(el: HTMLSpanElement, rate: number, show: boolean): void {
-    if (!show) {
-      el.textContent = '';
-      return;
-    }
-    const pct = Math.round(rate * 100);
-    el.textContent = `(${pct}%)`;
-    if (pct >= 100) {
-      el.style.color = 'var(--accent-green)';
-    } else if (pct >= 50) {
-      el.style.color = 'var(--accent-yellow)';
+    // Rate efficiency
+    /*
+    const pct = Math.round(efficiency * 100);
+    refs.rate.textContent = `Efficiency: ${pct}%`;
+    if (pct >= 99) refs.rate.style.color = 'var(--accent-green)';
+    else if (pct >= 50) refs.rate.style.color = 'var(--accent-yellow)';
+    else refs.rate.style.color = 'var(--accent-red)';
+    */
+    // Wait, showing price AND efficiency?
+    // Let's show efficiency.
+    const costTxt = `${formatMoney(cost)} + ${formatNumber(laborCost)} labor`;
+    refs.price.textContent = costTxt;
+
+    // Rate efficiency
+    if (current === 0n) {
+        refs.rate.style.display = 'none';
     } else {
-      el.style.color = 'var(--accent-red)';
+        refs.rate.style.display = '';
+        const pct = Math.round(efficiency * 100);
+        
+        let statusText = `Running: ${pct}%`;
+        let color = 'var(--accent-green)'; // >= 50%
+        
+        if (pct === 0) {
+            color = 'var(--accent-red)';
+            if (statusReason) statusText = statusReason; // Override "Running: 0%" with reason
+            else statusText = 'Stopped';
+        } else if (pct < 50) {
+            color = 'var(--accent-gold)'; // Yellowish
+        }
+
+        refs.rate.textContent = statusText;
+        refs.rate.style.color = color;
     }
-  }
-
-  private updateFacilities(state: GameState): void {
-    // Fabs
-    this.fabInfoEl.textContent = formatNumber(state.waferFabs);
-    const fabPriceStr = `${formatMoney(BALANCE.fabCost)} + ${formatNumber(BALANCE.fabLaborCost)} labor`;
-    this.fabPriceEl.textContent = `${fabPriceStr} ea | ${formatNumber(BALANCE.fabOutputPerMin)} wafers/m`;
-    const fabNum = Math.floor(fromBigInt(state.waferFabs));
-    this.fabBuyGroup.update(fabNum, (amt) => 
-      state.funds >= BigInt(amt) * BALANCE.fabCost && state.labor >= BigInt(amt) * BALANCE.fabLaborCost
-    );
-    this.updateRateDisplay(this.fabRateEl, state.fabActualRate, state.waferFabs > 0n);
-
-    // Mines
-    this.mineInfoEl.textContent = formatNumber(state.siliconMines);
-    const minePriceStr = `${formatMoney(BALANCE.siliconMineCost)} + ${formatNumber(BALANCE.siliconMineLaborCost)} labor`;
-    this.minePriceEl.textContent = `${minePriceStr} ea | ${formatNumber(BALANCE.siliconMineOutputPerMin)} silicon/m`;
-    const mineNum = Math.floor(fromBigInt(state.siliconMines));
-    this.mineBuyGroup.update(mineNum, (amt) => 
-      state.funds >= BigInt(amt) * BALANCE.siliconMineCost && state.labor >= BigInt(amt) * BALANCE.siliconMineLaborCost
-    );
-    this.updateRateDisplay(this.mineRateEl, state.mineActualRate, state.siliconMines > 0n);
-  }
-
-  private updateRobotics(state: GameState): void {
-    const hasRobotics = state.completedResearch.includes('robotics1');
-
-    if (!hasRobotics) {
-      this.roboticsHint.style.display = '';
-      this.roboticsContent.style.display = 'none';
-      return;
-    }
-
-    this.roboticsHint.style.display = 'none';
-    this.roboticsContent.style.display = '';
-
-    // Factories
-    this.factoryInfoEl.textContent = formatNumber(state.robotFactories);
-    const factPriceStr = `${formatMoney(BALANCE.robotFactoryCost)} + ${formatNumber(BALANCE.robotFactoryLaborCost)} labor`;
-    this.factoryPriceEl.textContent = `${factPriceStr} ea | ${formatNumber(BALANCE.robotFactoryOutputPerMin)} robots/m`;
-    const factoryNum = Math.floor(fromBigInt(state.robotFactories));
-    this.factoryBuyGroup.update(factoryNum, (amt) => 
-      state.funds >= BigInt(amt) * BALANCE.robotFactoryCost && state.labor >= BigInt(amt) * BALANCE.robotFactoryLaborCost
-    );
-    this.updateRateDisplay(this.factoryRateEl, state.factoryActualRate, state.robotFactories > 0n);
-
-    // Robots
-    const roboProd = mulB(state.robotFactories, BALANCE.robotFactoryOutputPerMin);
-    this.robotInfoEl.textContent = formatNumber(state.robots);
-    this.robotRateEl.textContent = `(+${formatNumber(roboProd)}/min)`;
-    this.robotPriceEl.textContent = `${formatMoney(BALANCE.robotCost)} each`;
-    const robotNum = Math.floor(fromBigInt(state.robots));
-    this.robotBuyGroup.update(robotNum, (amt) => state.funds >= BigInt(amt) * BALANCE.robotCost);
+    
+    refs.buyGroup.update(Math.floor(fromBigInt(current)), (amt) => {
+        const costOk = this.state.funds >= BigInt(amt) * cost;
+        const laborOk = this.state.labor >= BigInt(amt) * laborCost;
+        const limitOk = (current + toBigInt(amt)) <= toBigInt(limit);
+        return costOk && laborOk && limitOk;
+    });
   }
 }

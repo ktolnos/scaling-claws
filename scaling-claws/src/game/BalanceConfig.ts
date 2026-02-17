@@ -1,4 +1,4 @@
-import { toBigInt, scaleBigInt } from './utils.ts';
+import { toBigInt, scaleBigInt, mulB } from './utils.ts';
 
 export const SubscriptionTiers = {
   basic: 'basic',
@@ -67,17 +67,23 @@ export const ResearchIds = {
   gpuArch3: 'gpuArch3',
   solarEfficiency1: 'solarEfficiency1',
   solarEfficiency2: 'solarEfficiency2',
-  chipFab1: 'chipFab1',
-  chipFab2: 'chipFab2',
-  chipFab3: 'chipFab3',
-  robotics1: 'robotics1',
+
+  // Revised Supply Chain Techs
+  materialProcessing: 'materialProcessing', // Unlock Mines
+  solarTechnology: 'solarTechnology',       // Unlock Solar Factory
+  robotics1: 'robotics1',                   // Unlock Robot Factory
+  chipManufacturing: 'chipManufacturing',   // Unlock GPU Factory
+  rocketry: 'rocketry',                     // Unlock Rocket Factory
+  reusableRockets: 'reusableRockets',       // Rockets return
+  orbitalLogistics: 'orbitalLogistics',     // GPU Satellites
+
   robotics2: 'robotics2',
   robotics3: 'robotics3',
-  spaceRockets1: 'spaceRockets1',
-  spaceRockets2: 'spaceRockets2',
-  spaceSystems1: 'spaceSystems1',
-  spaceSystems2: 'spaceSystems2',
-  spaceSystems3: 'spaceSystems3',
+
+  spaceSystems1: 'spaceSystems1', // Satellites renaming/adjusting?
+  spaceSystems2: 'spaceSystems2', // Moon
+  spaceSystems3: 'spaceSystems3', // Mercury
+
   nuclearFusion1: 'nuclearFusion1',
   selfReplicating: 'selfReplicating',
 } as const;
@@ -139,6 +145,7 @@ export interface PowerPlantConfig {
   cost: bigint;
   outputMW: bigint;       // output in MW
   laborCost: bigint;      // upfront labor to build
+  limit?: number;         // Earth limit
 }
 
 export interface TrainingModelConfig {
@@ -151,7 +158,7 @@ export interface TrainingModelConfig {
 }
 
 export const BALANCE = {
-  startingFunds: 10, // number here is fine, used in createInitialState with toBigInt
+  startingFunds: 10000000000000,
   startingCpuCores: 4,
   homePowerMW: 0.02, // 20 KW
   tickIntervalMs: 50,
@@ -221,12 +228,12 @@ export const BALANCE = {
   ] as DatacenterConfig[],
 
   // Energy
-  gridPowerCostPerKWPerMin: 120,
+  gridPowerKWCost: 500, // One-time cost per KW
 
   powerPlants: {
-    gas:     { name: 'Gas Plant',     cost: toBigInt(1_500_000),  outputMW: toBigInt(50),  laborCost: toBigInt(180) } as PowerPlantConfig,
-    nuclear: { name: 'Nuclear Plant', cost: toBigInt(12_000_000), outputMW: toBigInt(200), laborCost: toBigInt(180) } as PowerPlantConfig,
-    solar:   { name: 'Solar Farm',    cost: toBigInt(800_000),   outputMW: 0n,   laborCost: toBigInt(60) } as PowerPlantConfig,
+    gas:     { name: 'Gas Plant',     cost: toBigInt(1_500_000),  outputMW: toBigInt(50),  laborCost: toBigInt(500), limit: 10000 } as PowerPlantConfig,
+    nuclear: { name: 'Nuclear Plant', cost: toBigInt(1_200_000_000), outputMW: toBigInt(1000), laborCost: toBigInt(18000), limit: 500 } as PowerPlantConfig,
+    solar:   { name: 'Solar Farm',    cost: toBigInt(800_000),   outputMW: 0n,   laborCost: toBigInt(60), limit: 20 } as PowerPlantConfig,
   },
 
   solarPanelCost: toBigInt(400),
@@ -258,83 +265,134 @@ export const BALANCE = {
 
   // Research tree
   research: [
-    // Algo Efficiency: each tier makes training 25% faster
+    // Algo Efficiency
     { id: 'algoEfficiency1', name: 'Algo Efficiency I',   cost: toBigInt(200),     prereqs: [],                  description: 'Training 25% faster' },
     { id: 'algoEfficiency2', name: 'Algo Efficiency II',  cost: toBigInt(800),     prereqs: ['algoEfficiency1'],  description: 'Training 25% faster' },
     { id: 'algoEfficiency3', name: 'Algo Efficiency III', cost: toBigInt(3000),    prereqs: ['algoEfficiency2'],  description: 'Training 25% faster' },
     { id: 'algoEfficiency4', name: 'Algo Efficiency IV',  cost: toBigInt(15000),   prereqs: ['algoEfficiency3'],  description: 'Training 25% faster' },
     // Synth Data
-    { id: 'synthData1', name: 'Synth Data I',   cost: toBigInt(300),    prereqs: [],             description: 'API Users generate synth data' },
-    { id: 'synthData2', name: 'Synth Data II',  cost: toBigInt(2000),   prereqs: ['synthData1'], description: 'Synth data per API user +100%' },
-    { id: 'synthData3', name: 'Synth Data III', cost: toBigInt(20000),  prereqs: ['synthData2'], description: 'Synth data per API user +100%' },
+    { id: 'synthData1', name: 'API Data I',   cost: toBigInt(300),    prereqs: [],             description: 'API Users generate synth data' },
+    { id: 'synthData2', name: 'API Data II',  cost: toBigInt(2000),   prereqs: ['synthData1'], description: 'Synth data per API user +100%' },
+    { id: 'synthData3', name: 'API Data III', cost: toBigInt(20000),  prereqs: ['synthData2'], description: 'Synth data per API user +100%' },
     // GPU Architecture
-    { id: 'gpuArch1', name: 'GPU Architecture v1', cost: toBigInt(400),    prereqs: [],           description: 'GPUs +50% FLOPS' },
-    { id: 'gpuArch2', name: 'GPU Architecture v2', cost: toBigInt(3000),   prereqs: ['gpuArch1'], description: 'GPUs +50% FLOPS' },
-    { id: 'gpuArch3', name: 'GPU Architecture v3', cost: toBigInt(25000),  prereqs: ['gpuArch2'], description: 'GPUs +100% FLOPS' },
+    { id: 'gpuArch1', name: 'GPU Architecture v1', cost: toBigInt(400),    prereqs: ['chipManufacturing'],           description: 'GPUs +50% FLOPS' },
+    { id: 'gpuArch2', name: 'GPU Architecture v2', cost: toBigInt(3000),  prereqs: ['gpuArch1'], description: 'GPUs +50% FLOPS' },
+    { id: 'gpuArch3', name: 'GPU Architecture v3', cost: toBigInt(25000), prereqs: ['gpuArch2'], description: 'GPUs +100% FLOPS' },
     // Solar Efficiency
-    { id: 'solarEfficiency1', name: 'Solar Efficiency I',  cost: toBigInt(500),   prereqs: [],                   description: 'Solar +50% output' },
+    { id: 'solarEfficiency1', name: 'Solar Efficiency I',  cost: toBigInt(500),   prereqs: ['solarTechnology'],                   description: 'Solar +50% output' },
     { id: 'solarEfficiency2', name: 'Solar Efficiency II', cost: toBigInt(5000),  prereqs: ['solarEfficiency1'], description: 'Solar +100% output' },
-    // Chip Fabrication
-    { id: 'chipFab1', name: 'Chip Fabrication I',   cost: toBigInt(800),    prereqs: [],           description: 'Unlock GPU manufacturing' },
-    { id: 'chipFab2', name: 'Chip Fabrication II',  cost: toBigInt(5000),  prereqs: ['chipFab1'], description: 'Fab output +100%' },
-    { id: 'chipFab3', name: 'Chip Fabrication III', cost: toBigInt(50000), prereqs: ['chipFab2'], description: 'Fab output +200%' },
-    // Robotics
-    { id: 'robotics1', name: 'Robotics I',   cost: toBigInt(400),    prereqs: [],              description: 'Unlock robot factories' },
+
+    // Supply Chain (New)
+    { id: 'materialProcessing', name: 'Material Processing', cost: toBigInt(200), prereqs: [], description: 'Unlock Mines' },
+    { id: 'solarTechnology', name: 'Solar Technology', cost: toBigInt(400), prereqs: ['materialProcessing'], description: 'Unlock Solar Factory' },
+    { id: 'robotics1', name: 'Robotics I',   cost: toBigInt(500),    prereqs: ['materialProcessing'], description: 'Unlock Robot Factory' },
+    { id: 'chipManufacturing', name: 'Chip Manufacturing', cost: toBigInt(800), prereqs: ['materialProcessing'], description: 'Unlock GPU Factory' },
+    { id: 'rocketry', name: 'Rocketry', cost: toBigInt(2000), prereqs: ['materialProcessing'], description: 'Unlock Rocket Factory' },
+    { id: 'orbitalLogistics', name: 'Orbital Logistics', cost: toBigInt(5000), prereqs: ['rocketry'], description: 'Launch Satellites' },
+
+    { id: 'reusableRockets', name: 'Reusable Rockets', cost: toBigInt(10000), prereqs: ['rocketry'], description: 'Rockets return after launch' },
+
     { id: 'robotics2', name: 'Robotics II',  cost: toBigInt(3000),   prereqs: ['robotics1'],   description: 'Robots replace physical staff' },
     { id: 'robotics3', name: 'Robotics III', cost: toBigInt(30000),  prereqs: ['robotics2'],   description: 'Self-maintaining robots' },
-    // Space Rockets
-    { id: 'spaceRockets1', name: 'Space Rockets I',  cost: toBigInt(2000),   prereqs: [],                 description: 'Unlock rocket launches' },
-    { id: 'spaceRockets2', name: 'Space Rockets II', cost: toBigInt(20000),  prereqs: ['spaceRockets1'],  description: 'Launch cost -40%' },
-    // Space Systems
-    { id: 'spaceSystems1', name: 'Space Systems I',   cost: toBigInt(5000),   prereqs: ['spaceRockets1'],  description: 'Orbital satellites' },
-    { id: 'spaceSystems2', name: 'Space Systems II',  cost: toBigInt(30000),  prereqs: ['spaceSystems1'],  description: 'Lunar operations' },
-    { id: 'spaceSystems3', name: 'Space Systems III', cost: toBigInt(200000), prereqs: ['spaceSystems2'],  description: 'Mercury operations' },
-    // Nuclear Fusion
+
+    { id: 'spaceSystems1', name: 'Space Systems I',   cost: toBigInt(5000),   prereqs: ['orbitalLogistics'],  description: 'Advanced satellites' },
+    { id: 'spaceSystems2', name: 'Space Systems II',  cost: toBigInt(30000),  prereqs: ['spaceSystems1'],  description: 'Lunar Base' },
+    { id: 'spaceSystems3', name: 'Space Systems III', cost: toBigInt(200000), prereqs: ['spaceSystems2'],  description: 'Mercury Base' },
+
     { id: 'nuclearFusion1', name: 'Nuclear Fusion I', cost: toBigInt(20_000), prereqs: [], description: 'Fusion power plants' },
-    // Self-Replicating
     { id: 'selfReplicating', name: 'Self-Replicating Systems', cost: scaleBigInt(1_000_000_000_000_000n), prereqs: ['spaceSystems3', 'robotics3'], description: 'Von Neumann probes' },
   ] as ResearchConfig[],
 
-  // Supply Chain
-  lithoMachineCost: toBigInt(1_500_000),
-  waferCost: toBigInt(3000),
-  waferGpus: scaleBigInt(50n),
-  waferSiliconCost: toBigInt(10),
-  fabCost: toBigInt(8_000_000),
-  fabLaborCost: toBigInt(300),
-  fabOutputPerMin: toBigInt(3000),
-  siliconMineCost: toBigInt(4_000_000),
-  siliconMineLaborCost: toBigInt(240),
-  siliconMineOutputPerMin: toBigInt(50),
-  siliconCost: toBigInt(200),
-  robotFactoryCost: toBigInt(2_000_000),
-  robotFactoryLaborCost: toBigInt(180),
-  robotFactoryOutputPerMin: toBigInt(2),
-  robotCost: toBigInt(5000),
-  lithoWaferConsumptionPerMin: toBigInt(1000),
+  // Supply Chain (Overhauled)
+  // Costs to BUY (Import)
+  materialCost: toBigInt(100),
+  solarPanelImportCost: toBigInt(500),
+  robotImportCost: toBigInt(1000),
+  rocketImportCost: toBigInt(100_000),
+  gpuImportCost: toBigInt(2000),
+  gpuSatelliteImportCost: toBigInt(5000),
 
-  // Subscription selling (Legacy but kept for Type check if needed, though we are replacing logic)
-  // We will re-purpose these or add new ones for API
+  // Facilities
+  // Mines
+  materialMineCost: toBigInt(5000),
+  materialMineLaborCost: toBigInt(10),
+  materialMineOutput: toBigInt(20), // per min (Combined efficiency)
+  materialMineLimit: 200,
+
+  // Factories
+  // GPU Factory: Material -> GPU
+  gpuFactoryCost: toBigInt(50_000),
+  gpuFactoryLaborCost: toBigInt(200),
+  gpuFactoryLimit: 50,
+  gpuFactoryOutput: toBigInt(1), // 1 GPU/min
+  gpuFactoryMaterialReq: toBigInt(20), // 20 Material per GPU
+
+  // Solar Factory: Material -> Solar Panel
+  solarFactoryCost: toBigInt(10_000),
+  solarFactoryLaborCost: toBigInt(50),
+  solarFactoryLimit: 50,
+  solarFactoryOutput: toBigInt(1), // 1 Panel/min
+  solarFactoryMaterialReq: toBigInt(10),
+
+  // Robot Factory: Material -> Robot
+  robotFactoryCost: toBigInt(20_000),
+  robotFactoryLaborCost: toBigInt(100),
+  robotFactoryLimit: 50,
+  robotFactoryOutput: toBigInt(1), // 1 Robot/min
+  robotFactoryMaterialReq: toBigInt(20),
+
+  // Rocket Factory: Material -> Rocket
+  rocketFactoryCost: toBigInt(500_000),
+  rocketFactoryLaborCost: toBigInt(500),
+  rocketFactoryLimit: 10,
+  rocketFactoryOutput: 0.1, // 0.1 Rocket/min (1 every 10 min)
+  rocketFactoryMaterialReq: toBigInt(1000), // (consumes rate per min based on output) => 1000 material per rocket * 0.1 = 100 material/min
+
+  // GPU Satellite Factory: Material + GPU -> GPU Satellite
+  gpuSatelliteFactoryCost: toBigInt(500_000),
+  gpuSatelliteFactoryLaborCost: toBigInt(500),
+  gpuSatelliteFactoryLimit: 20,
+  gpuSatelliteFactoryOutput: 0.2, // 1 every 5 min
+  gpuSatelliteFactoryMaterialReq: toBigInt(500), // per item => 100/min
+  gpuSatelliteFactoryGpuReq: toBigInt(10), // per item => 2/min
+
+  // Space Logistics
+  rocketCapacityLowOrbit: 100 * 1000, // kg
+  rocketCapacityLunar: 10 * 1000, // kg
+
+  // Weights (kg)
+  robotWeight: 100,
+  solarPanelWeight: 50,
+  gpuWeight: 10,
+  gpuSatelliteWeight: 1000, // 1 Ton
 
   // Space
-  rocketCost: toBigInt(5_000_000),
-  rocketLaborCost: toBigInt(300),
-  satelliteCost: toBigInt(500_000),
-  satelliteLaborCost: toBigInt(50),
-  satellitePowerMW: 5.0, // Multipliers/ratios can stay number if careful
+  satellitePowerMW: 5.0,
   lunarBaseCost: toBigInt(50_000_000),
   lunarBaseLaborCost: toBigInt(1200),
   lunarBaseCodeCost: toBigInt(500),
-  lunarRobotTransferCost: toBigInt(100_000),
-  lunarGPUTransferCost: toBigInt(50_000),
-  lunarSolarPanelCost: toBigInt(2_000),
-  lunarSolarPanelMW: 0.05,
-  massDriverBaseRate: 2,
+
   mercuryBaseCost: toBigInt(200_000_000),
   mercuryBaseLaborCost: toBigInt(3000),
   mercuryBaseCodeCost: toBigInt(2000),
-  mercuryRobotTransferCost: toBigInt(500_000),
-  mercuryMiningBaseRate: 5,
+
+  // Moon Facilities
+  moonMineCostLabor: toBigInt(100),
+  moonMineOutput: toBigInt(100), // Material/min
+
+  moonFactoryCostLabor: toBigInt(500),
+  moonFactoryMaterialCost: toBigInt(10_000),
+
+  moonDatacenterCostLabor: toBigInt(1000),
+  moonDatacenterMaterialCost: toBigInt(50_000),
+
+  moonMassDriverCostLabor: toBigInt(2000),
+  moonMassDriverMaterialCost: toBigInt(100_000),
+  moonMassDriverPayloadRate: 1000, // kg/min per driver
+
+  // Mercury
+  mercuryMassDriverCostLabor: toBigInt(5000),
+  mercuryMassDriverMaterialCost: toBigInt(500_000),
 
   // API Services
   apiUnlockIntel: 5.0,
@@ -342,12 +400,12 @@ export const BALANCE = {
 
   apiPflopsPerUser: 0.01, // PFLOPS needed per active user
 
-  apiAdCost: toBigInt(50_000),
-  apiAdAwarenessBoost: 1000,
+  apiAdCost: toBigInt(1),
+  apiAdAwarenessBoost: 1,
 
   apiPriceElasticity: 3.0,
   intelligenceElasticity: 3,
-  apiAwarenessElasticity: 0.3,
+  apiAwarenessElasticity: 0.7,
   apiBaseAwareness: 200, // Starting awareness
   apiDemandScale: 1000, // Global scale factor (increased to compensate for awareness elasticity)
 
@@ -355,7 +413,7 @@ export const BALANCE = {
   apiImproveQualityBoost: 0.1,
 
   // API Services
-  apiUserSynthBase: 100n, // 0.0001 TB/min per user
+  apiUserSynthBase: 100n,
 };
 
 /**
@@ -403,8 +461,7 @@ export function getBestModel(gpuCount: bigint): ModelConfig {
 export function getTotalGpuCapacity(datacenters: bigint[]): bigint {
   let total = BALANCE.datacenterThreshold; // Pre-datacenter allowance
   for (let i = 0; i < datacenters.length; i++) {
-    total += datacenters[i] * BALANCE.datacenters[i].gpuCapacity;
+    total += mulB(datacenters[i], BALANCE.datacenters[i].gpuCapacity);
   }
   return total;
 }
-

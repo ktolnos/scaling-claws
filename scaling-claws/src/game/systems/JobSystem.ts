@@ -126,15 +126,16 @@ export function tickJobs(state: GameState, dtMs: number): void {
       const progressPerTickScaled = scaleB(toBigInt(state.agentEfficiency * intel * dtMs), 1.0 / taskTime);
 
       const activeAgents = aiPool.totalCount - aiPool.idleCount;
-      const sampleCount = Number(aiPool.totalCount < 4n ? aiPool.totalCount : 4n);
-      const nonSampleActive = activeAgents - BigInt(sampleCount) < 0n ? 0n : activeAgents - BigInt(sampleCount);
+      const sampleCountScaled = aiPool.totalCount < scaleBigInt(4n) ? aiPool.totalCount : scaleBigInt(4n);
+      const sampleCount = Math.floor(fromBigInt(sampleCountScaled));
+      const nonSampleActive = activeAgents - sampleCountScaled < 0n ? 0n : activeAgents - sampleCountScaled;
 
       // Snapshot pre-update sample stuck to derive non-sample stuck
       let prevSampleStuck = 0n;
       for (let i = 0; i < sampleCount; i++) {
         if (aiPool.samples.stuck[i]) prevSampleStuck++;
       }
-      let restStuck = aiPool.stuckCount - prevSampleStuck;
+      let restStuck = aiPool.stuckCount - scaleBigInt(prevSampleStuck);
       if (restStuck < 0n) restStuck = 0n;
       if (restStuck > nonSampleActive) restStuck = nonSampleActive;
 
@@ -178,7 +179,7 @@ export function tickJobs(state: GameState, dtMs: number): void {
              const nonSampleWorking = nonSampleActive - restStuck;
              if (nonSampleWorking > 0n) {
                 const share = Number(nonSampleWorking) / Number(workingAgents);
-                const newlyStuck = BigInt(Math.floor(Number(completions) * effectiveStuckRate * share + Math.random()));
+                const newlyStuck = scaleBigInt(BigInt(Math.floor(Number(completions) * effectiveStuckRate * share + Math.random())));
                 restStuck += newlyStuck;
                 if (restStuck > nonSampleActive) restStuck = nonSampleActive;
              }
@@ -250,10 +251,14 @@ export function tickJobs(state: GameState, dtMs: number): void {
   state.laborPerMin = laborPerMin;
   state.humanSalaryPerMin = humanSalaryPerMin;
 
-  // --- Auto-Firing Logic (Goal 2) ---
-  // If we have no money and are losing money, fire human workers to balance the budget
-  if (state.funds <= 0n && state.expensePerMin > state.incomePerMin) {
-    let salaryToCut = state.expensePerMin - state.incomePerMin;
+  // --- Auto-Firing Logic ---
+  // Recalculate expensePerMin from the fresh humanSalaryPerMin before checking
+  state.expensePerMin = humanSalaryPerMin;
+
+  // If expenses exceed income and funds can't cover even 1 minute of the deficit, fire workers
+  const netDeficit = state.expensePerMin - state.incomePerMin;
+  if (netDeficit > 0n && state.funds < netDeficit) {
+    let salaryToCut = netDeficit;
     let anyFired = false;
 
     // Fire in reverse order of seniority (last jobs first)
@@ -265,9 +270,9 @@ export function tickJobs(state: GameState, dtMs: number): void {
       const pool = state.humanPools[jobType];
       if (pool.totalCount <= 0n) continue;
 
-      // Calculate workers to fire to cover salaryToCut.
-      const workersNeededToCut = divB(salaryToCut, config.salaryPerMin) + (salaryToCut % config.salaryPerMin !== 0n ? scaleBigInt(1n) : 0n);
-      const workersToFire = pool.totalCount < workersNeededToCut ? pool.totalCount : workersNeededToCut;
+      // Ceiling division to get whole workers needed to cover salaryToCut
+      const workersNeededCeil = scaleBigInt((salaryToCut + config.salaryPerMin - 1n) / config.salaryPerMin);
+      const workersToFire = pool.totalCount < workersNeededCeil ? pool.totalCount : workersNeededCeil;
       
       if (workersToFire > 0n) {
         pool.totalCount -= workersToFire;
@@ -281,16 +286,16 @@ export function tickJobs(state: GameState, dtMs: number): void {
     }
 
     if (anyFired) {
-      // Refresh humanSalaryPerMin and expensePerMin for accurate UI and remaining tick logic
+      // Refresh humanSalaryPerMin and expensePerMin for accurate UI
       let newHumanSalary = 0n;
       for (const jt of JOB_ORDER) {
         const pool = state.humanPools[jt];
         const jobConfig = BALANCE.jobs[jt];
         if (jobConfig.salaryPerMin) newHumanSalary += mulB(jobConfig.salaryPerMin, pool?.totalCount || 0n);
       }
-      const gridCost = mulB(state.gridPowerKW, toBigInt(BALANCE.gridPowerCostPerKWPerMin));
+
       state.humanSalaryPerMin = newHumanSalary;
-      state.expensePerMin = newHumanSalary + gridCost;
+      state.expensePerMin = newHumanSalary;
     }
   }
 

@@ -398,7 +398,7 @@ export class JobsPanel implements Panel {
 
     // Nudge
     if (state.stuckCount > 0) {
-      this.stuckCountEl.textContent = state.stuckCount + ' stuck';
+      this.stuckCountEl.textContent = formatNumber(state.stuckCount) + ' stuck';
       this.stuckCountEl.style.color = 'var(--accent-red)';
       this.nudgeBtn.disabled = false;
     } else {

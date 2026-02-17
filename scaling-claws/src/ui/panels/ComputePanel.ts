@@ -2,7 +2,7 @@ import type { GameState } from '../../game/GameState.ts';
 import { getTotalAssignedAgents } from '../../game/GameState.ts';
 import type { Panel } from '../PanelManager.ts';
 import { BALANCE } from '../../game/BalanceConfig.ts';
-import { formatMoney, formatNumber, fromBigInt, toBigInt, divB, scaleB, scaleBigInt } from '../../game/utils.ts';
+import { formatMoney, formatNumber, fromBigInt, toBigInt, divB, scaleB } from '../../game/utils.ts';
 import { buyGpu, upgradeModel, buyDatacenter, setApiPrice, buyAds, setApiAllocation, improveApi, unlockApi } from '../../game/systems/ComputeSystem.ts';
 import { BulkBuyGroup, getBuyTiers } from '../components/BulkBuyGroup.ts';
 
@@ -567,10 +567,10 @@ export class ComputePanel implements Panel {
             '</strong> (Intel ' + (Math.round(nextModel.intel * 10) / 10).toString() + ')';
       }
       if (this.upgradeBtn && this.upgradeBtnReq) {
-          const minGpusScaled = scaleBigInt(BigInt(nextModel.minGpus));
-          const gpuMet = state.gpuCount >= minGpusScaled;
+          // nextModel.minGpus is already scaled in BalanceConfig
+          const gpuMet = state.gpuCount >= nextModel.minGpus;
           const gpuColor = gpuMet ? '' : 'var(--accent-red)';
-          this.upgradeBtnReq.textContent = `(Requires ${formatNumber(minGpusScaled)} GPUs)`;
+          this.upgradeBtnReq.textContent = `(Requires ${formatNumber(nextModel.minGpus)} GPUs)`;
           this.upgradeBtnReq.style.color = gpuColor;
           this.upgradeBtn.disabled = !gpuMet;
       }
@@ -597,7 +597,7 @@ export class ComputePanel implements Panel {
         const dc = BALANCE.datacenters[i];
         const refs = this.datacenterRows[i];
         // Only show if player is near needing it or already has previous tiers
-        if (i === 0 || state.datacenters[i] > 0 || state.datacenters[Math.max(0, i - 1)] > 0) {
+        if (i === 0 || state.datacenters[i] > 0n || state.datacenters[Math.max(0, i - 1)] > 0n) {
             refs.row.style.display = 'flex';
             const info = refs.row.querySelector('.label')!;
             const laborMet = state.labor >= dc.laborCost;
@@ -606,7 +606,7 @@ export class ComputePanel implements Panel {
             info.textContent = `${dc.name} (${formatNumber(dc.gpuCapacity)} GPUs)`;
 
             const countSpan = refs.row.querySelector('.value')!;
-            countSpan.textContent = 'x' + state.datacenters[i];
+            countSpan.textContent = 'x' + formatNumber(state.datacenters[i]);
 
             const btn = refs.btn;
             const moneyColor = moneyMet ? '' : 'var(--accent-red)';
@@ -656,7 +656,7 @@ export class ComputePanel implements Panel {
         this.apiUnlockBtn.style.display = 'block';
         this.apiUnlockBtn.disabled = !codeMet;
         const color = codeMet ? 'var(--accent-green)' : 'var(--accent-red)';
-        this.apiUnlockBtnReq.textContent = `(${BALANCE.apiUnlockCode} Code)`;
+        this.apiUnlockBtnReq.textContent = `(${formatNumber(BALANCE.apiUnlockCode)} Code)`;
         this.apiUnlockBtnReq.style.color = color;
       } else {
         // Only show code requirement text if button is hidden (i.e. if Intelligence not met)

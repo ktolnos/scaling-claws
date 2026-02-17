@@ -5,7 +5,8 @@ import { toBigInt, mulB, divB, scaleB } from '../utils.ts';
 export function tickTraining(state: GameState, dtMs: number): void {
   if (!state.isPostGpuTransition) return;
 
-  const hourB = 3600000n;
+  // milliseconds per hour - must be scaled for divB
+  const hourB = toBigInt(3600000);
 
   // Progress fine-tune (apply algo efficiency bonus)
   if (state.currentFineTuneIndex >= 0 && state.trainingAllocatedPflops > 0n) {

@@ -14,12 +14,21 @@ export function tickCompute(state: GameState, dtMs: number): void {
 
 // --- Subscription Era ---
 
-function tickSubscriptionEra(state: GameState, _dtMs: number): void {
+function tickSubscriptionEra(state: GameState, dtMs: number): void {
   // Human salary expenses (from jobs)
   state.expensePerMin = state.humanSalaryPerMin;
   
   if (state.humanSalaryPerMin > 0n) {
     state.resourceBreakdown.funds.expense.push({ label: 'Human Salaries', ratePerMin: state.humanSalaryPerMin });
+  }
+
+  // Deduct salary costs
+  if (state.humanSalaryPerMin > 0n) {
+    const cost = mulB(state.humanSalaryPerMin, toBigInt(dtMs)) / 60000n;
+    state.funds -= cost;
+    if (state.funds < 0n) {
+      state.funds = 0n;
+    }
   }
 
   // Update intelligence
@@ -33,6 +42,10 @@ function tickSubscriptionEra(state: GameState, _dtMs: number): void {
 // --- GPU Era ---
 
 function tickGpuEra(state: GameState, dtMs: number): void {
+
+  // GPU capacity check - MUST happen before installedGpuCount calculation
+  state.gpuCapacity = getTotalGpuCapacity(state.datacenters);
+  state.needsDatacenter = state.gpuCount >= state.gpuCapacity;
 
   // Compute GPU metrics (apply GPU architecture research bonus)
   state.installedGpuCount = state.gpuCount < state.gpuCapacity ? state.gpuCount : state.gpuCapacity;
@@ -64,8 +77,8 @@ function tickGpuEra(state: GameState, dtMs: number): void {
   const trainingPct = toBigInt(state.trainingAllocationPct);
   const inferencePct = state.apiUnlocked ? toBigInt(state.apiInferenceAllocationPct) : 0n;
   
-  state.trainingAllocatedPflops = divB(mulB(state.totalPflops, trainingPct), 100n);
-  state.apiReservedPflops = divB(mulB(state.totalPflops, inferencePct), 100n);
+  state.trainingAllocatedPflops = mulB(state.totalPflops, trainingPct) / 100n;
+  state.apiReservedPflops = mulB(state.totalPflops, inferencePct) / 100n;
   
   // Calculate "Rest" of compute (available for Agents and Synth Data)
   const restPflops = state.totalPflops - state.trainingAllocatedPflops - state.apiReservedPflops;
@@ -83,10 +96,6 @@ function tickGpuEra(state: GameState, dtMs: number): void {
   if (agentsAllocatedPflops > 0n) {
     state.resourceBreakdown.compute.push({ label: 'AI Agents', pflops: agentsAllocatedPflops });
   }
-
-  // GPU capacity check
-  state.gpuCapacity = getTotalGpuCapacity(state.datacenters);
-  state.needsDatacenter = state.gpuCount >= state.gpuCapacity;
 
   // Allocate GPU slots to agent pools
   allocateGpuSlots(state, agentsAllocatedPflops);
@@ -149,11 +158,10 @@ function tickGpuEra(state: GameState, dtMs: number): void {
   }
 
   let totalExpensePerMin = state.humanSalaryPerMin;
-  const gridCost = mulB(state.gridPowerKW, toBigInt(BALANCE.gridPowerCostPerKWPerMin));
-  if (gridCost > 0n) {
-    totalExpensePerMin += gridCost;
-    state.resourceBreakdown.funds.expense.push({ label: 'Grid Power', ratePerMin: gridCost });
-  }
+
+  
+  // Grid power is now one-time payment, no recurring cost
+  // const gridCost = ...
   state.expensePerMin = totalExpensePerMin;
 
   // Deduct costs
@@ -320,7 +328,12 @@ export function goSelfHosted(state: GameState): boolean {
 
   state.funds -= totalCost;
   state.gpuCount = gpuCount;
+  state.installedGpuCount = state.gpuCount < state.gpuCapacity ? state.gpuCount : state.gpuCapacity;
   state.isPostGpuTransition = true;
+
+  // Free starting energy: cover the datacenter threshold
+  const powerReqMW = mulB(BALANCE.datacenterThreshold, toBigInt(BALANCE.gpuPowerMW)); 
+  state.gridPowerKW = powerReqMW * 1000n;
 
   state.subscriptionTier = 'basic';
 

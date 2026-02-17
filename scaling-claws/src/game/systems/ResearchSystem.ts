@@ -3,8 +3,6 @@ import { BALANCE } from '../BalanceConfig.ts';
 import type { ResearchId, ResearchConfig } from '../BalanceConfig.ts';
 
 export function tickResearch(state: GameState, _dtMs: number): void {
-  if (!state.isPostGpuTransition) return;
-
   // Compute research bonuses from completedResearch
   computeResearchBonuses(state);
 }
@@ -36,7 +34,7 @@ function computeResearchBonuses(state: GameState): void {
 
   // Launch cost reduction from space research
   let launchBonus = 1.0;
-  if (state.completedResearch.includes('spaceRockets2')) launchBonus *= 0.6;
+  if (state.completedResearch.includes('reusableRockets')) launchBonus *= 0.6; // Changed from spaceRockets2
   state.launchCostBonus = launchBonus;
 }
 
@@ -68,7 +66,7 @@ export function purchaseResearch(state: GameState, id: ResearchId): boolean {
   state.completedResearch.push(id);
 
   // Flavor texts for notable research
-  if (id === 'chipFab1') {
+  if (id === 'chipManufacturing') {
     state.pendingFlavorTexts.push(
       '"Your first chip fab. TSMC is not worried. Yet."'
     );
@@ -80,15 +78,15 @@ export function purchaseResearch(state: GameState, id: ResearchId): boolean {
     state.pendingFlavorTexts.push(
       '"Synthetic data pipeline online. Your users are now training the model for you."'
     );
-  } else if (id === 'spaceRockets1') {
+  } else if (id === 'rocketry') {
     state.pendingFlavorTexts.push(
       '"Rocket blueprints acquired. Your neighbors have questions about the delivery."'
     );
-  } else if (id === 'spaceSystems1') {
+  } else if (id === 'orbitalLogistics') {
     state.pendingFlavorTexts.push(
       '"Orbital satellite capability unlocked. The sun works for free."'
     );
-  } else if (id === 'spaceSystems2') {
+  } else if (id === 'spaceSystems2') { // Assuming this stayed same?
     state.pendingFlavorTexts.push(
       '"Lunar operations unlocked. One small step for AI, one giant leap for compute."'
     );
@@ -111,6 +109,3 @@ export function getAvailableResearch(state: GameState): ResearchConfig[] {
     return true;
   });
 }
-
-
-

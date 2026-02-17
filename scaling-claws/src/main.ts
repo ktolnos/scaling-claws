@@ -39,7 +39,7 @@ const ticker = new Ticker(document.getElementById('ticker')!);
 // GPU transition callback
 function handleGpuTransition(): void {
   panelManager.replace('agents', new ComputePanel(loop.getState()));
-  panelManager.register('energy', new EnergyPanel(loop.getState()));
+  // Energy panel now added when first datacenter purchased
 }
 
 // Register panels
@@ -48,9 +48,9 @@ panelManager.register('jobs', new JobsPanel(state));
 // If already post-GPU (loaded from save), show compute + energy/space panels
 if (state.isPostGpuTransition) {
   panelManager.register('compute', new ComputePanel(state));
-  if (state.completedResearch.includes('spaceRockets1')) {
+  if (state.completedResearch.includes('orbitalLogistics')) {
     panelManager.register('energy', new SpaceEnergyPanel(state));
-  } else {
+  } else if (state.datacenters.some(c => c > 0n)) {
     panelManager.register('energy', new EnergyPanel(state));
   }
 } else {
@@ -63,14 +63,15 @@ if (state.intelligence >= BALANCE.trainingUnlockIntel) {
 }
 
 // If supply chain already unlocked (loaded from save), show supply panel
-if (state.completedResearch.includes('chipFab1')) {
+if (state.completedResearch.includes('materialProcessing')) {
   panelManager.register('supply', new SupplyPanel(state));
 }
 
 // Track whether panels have been added (for mid-game unlocks)
 let trainingPanelAdded = state.intelligence >= BALANCE.trainingUnlockIntel;
-let supplyPanelAdded = state.completedResearch.includes('chipFab1');
-let spacePanelAdded = state.completedResearch.includes('spaceRockets1');
+let supplyPanelAdded = state.completedResearch.includes('materialProcessing');
+let spacePanelAdded = state.completedResearch.includes('orbitalLogistics');
+let energyPanelAdded = state.datacenters.some(c => c > 0n) || spacePanelAdded;
 
 // UI update loop
 setInterval(() => {
@@ -89,15 +90,24 @@ setInterval(() => {
   }
 
   // Check for mid-game supply chain unlock
-  if (!supplyPanelAdded && s.completedResearch.includes('chipFab1')) {
+  if (!supplyPanelAdded && s.completedResearch.includes('materialProcessing')) {
     panelManager.register('supply', new SupplyPanel(s));
     supplyPanelAdded = true;
   }
 
+  // Check for mid-game energy unlock (first datacenter)
+  if (!energyPanelAdded && s.datacenters.some(c => c > 0n)) {
+      if (!s.completedResearch.includes('orbitalLogistics')) {
+          panelManager.register('energy', new EnergyPanel(s));
+      }
+      energyPanelAdded = true;
+  }
+
   // Check for mid-game space unlock (replace energy with space+energy)
-  if (!spacePanelAdded && s.completedResearch.includes('spaceRockets1')) {
+  if (!spacePanelAdded && s.completedResearch.includes('orbitalLogistics')) {
     panelManager.replace('energy', new SpaceEnergyPanel(s));
     spacePanelAdded = true;
+    energyPanelAdded = true; // Implicitly unlocked/handled
   }
 }, BALANCE.uiUpdateIntervalMs);
 

@@ -9,7 +9,7 @@ export function tickEnergy(state: GameState): void { // Removed unused _dtMs
   state.powerDemandMW = mulB(state.installedGpuCount, toBigInt(BALANCE.gpuPowerMW));
 
   // Power supply: grid + plants + solar + home
-  let supply = toBigInt(BALANCE.homePowerMW);
+  let supply = 0n;
   supply += state.gridPowerKW / 1000n;
   supply += mulB(state.gasPlants, BALANCE.powerPlants.gas.outputMW);
   supply += mulB(state.nuclearPlants, BALANCE.powerPlants.nuclear.outputMW);
@@ -25,7 +25,7 @@ export function tickEnergy(state: GameState): void { // Removed unused _dtMs
 
   // Lunar grid (independent of Earth)
   state.lunarPowerDemandMW = mulB(state.lunarGPUs, toBigInt(BALANCE.gpuPowerMW));
-  state.lunarPowerSupplyMW = mulB(state.lunarSolarPanels, toBigInt(BALANCE.lunarSolarPanelMW));
+  state.lunarPowerSupplyMW = mulB(state.lunarSolarPanels, toBigInt(BALANCE.solarPanelMW));
   if (state.lunarPowerDemandMW > 0n && state.lunarPowerSupplyMW < state.lunarPowerDemandMW) {
     state.lunarPowerThrottle = Number(state.lunarPowerSupplyMW) / Number(state.lunarPowerDemandMW);
   } else {
@@ -38,17 +38,20 @@ export function tickEnergy(state: GameState): void { // Removed unused _dtMs
 
 export function buyGridPower(state: GameState, amountKW: number): boolean {
   const amountKWB = toBigInt(amountKW);
-  const newTotalKW = state.gridPowerKW + amountKWB;
-  const newTotalCostPerMin = mulB(newTotalKW, toBigInt(BALANCE.gridPowerCostPerKWPerMin));
   
-  if (state.funds < newTotalCostPerMin) return false;
+  // One-time cost
+  const cost = mulB(amountKWB, toBigInt(BALANCE.gridPowerKWCost));
+  
+  if (state.funds < cost) return false;
 
-  state.gridPowerKW = newTotalKW;
+  state.funds -= cost;
+  state.gridPowerKW += amountKWB;
   return true;
 }
 
 export function sellGridPower(state: GameState, amountKW: number): boolean {
   const amountKWB = toBigInt(amountKW);
+  // No refund for one-time contract (or maybe partial? keeping simple: no refund)
   if (state.gridPowerKW < amountKWB) {
     state.gridPowerKW = 0n;
   } else {

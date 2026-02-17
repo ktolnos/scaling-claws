@@ -1,174 +1,279 @@
 import type { GameState } from '../GameState.ts';
 import { BALANCE } from '../BalanceConfig.ts';
-import { toBigInt, divB, mulB, scaleB } from '../utils.ts';
+import { toBigInt, mulB } from '../utils.ts';
 
 export function tickSupply(state: GameState, dtMs: number): void {
+  const alpha = 0.05; // Smoothing factor
 
-  if (!state.completedResearch.includes('chipFab1')) {
-    state.mineActualRate = 0;
-    state.fabActualRate = 0;
-    state.lithoActualRate = 0;
-    state.factoryActualRate = 0;
-    return;
-  }
+  // Reset consumption rates
+  state.materialConsumptionPerMin = 0n;
+  state.solarPanelConsumptionPerMin = 0n;
+  state.robotConsumptionPerMin = 0n;
+  state.gpuConsumptionPerMin = 0n;
+  state.rocketConsumptionPerMin = 0n;
+  state.gpuSatelliteConsumptionPerMin = 0n;
+  state.gpuSatelliteProductionPerMin = 0n;
 
-  // Chip fabrication bonus from research
-  let fabBonus = 1.0;
-  if (state.completedResearch.includes('chipFab2')) fabBonus = 2.0;
-  if (state.completedResearch.includes('chipFab3')) fabBonus = 3.0;
-
-  const alpha = 0.05; // Smoothing factor for ~1s window
-
-  // 1. Silicon production from mines
-  state.siliconProductionPerMin = mulB(state.siliconMines, BALANCE.siliconMineOutputPerMin);
-  state.silicon += mulB(state.siliconProductionPerMin, toBigInt(dtMs)) / 60000n;
-  
-  const targetMineRate = state.siliconMines > 0n ? 1.0 : 0;
-  state.mineActualRate = (state.mineActualRate * (1 - alpha)) + (targetMineRate * alpha);
-
-  // 2. Wafer production from fabs (consume silicon)
-  // waferMaxProdPerMin = fabs * output * bonus (all scaled)
-  const baseWaferMaxPerMin = mulB(state.waferFabs, BALANCE.fabOutputPerMin);
-  const waferMaxProdPerMin = scaleB(baseWaferMaxPerMin, fabBonus);
-  
-  state.waferProductionPerMin = waferMaxProdPerMin;
-  state.siliconDemandPerMin = mulB(state.waferProductionPerMin, BALANCE.waferSiliconCost);
-
-  let fabTarget = 0;
-  if (state.waferFabs > 0n) {
-    if (state.silicon > 0n) {
-      const maxPossibleBySilicon = divB(state.silicon, BALANCE.waferSiliconCost);
-      const potentialWafersInTick = mulB(state.waferProductionPerMin, toBigInt(dtMs)) / 60000n;
-      const nextWafers = maxPossibleBySilicon < potentialWafersInTick ? maxPossibleBySilicon : potentialWafersInTick;
-      
-      state.wafers += nextWafers;
-      state.silicon -= mulB(nextWafers, BALANCE.waferSiliconCost);
-      if (state.silicon < 0n) state.silicon = 0n;
-      
-      fabTarget = (potentialWafersInTick > 0n) ? (Number(nextWafers) / Number(potentialWafersInTick)) : 0;
+  // 1. Mines (Material)
+  // Requires 'materialProcessing'
+  if (state.completedResearch.includes('materialProcessing')) {
+    if (state.materialMines > 0n) {
+      const prodPerMin = mulB(state.materialMines, BALANCE.materialMineOutput);
+      const produced = mulB(prodPerMin, toBigInt(dtMs)) / 60000n;
+      state.material += produced;
+      state.materialProductionPerMin = prodPerMin;
+      state.materialMineRate = (state.materialMineRate * (1 - alpha)) + (1.0 * alpha);
+    } else {
+      state.materialProductionPerMin = 0n;
+      state.materialMineRate = (state.materialMineRate * (1 - alpha));
     }
+  } else {
+     state.materialProductionPerMin = 0n;
+     state.materialMineRate = 0;
   }
-  state.fabActualRate = (state.fabActualRate * (1 - alpha)) + (fabTarget * alpha);
 
-  // 3. GPU production from litho machines (consume wafers)
-  const baseLithoWafersMax = mulB(state.lithoMachines, BALANCE.lithoWaferConsumptionPerMin);
-  const lithoWafersMaxPerMin = scaleB(baseLithoWafersMax, fabBonus);
-  state.waferDemandPerMin = lithoWafersMaxPerMin; 
+  // 2. Solar Factory (Material -> Solar Panels)
+  if (state.completedResearch.includes('solarTechnology') && state.solarFactories > 0n) {
+    const maxOutputPerMin = mulB(state.solarFactories, BALANCE.solarFactoryOutput);
+    const materialReqPerMin = mulB(state.solarFactories, BALANCE.solarFactoryMaterialReq);
+    
+    // Calculate potential production in this tick
+    const potentialOutput = mulB(maxOutputPerMin, toBigInt(dtMs)) / 60000n;
+    const materialNeeded = mulB(materialReqPerMin, toBigInt(dtMs)) / 60000n;
 
-  let lithoTarget = 0;
-  if (state.lithoMachines > 0n) {
-    if (state.wafers > 0n) {
-      const wafersNeeded = mulB(lithoWafersMaxPerMin, toBigInt(dtMs)) / 60000n;
-      const wafersConsumed = state.wafers < wafersNeeded ? state.wafers : wafersNeeded;
-      const gpusProduced = mulB(wafersConsumed, BALANCE.waferGpus);
-
-      state.gpuCount += gpusProduced;
-      state.wafers -= wafersConsumed;
+    let efficiency = 1.0;
+    if (state.material < materialNeeded) efficiency = Math.min(efficiency, Number(state.material) / Number(materialNeeded || 1n));
+    
+    if (efficiency > 0) {
+      const actualOutput = BigInt(Math.floor(Number(potentialOutput) * efficiency));
+      const actualMaterial = BigInt(Math.floor(Number(materialNeeded) * efficiency));
       
-      const potentialGpusInTick = mulB(mulB(lithoWafersMaxPerMin, BALANCE.waferGpus), toBigInt(dtMs)) / 60000n;
-      lithoTarget = (potentialGpusInTick > 0n) ? Number(gpusProduced) / Number(potentialGpusInTick) : 0;
-      state.gpuProductionPerMin = (gpusProduced * 60000n) / toBigInt(dtMs);
+      state.solarPanels += actualOutput;
+      state.material -= actualMaterial;
+      
+      state.solarPanelProductionPerMin = BigInt(Math.floor(Number(maxOutputPerMin) * efficiency));
+      state.materialConsumptionPerMin += BigInt(Math.floor(Number(materialReqPerMin) * efficiency));
+    } else {
+      state.solarPanelProductionPerMin = 0n;
+    }
+    state.solarFactoryRate = (state.solarFactoryRate * (1 - alpha)) + (efficiency * alpha);
+  } else {
+    state.solarPanelProductionPerMin = 0n;
+    state.solarFactoryRate = (state.solarFactoryRate * (1 - alpha));
+  }
+
+  // 3. GPU Factory (Material -> GPU)
+  if (state.completedResearch.includes('chipManufacturing') && state.gpuFactories > 0n) {
+    const maxOutputPerMin = mulB(state.gpuFactories, BALANCE.gpuFactoryOutput);
+    const materialReqPerMin = mulB(state.gpuFactories, BALANCE.gpuFactoryMaterialReq);
+    
+    const potentialOutput = mulB(maxOutputPerMin, toBigInt(dtMs)) / 60000n;
+    const materialNeeded = mulB(materialReqPerMin, toBigInt(dtMs)) / 60000n;
+
+    let efficiency = 1.0;
+    if (state.material < materialNeeded) efficiency = Number(state.material) / Number(materialNeeded || 1n);
+
+    if (efficiency > 0) {
+       const actualOutput = BigInt(Math.floor(Number(potentialOutput) * efficiency));
+       const actualMaterial = BigInt(Math.floor(Number(materialNeeded) * efficiency));
+       
+       state.gpuCount += actualOutput;
+       state.material -= actualMaterial;
+       state.gpuProductionPerMin = BigInt(Math.floor(Number(maxOutputPerMin) * efficiency));
+       state.materialConsumptionPerMin += BigInt(Math.floor(Number(materialReqPerMin) * efficiency));
     } else {
       state.gpuProductionPerMin = 0n;
     }
+    state.gpuFactoryRate = (state.gpuFactoryRate * (1 - alpha)) + (efficiency * alpha);
   } else {
     state.gpuProductionPerMin = 0n;
+    state.gpuFactoryRate = (state.gpuFactoryRate * (1 - alpha));
   }
-  state.lithoActualRate = (state.lithoActualRate * (1 - alpha)) + (lithoTarget * alpha);
 
-  // Auto-produce robots from factories
-  let factoryTarget = 0;
-  if (state.robotFactories > 0n) {
-    const robotsMaxPerMin = mulB(state.robotFactories, BALANCE.robotFactoryOutputPerMin);
-    state.robots += mulB(robotsMaxPerMin, toBigInt(dtMs)) / 60000n;
-    factoryTarget = 1.0;
+  // 4. Robot Factory (Material -> Robot)
+  if (state.completedResearch.includes('robotics1') && state.robotFactories > 0n) {
+    const maxOutputPerMin = mulB(state.robotFactories, BALANCE.robotFactoryOutput);
+    const materialReqPerMin = mulB(state.robotFactories, BALANCE.robotFactoryMaterialReq);
+
+    const potentialOutput = mulB(maxOutputPerMin, toBigInt(dtMs)) / 60000n;
+    const materialNeeded = mulB(materialReqPerMin, toBigInt(dtMs)) / 60000n;
+
+    let efficiency = 1.0;
+    if (state.material < materialNeeded) efficiency = Number(state.material) / Number(materialNeeded || 1n);
+
+    if (efficiency > 0) {
+      const actualOutput = BigInt(Math.floor(Number(potentialOutput) * efficiency));
+      const actualMaterial = BigInt(Math.floor(Number(materialNeeded) * efficiency));
+
+      state.robots += actualOutput;
+      state.material -= actualMaterial;
+      state.robotProductionPerMin = BigInt(Math.floor(Number(maxOutputPerMin) * efficiency));
+      state.materialConsumptionPerMin += BigInt(Math.floor(Number(materialReqPerMin) * efficiency));
+    } else {
+       state.robotProductionPerMin = 0n;
+    }
+     state.robotFactoryRate = (state.robotFactoryRate * (1 - alpha)) + (efficiency * alpha);
+  } else {
+    state.robotProductionPerMin = 0n;
+    state.robotFactoryRate = (state.robotFactoryRate * (1 - alpha));
   }
-  state.factoryActualRate = (state.factoryActualRate * (1 - alpha)) + (factoryTarget * alpha);
 
-  // Final safety clamp
-  if (state.silicon < 0n) state.silicon = 0n;
-  if (state.wafers < 0n) state.wafers = 0n;
+  // 5. Rocket Factory (Material -> Rocket)
+  if (state.completedResearch.includes('rocketry') && state.rocketFactories > 0n) {
+    const materialReqPerMin = mulB(state.rocketFactories, BALANCE.rocketFactoryMaterialReq);
+    const materialNeeded = mulB(materialReqPerMin, toBigInt(dtMs)) / 60000n;
+    
+    let efficiency = 1.0;
+    if (state.material < materialNeeded) efficiency = Number(state.material) / Number(materialNeeded || 1n);
+    
+    if (efficiency > 0) {
+       // Consume material deterministically to avoid flickering demand
+       state.material -= BigInt(Math.floor(Number(materialNeeded) * efficiency));
+       state.materialConsumptionPerMin += BigInt(Math.floor(Number(materialReqPerMin) * efficiency));
+       
+       // Produce rocket stochastically
+       const rocketsPerMin = Number(state.rocketFactories) * BALANCE.rocketFactoryOutput * efficiency;
+       const expectedRockets = (rocketsPerMin * dtMs) / 60000;
+       
+       if (Math.random() < expectedRockets) {
+         state.rockets += 1n;
+       }
+       state.rocketProductionPerMin = rocketsPerMin > 0 ? 1n : 0n; 
+    } else {
+       state.rocketProductionPerMin = 0n;
+    }
+    state.rocketFactoryRate = (state.rocketFactoryRate * (1 - alpha)) + (efficiency * alpha);
+  } else {
+    state.rocketProductionPerMin = 0n;
+    state.rocketFactoryRate = (state.rocketFactoryRate * (1 - alpha));
+  }
+
+  // 6. GPU Satellite Factory (Material + GPU -> Satellite)
+  if (state.completedResearch.includes('orbitalLogistics') && state.gpuSatelliteFactories > 0n) {
+    const outputRate = Number(state.gpuSatelliteFactories) * BALANCE.gpuSatelliteFactoryOutput; // 0.2 per factory
+    
+    // Requirements
+    const materialReqPerMin = mulB(state.gpuSatelliteFactories, BALANCE.gpuSatelliteFactoryMaterialReq);
+    const gpuReqPerMin = mulB(state.gpuSatelliteFactories, BALANCE.gpuSatelliteFactoryGpuReq);
+    
+    const materialNeeded = mulB(materialReqPerMin, toBigInt(dtMs)) / 60000n;
+    const gpuNeeded = mulB(gpuReqPerMin, toBigInt(dtMs)) / 60000n;
+    
+    let efficiency = 1.0;
+    if (state.material < materialNeeded) efficiency = Math.min(efficiency, Number(state.material) / Number(materialNeeded || 1n));
+    if (state.gpuCount < gpuNeeded) efficiency = Math.min(efficiency, Number(state.gpuCount) / Number(gpuNeeded || 1n));
+    
+    if (efficiency > 0) {
+      // Consume
+      state.material -= BigInt(Math.floor(Number(materialNeeded) * efficiency));
+      state.gpuCount -= BigInt(Math.floor(Number(gpuNeeded) * efficiency));
+      
+      state.materialConsumptionPerMin += BigInt(Math.floor(Number(materialReqPerMin) * efficiency));
+      state.gpuConsumptionPerMin += BigInt(Math.floor(Number(gpuReqPerMin) * efficiency));
+      
+      // Produce Probabilistically
+      const expectedSats = (outputRate * efficiency * dtMs) / 60000;
+      if (Math.random() < expectedSats) {
+        state.gpuSatellites += 1n;
+      }
+      
+      state.gpuSatelliteProductionPerMin = outputRate > 0 ? 1n : 0n; // Flag
+    } else {
+      state.gpuSatelliteProductionPerMin = 0n;
+    }
+    state.gpuSatelliteFactoryRate = (state.gpuSatelliteFactoryRate * (1 - alpha)) + (efficiency * alpha);
+  } else {
+    state.gpuSatelliteProductionPerMin = 0n;
+    state.gpuSatelliteFactoryRate = (state.gpuSatelliteFactoryRate * (1 - alpha));
+  }
 }
 
 // --- Actions ---
 
-export function buyLithoMachine(state: GameState, amount: number = 1): boolean {
+// Generic imports
+export function importResource(state: GameState, resource: 'material' | 'solarPanels' | 'robots' | 'rockets' | 'gpuSatellites' | 'gpu', amount: number): boolean {
   const amountB = toBigInt(amount);
-  const cost = mulB(amountB, BALANCE.lithoMachineCost);
-  if (state.funds < cost) return false;
+  let cost = 0n;
+  
+  if (resource === 'material') cost = BALANCE.materialCost;
+  else if (resource === 'solarPanels') cost = BALANCE.solarPanelImportCost;
+  else if (resource === 'robots') cost = BALANCE.robotImportCost;
+  else if (resource === 'rockets') cost = BALANCE.rocketImportCost;
+  else if (resource === 'gpuSatellites') cost = BALANCE.gpuSatelliteImportCost;
+  else if (resource === 'gpu') cost = BALANCE.gpuImportCost;
 
-  state.funds -= cost;
-  state.lithoMachines += amountB;
+  const totalCost = mulB(amountB, cost);
+  
+  if (state.funds < totalCost) return false;
+  state.funds -= totalCost;
+  
+  if (resource === 'material') state.material += amountB;
+  else if (resource === 'solarPanels') state.solarPanels += amountB;
+  else if (resource === 'robots') state.robots += amountB;
+  else if (resource === 'rockets') state.rockets += amountB;
+  else if (resource === 'gpuSatellites') state.gpuSatellites += amountB;
+  else if (resource === 'gpu') state.gpuCount += amountB; // Note: gpuCount
+  
   return true;
 }
 
-export function buyWafers(state: GameState, amount: number): boolean {
+// Facilities
+export function buildFacility(state: GameState, type: 'materialMine' | 'solarFactory' | 'robotFactory' | 'gpuFactory' | 'rocketFactory' | 'gpuSatelliteFactory', amount: number): boolean {
   const amountB = toBigInt(amount);
-  const cost = mulB(amountB, BALANCE.waferCost);
-  if (state.funds < cost) return false;
+  let cost = 0n;
+  let labor = 0n;
+  let currentCount = 0n;
+  let limit = 0;
+  
+  if (type === 'materialMine') {
+    cost = BALANCE.materialMineCost;
+    labor = BALANCE.materialMineLaborCost;
+    currentCount = state.materialMines;
+    limit = BALANCE.materialMineLimit;
+  } else if (type === 'solarFactory') {
+    cost = BALANCE.solarFactoryCost;
+    labor = BALANCE.solarFactoryLaborCost;
+    currentCount = state.solarFactories;
+    limit = BALANCE.solarFactoryLimit;
+  } else if (type === 'robotFactory') {
+    cost = BALANCE.robotFactoryCost;
+    labor = BALANCE.robotFactoryLaborCost;
+    currentCount = state.robotFactories;
+    limit = BALANCE.robotFactoryLimit;
+  } else if (type === 'gpuFactory') {
+    cost = BALANCE.gpuFactoryCost;
+    labor = BALANCE.gpuFactoryLaborCost;
+    currentCount = state.gpuFactories;
+    limit = BALANCE.gpuFactoryLimit;
+  } else if (type === 'rocketFactory') {
+    cost = BALANCE.rocketFactoryCost;
+    labor = BALANCE.rocketFactoryLaborCost;
+    currentCount = state.rocketFactories;
+    limit = BALANCE.rocketFactoryLimit;
+  } else if (type === 'gpuSatelliteFactory') {
+    cost = BALANCE.gpuSatelliteFactoryCost;
+    labor = BALANCE.gpuSatelliteFactoryLaborCost;
+    currentCount = state.gpuSatelliteFactories;
+    limit = BALANCE.gpuSatelliteFactoryLimit;
+  }
+  
+  if (currentCount + amountB > toBigInt(limit)) return false; // Limit check
 
-  state.funds -= cost;
-  state.wafers += amountB;
+  const totalCost = mulB(amountB, cost);
+  const totalLabor = mulB(amountB, labor);
+  
+  if (state.funds < totalCost) return false;
+  if (state.labor < totalLabor) return false;
+  
+  state.funds -= totalCost;
+  state.labor -= totalLabor;
+  
+  if (type === 'materialMine') state.materialMines += amountB;
+  else if (type === 'solarFactory') state.solarFactories += amountB;
+  else if (type === 'robotFactory') state.robotFactories += amountB;
+  else if (type === 'gpuFactory') state.gpuFactories += amountB;
+  else if (type === 'rocketFactory') state.rocketFactories += amountB;
+  else if (type === 'gpuSatelliteFactory') state.gpuSatelliteFactories += amountB;
+  
   return true;
 }
-
-export function buySilicon(state: GameState, amount: number): boolean {
-  const amountB = toBigInt(amount);
-  const cost = mulB(amountB, BALANCE.siliconCost);
-  if (state.funds < cost) return false;
-
-  state.funds -= cost;
-  state.silicon += amountB;
-  return true;
-}
-
-export function buildFab(state: GameState, amount: number = 1): boolean {
-  const amountB = toBigInt(amount);
-  const cost = mulB(amountB, BALANCE.fabCost);
-  const laborCost = mulB(amountB, BALANCE.fabLaborCost);
-  if (state.funds < cost) return false;
-  if (state.labor < laborCost) return false;
-
-  state.funds -= cost;
-  state.labor -= laborCost;
-  state.waferFabs += amountB;
-  return true;
-}
-
-export function buildSiliconMine(state: GameState, amount: number = 1): boolean {
-  const amountB = toBigInt(amount);
-  const cost = mulB(amountB, BALANCE.siliconMineCost);
-  const laborCost = mulB(amountB, BALANCE.siliconMineLaborCost);
-  if (state.funds < cost) return false;
-  if (state.labor < laborCost) return false;
-
-  state.funds -= cost;
-  state.labor -= laborCost;
-  state.siliconMines += amountB;
-  return true;
-}
-
-export function buildRobotFactory(state: GameState, amount: number = 1): boolean {
-  const amountB = toBigInt(amount);
-  const cost = mulB(amountB, BALANCE.robotFactoryCost);
-  const laborCost = mulB(amountB, BALANCE.robotFactoryLaborCost);
-  if (state.funds < cost) return false;
-  if (state.labor < laborCost) return false;
-
-  state.funds -= cost;
-  state.labor -= laborCost;
-  state.robotFactories += amountB;
-  return true;
-}
-
-export function buyRobot(state: GameState, amount: number): boolean {
-  const amountB = toBigInt(amount);
-  const cost = mulB(amountB, BALANCE.robotCost);
-  if (state.funds < cost) return false;
-
-  state.funds -= cost;
-  state.robots += amountB;
-  return true;
-}
-
-

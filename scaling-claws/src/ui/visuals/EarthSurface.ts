@@ -1,9 +1,11 @@
 import type { GameState } from '../../game/GameState.ts';
-import { fromBigInt } from '../../game/utils.ts';
+import { fromBigInt, scaleBigInt } from '../../game/utils.ts';
 import {
   datacenterBuildingSvg, gasPlantSvg, nuclearPlantSvg, solarFarmSvg,
   rocketSiloSvg, robotFactorySvg, siliconMineSvg, waferFabSvg,
 } from '../../assets/sprites.ts';
+
+// Re-using waferFabSvg for GPU Factory for now
 
 type ZoomLevel = 'zoom-1' | 'zoom-2' | 'zoom-3' | 'zoom-4';
 
@@ -22,7 +24,7 @@ export class EarthSurface {
   private isVisible: boolean = false;
 
   // Track rendered counts to avoid DOM rebuild
-  private renderedCounts = {
+  private renderedCounts: Record<string, number> = {
     datacenter: 0,
     gas: 0,
     nuclear: 0,
@@ -30,7 +32,7 @@ export class EarthSurface {
     rocket: 0,
     robotFactory: 0,
     mine: 0,
-    fab: 0,
+    gpuFactory: 0,
   };
 
   constructor(container: HTMLElement) {
@@ -85,14 +87,20 @@ export class EarthSurface {
     if (!this.isVisible) return;
 
     // Add new buildings (never remove — incremental game)
-    this.syncBuildings(state, 'datacenter', totalDCs, datacenterBuildingSvg);
-    this.syncBuildings(state, 'gas', Math.floor(fromBigInt(state.gasPlants)), gasPlantSvg);
-    this.syncBuildings(state, 'nuclear', Math.floor(fromBigInt(state.nuclearPlants)), nuclearPlantSvg);
-    this.syncBuildings(state, 'solar', Math.floor(fromBigInt(state.solarFarms)), solarFarmSvg);
-    this.syncBuildings(state, 'rocket', Math.floor(fromBigInt(state.rockets)), rocketSiloSvg);
-    this.syncBuildings(state, 'robotFactory', Math.floor(fromBigInt(state.robotFactories)), robotFactorySvg);
-    this.syncBuildings(state, 'mine', Math.floor(fromBigInt(state.siliconMines)), siliconMineSvg);
-    this.syncBuildings(state, 'fab', Math.floor(fromBigInt(state.waferFabs)), waferFabSvg);
+    this.syncBuildings('datacenter', totalDCs, datacenterBuildingSvg);
+    this.syncBuildings('gas', Math.floor(fromBigInt(state.gasPlants)), gasPlantSvg);
+    this.syncBuildings('nuclear', Math.floor(fromBigInt(state.nuclearPlants)), nuclearPlantSvg);
+    this.syncBuildings('solar', Math.floor(fromBigInt(state.solarFarms)), solarFarmSvg);
+    
+    // Use Rocket Factory count? Or Rockets? Usually Silos = Rockets. 
+    // But rockets are inventory now. Let's show Rocket Factories.
+    // Or keep Rockets as Silos? "Rocket factory makes rockets". 
+    // I'll show Rocket Factories as "rocketSilo".
+    this.syncBuildings('rocket', Math.floor(fromBigInt(state.rocketFactories)), rocketSiloSvg);
+    
+    this.syncBuildings('robotFactory', Math.floor(fromBigInt(state.robotFactories)), robotFactorySvg);
+    this.syncBuildings('mine', Math.floor(fromBigInt(state.siliconMines)), siliconMineSvg);
+    this.syncBuildings('gpuFactory', Math.floor(fromBigInt(state.gpuFactories)), waferFabSvg);
 
     // Update zoom level based on total building count
     const totalBuildings = this.buildings.length;
@@ -108,8 +116,8 @@ export class EarthSurface {
     }
   }
 
-  private syncBuildings(_state: GameState, type: keyof typeof this.renderedCounts, count: number, svg: string): void {
-    const current = this.renderedCounts[type];
+  private syncBuildings(type: string, count: number, svg: string): void {
+    const current = this.renderedCounts[type] || 0;
     // Cap visual buildings at a reasonable number
     const target = Math.min(count, 6);
 

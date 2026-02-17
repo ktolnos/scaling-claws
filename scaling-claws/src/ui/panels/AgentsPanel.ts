@@ -2,7 +2,7 @@ import type { GameState } from '../../game/GameState.ts';
 import { getTotalAssignedAgents } from '../../game/GameState.ts';
 import type { Panel } from '../PanelManager.ts';
 import { BALANCE, getNextTier } from '../../game/BalanceConfig.ts';
-import { formatMoney, formatNumber, mulB, fromBigInt, scaleBigInt } from '../../game/utils.ts';
+import { formatMoney, formatNumber, mulB, fromBigInt } from '../../game/utils.ts';
 import { buyMicMini, goSelfHosted, upgradeTier, hireAgent } from '../../game/systems/ComputeSystem.ts';
 import { flashElement } from '../UIUtils.ts';
 
@@ -376,7 +376,7 @@ export class AgentsPanel implements Panel {
     this.totalCostEl.textContent = 'Income potential: ' + formatMoney(state.incomePerMin) + '/min';
 
     // Go Self-Hosted
-    const minGpus = scaleBigInt(BigInt(BALANCE.models[0].minGpus));
+    const minGpus = BALANCE.models[0].minGpus;
     const gpuCount = minGpus > totalAgents ? minGpus : totalAgents;
     const gpuCost = mulB(gpuCount, BALANCE.gpuCost);
     if (!state.isPostGpuTransition && state.intelligence >= BALANCE.selfHostedUnlockIntel) {
