@@ -109,7 +109,7 @@ export function emojiHtml(key: UiEmojiKey): string {
   return `<span class="emoji-token">${UI_EMOJI[key]}</span>`;
 }
 
-export function labelWithEmojiHtml(key: UiEmojiKey, label: string): string {
+function labelWithEmojiHtml(key: UiEmojiKey, label: string): string {
   return `${emojiHtml(key)} ${label}`;
 }
 

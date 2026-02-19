@@ -11,6 +11,7 @@ import {
   getAvailableResearch, purchaseResearch, canPurchaseResearch,
 } from '../../game/systems/ResearchSystem.ts';
 import { BulkBuyGroup } from '../components/BulkBuyGroup.ts';
+import { createPanelDivider, createPanelScaffold } from '../components/PanelScaffold.ts';
 import { emojiHtml, moneyWithEmojiHtml, resourceLabelHtml } from '../emoji.ts';
 
 // --- Pre-built sub-section refs ---
@@ -66,19 +67,13 @@ export class TrainingPanel implements Panel {
 
   constructor(state: GameState) {
     this.state = state;
-    this.el = document.createElement('div');
-    this.el.className = 'panel';
+    const { panel } = createPanelScaffold('TRAINING & RESEARCH');
+    this.el = panel;
     this.build();
   }
 
   private build(): void {
-    const header = document.createElement('div');
-    header.className = 'panel-header';
-    header.textContent = 'TRAINING & RESEARCH';
-    this.el.appendChild(header);
-
-    const body = document.createElement('div');
-    body.className = 'panel-body';
+    const body = this.el.querySelector('.panel-body') as HTMLDivElement;
 
     // Current model
     const modelRow = document.createElement('div');
@@ -93,7 +88,7 @@ export class TrainingPanel implements Panel {
     modelRow.appendChild(this.currentModelEl);
     body.appendChild(modelRow);
 
-    body.appendChild(this.createDivider());
+    body.appendChild(createPanelDivider());
 
     // Training section title
     const trainTitle = document.createElement('div');
@@ -119,7 +114,6 @@ export class TrainingPanel implements Panel {
     this.buildResearchSection(this.researchSection);
     body.appendChild(this.researchSection);
 
-    this.el.appendChild(body);
   }
 
   // --- Build helpers ---
@@ -243,7 +237,7 @@ export class TrainingPanel implements Panel {
   }
 
   private buildResearchSection(container: HTMLDivElement): void {
-    const divider = this.createDivider();
+    const divider = createPanelDivider();
     container.appendChild(divider);
 
     const title = document.createElement('div');
@@ -261,12 +255,6 @@ export class TrainingPanel implements Panel {
     this.researchDoneEl.style.color = 'var(--text-muted)';
     this.researchDoneEl.style.padding = '4px 0';
     container.appendChild(this.researchDoneEl);
-  }
-
-  private createDivider(): HTMLHRElement {
-    const hr = document.createElement('hr');
-    hr.className = 'panel-divider';
-    return hr;
   }
 
   // --- Update ---

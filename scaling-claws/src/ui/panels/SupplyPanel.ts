@@ -1,9 +1,11 @@
-import type { GameState, FacilityId, LocationId, SupplyResourceId, TransportPayloadId, TransportRouteId } from '../../game/GameState.ts';
+import type { GameState, FacilityId, LocationId, SupplyResourceId } from '../../game/GameState.ts';
 import type { Panel } from '../PanelManager.ts';
 import { BALANCE } from '../../game/BalanceConfig.ts';
 import { formatNumber, fromBigInt, toBigInt } from '../../game/utils.ts';
-import { buildFacility, canBuildFacility } from '../../game/systems/SupplySystem.ts';
+import { buildFacility, canBuildFacility, isFacilityUnlocked as isFacilityUnlockedForLocation } from '../../game/systems/SupplySystem.ts';
+import { estimateTransportRockets, getTransportRouteSource } from '../../game/systems/SpaceRules.ts';
 import { BulkBuyGroup } from '../components/BulkBuyGroup.ts';
+import { createPanelDivider, createPanelScaffold } from '../components/PanelScaffold.ts';
 import { emojiHtml, locationLabelHtml, resourceLabelHtml } from '../emoji.ts';
 
 interface ResourceCellRefs {
@@ -63,19 +65,16 @@ export class SupplyPanel implements Panel {
 
   constructor(state: GameState) {
     this.state = state;
-    this.el = document.createElement('div');
-    this.el.className = 'panel supply-panel';
+    const { panel } = createPanelScaffold('SUPPLY CHAIN', {
+      panelClassName: 'panel supply-panel',
+      bodyClassName: 'panel-body panel-body-tight',
+    });
+    this.el = panel;
     this.buildBase();
   }
 
   private buildBase(): void {
-    const header = document.createElement('div');
-    header.className = 'panel-header';
-    header.textContent = 'SUPPLY CHAIN';
-    this.el.appendChild(header);
-
-    this.body = document.createElement('div');
-    this.body.className = 'panel-body panel-body-tight';
+    this.body = this.el.querySelector('.panel-body') as HTMLDivElement;
 
     this.resourcesSection = document.createElement('div');
     this.resourcesSection.className = 'panel-section';
@@ -85,50 +84,14 @@ export class SupplyPanel implements Panel {
     this.facilitiesSection.style.gap = '2px';
 
     this.body.appendChild(this.resourcesSection);
-    this.body.appendChild(this.createDivider());
+    this.body.appendChild(createPanelDivider());
     this.body.appendChild(this.facilitiesSection);
-
-    this.el.appendChild(this.body);
-  }
-
-  private createDivider(): HTMLHRElement {
-    const hr = document.createElement('hr');
-    hr.className = 'panel-divider';
-    return hr;
   }
 
   private getVisibleLocations(state: GameState): LocationId[] {
     if (state.completedResearch.includes('payloadToMercury')) return ['earth', 'moon', 'mercury'];
     if (state.completedResearch.includes('payloadToMoon')) return ['earth', 'moon'];
     return ['earth'];
-  }
-
-  private isFacilityUnlocked(state: GameState, location: LocationId, facility: FacilityId): boolean {
-    if (location === 'earth') {
-      if (facility === 'materialMine') return true;
-      if (facility === 'solarFactory') return state.completedResearch.includes('solarTechnology');
-      if (facility === 'robotFactory') return state.completedResearch.includes('robotics1');
-      if (facility === 'gpuFactory') return state.completedResearch.includes('chipManufacturing');
-      if (facility === 'rocketFactory') return state.completedResearch.includes('rocketry');
-      if (facility === 'gpuSatelliteFactory') return state.completedResearch.includes('orbitalLogistics');
-      return false;
-    }
-
-    if (location === 'moon') {
-      if (!state.completedResearch.includes('payloadToMoon')) return false;
-      if (facility === 'materialMine') return state.completedResearch.includes('moonMineEngineering');
-      if (facility === 'solarFactory') return state.completedResearch.includes('moonSolarManufacturing');
-      if (facility === 'robotFactory') return state.completedResearch.includes('robotics1');
-      if (facility === 'gpuFactory') return state.completedResearch.includes('moonChipManufacturing');
-      if (facility === 'rocketFactory') return state.completedResearch.includes('moonRocketry');
-      if (facility === 'gpuSatelliteFactory') return state.completedResearch.includes('moonSatelliteManufacturing');
-      if (facility === 'massDriver') return state.completedResearch.includes('moonMassDrivers');
-      return false;
-    }
-
-    // Mercury: all facilities unlocked together.
-    if (!state.completedResearch.includes('payloadToMercury')) return false;
-    return true;
   }
 
   private isResourceUnlocked(state: GameState, location: LocationId, resource: SupplyResourceId): boolean {
@@ -180,35 +143,12 @@ export class SupplyPanel implements Panel {
     return null;
   }
 
-  private ensurePausedFacilitiesState(): void {
-    const stateAny = this.state as any;
-    if (!stateAny.pausedFacilities) {
-      stateAny.pausedFacilities = {
-        materialMine: false,
-        solarFactory: false,
-        robotFactory: false,
-        gpuFactory: false,
-        rocketFactory: false,
-        gpuSatelliteFactory: false,
-        massDriver: false,
-      } as Record<FacilityId, boolean>;
-      return;
-    }
-    const paused = stateAny.pausedFacilities as Record<string, boolean>;
-    const ids: FacilityId[] = ['materialMine', 'solarFactory', 'robotFactory', 'gpuFactory', 'rocketFactory', 'gpuSatelliteFactory', 'massDriver'];
-    for (const id of ids) {
-      if (typeof paused[id] !== 'boolean') paused[id] = false;
-    }
-  }
-
   private isFacilityPaused(facility: FacilityId): boolean {
-    this.ensurePausedFacilitiesState();
-    return ((this.state as any).pausedFacilities as Record<FacilityId, boolean>)[facility] === true;
+    return this.state.pausedFacilities[facility] === true;
   }
 
   private setFacilityPaused(facility: FacilityId, paused: boolean): void {
-    this.ensurePausedFacilitiesState();
-    ((this.state as any).pausedFacilities as Record<FacilityId, boolean>)[facility] = paused;
+    this.state.pausedFacilities[facility] = paused;
   }
 
   private updatePauseButton(facility: FacilityId): void {
@@ -229,8 +169,9 @@ export class SupplyPanel implements Panel {
 
     const inFlight = state.transportBatches || [];
     for (const batch of inFlight) {
-      if (this.getRouteSourceLocation(batch.route) !== location) continue;
-      busy += batch.launchedRockets ?? this.estimateBatchRockets(state, batch.route, batch.payload, batch.amount);
+      if (getTransportRouteSource(batch.route) !== location) continue;
+      const estimated = estimateTransportRockets(state, batch.route, batch.payload, batch.amount, batch.launchedRockets);
+      busy += toBigInt(estimated);
     }
 
     const returns = state.rocketReturnBatches || [];
@@ -238,39 +179,6 @@ export class SupplyPanel implements Panel {
       if (batch.location === location) busy += batch.amount;
     }
     return busy;
-  }
-
-  private getRouteSourceLocation(route: TransportRouteId): LocationId {
-    if (route === 'moonMercury') return 'moon';
-    if (route === 'mercuryOrbit') return 'mercury';
-    return 'earth';
-  }
-
-  private getPayloadWeight(payload: TransportPayloadId): number {
-    if (payload === 'robots') return BALANCE.robotWeight;
-    if (payload === 'solarPanels') return BALANCE.solarPanelWeight;
-    if (payload === 'gpus') return BALANCE.gpuWeight;
-    return BALANCE.gpuSatelliteWeight;
-  }
-
-  private getRouteCapacityKg(state: GameState, route: TransportRouteId): number {
-    if (route === 'earthOrbit') return BALANCE.rocketCapacityLowOrbit;
-    if (route === 'earthMoon') return BALANCE.rocketCapacityLunar;
-    if (route === 'mercuryOrbit') {
-      const massDrivers = fromBigInt(state.locationFacilities.mercury.massDriver);
-      return BALANCE.rocketCapacityLowOrbit * (1 + (massDrivers * BALANCE.massDriverCapacityMultiplier));
-    }
-    const moonMassDrivers = fromBigInt(state.locationFacilities.moon.massDriver);
-    return BALANCE.rocketCapacityMercury * (1 + (moonMassDrivers * BALANCE.massDriverCapacityMultiplier));
-  }
-
-  private estimateBatchRockets(state: GameState, route: TransportRouteId, payload: TransportPayloadId, amount: bigint): bigint {
-    const capacityKg = this.getRouteCapacityKg(state, route);
-    if (capacityKg <= 0) return 0n;
-    const amountUnits = Math.floor(fromBigInt(amount));
-    if (amountUnits <= 0) return 0n;
-    const massKg = amountUnits * this.getPayloadWeight(payload);
-    return toBigInt(Math.max(0, Math.ceil(massKg / capacityKg)));
   }
 
   private getFacilityInfo(facility: FacilityId): { price: string; output: string } {
@@ -464,7 +372,7 @@ export class SupplyPanel implements Panel {
     }
 
     for (const facility of FACILITY_ORDER) {
-      const anyUnlocked = this.visibleLocations.some((location) => this.isFacilityUnlocked(state, location, facility.id));
+      const anyUnlocked = this.visibleLocations.some((location) => isFacilityUnlockedForLocation(state, location, facility.id));
       if (!anyUnlocked) continue;
 
       const row = this.makeGridRow(this.visibleLocations.length, facilityLabelMinPx, facilityLabelFr);
@@ -540,7 +448,7 @@ export class SupplyPanel implements Panel {
 
       for (const location of this.visibleLocations) {
         const key = `${facility.id}:${location}`;
-        const unlocked = this.isFacilityUnlocked(state, location, facility.id);
+        const unlocked = isFacilityUnlockedForLocation(state, location, facility.id);
         const unavailableByDesign = facility.id === 'massDriver' && location === 'earth';
 
         const cell = document.createElement('div');

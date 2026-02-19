@@ -1,53 +1,39 @@
 import type { GameState, LocationId, TransportPayloadId, TransportRouteId } from '../GameState.ts';
 import { BALANCE } from '../BalanceConfig.ts';
 import { toBigInt, mulB, fromBigInt } from '../utils.ts';
-import { buildFacility } from './SupplySystem.ts';
 import { reconcileEarthGpuInstallation } from './GpuState.ts';
+import {
+  estimateTransportRockets,
+  getTransportPayloadWeight,
+  getTransportRouteCapacityKg,
+  getTransportRouteSource,
+  isTransportRouteUnlocked,
+} from './SpaceRules.ts';
 
 function orderKey(route: TransportRouteId, payload: TransportPayloadId): string {
   return `${route}:${payload}`;
 }
 
 function ensureLogisticsState(state: GameState): void {
-  if (!state.logisticsReservedRockets) {
-    state.logisticsReservedRockets = { earthOrbit: 0n, earthMoon: 0n, moonMercury: 0n, mercuryOrbit: 0n };
+  if (
+    !state.logisticsReservedRockets ||
+    !state.logisticsOrders ||
+    !state.logisticsSent ||
+    !state.logisticsInTransit ||
+    !state.transportBatches ||
+    !state.rocketReturnBatches
+  ) {
+    throw new Error('Logistics state is missing. Start from a fresh save.');
   }
-  state.logisticsReservedRockets.earthOrbit ??= 0n;
-  state.logisticsReservedRockets.earthMoon ??= 0n;
-  state.logisticsReservedRockets.moonMercury ??= 0n;
-  state.logisticsReservedRockets.mercuryOrbit ??= 0n;
-  if ((state as any).mercuryLaunchCarry === undefined) (state as any).mercuryLaunchCarry = 0;
-  if ((state as any).dysonSwarmSatellites === undefined) (state as any).dysonSwarmSatellites = 0n;
-  if ((state as any).dysonSwarmPowerMW === undefined) (state as any).dysonSwarmPowerMW = 0n;
-}
-
-function routeUnlocked(state: GameState, route: TransportRouteId): boolean {
-  if (route === 'earthOrbit') return state.completedResearch.includes('orbitalLogistics');
-  if (route === 'earthMoon') return state.completedResearch.includes('payloadToMoon');
-  if (route === 'mercuryOrbit') return state.completedResearch.includes('payloadToMercury');
-  return state.completedResearch.includes('payloadToMercury');
-}
-
-function getPayloadWeight(payload: TransportPayloadId): number {
-  if (payload === 'robots') return BALANCE.robotWeight;
-  if (payload === 'solarPanels') return BALANCE.solarPanelWeight;
-  if (payload === 'gpus') return BALANCE.gpuWeight;
-  return BALANCE.gpuSatelliteWeight;
-}
-
-function getSourceLocation(route: TransportRouteId): LocationId {
-  if (route === 'moonMercury') return 'moon';
-  if (route === 'mercuryOrbit') return 'mercury';
-  return 'earth';
 }
 
 function getRocketPool(state: GameState, route: TransportRouteId): bigint {
-  const source = getSourceLocation(route);
+  const source = getTransportRouteSource(route);
   return state.locationResources[source].rockets;
 }
 
 function setRocketPool(state: GameState, route: TransportRouteId, value: bigint): void {
-  const source = getSourceLocation(route);
+  const source = getTransportRouteSource(route);
   state.locationResources[source].rockets = value;
 }
 
@@ -88,21 +74,6 @@ function getReturnMs(route: TransportRouteId): number {
   return BALANCE.earthRocketReturnMs;
 }
 
-function getRouteCapacityKg(state: GameState, route: TransportRouteId): number {
-  if (route === 'earthOrbit') return BALANCE.rocketCapacityLowOrbit;
-  if (route === 'earthMoon') return BALANCE.rocketCapacityLunar;
-  const massDriverPaused = (state as any).pausedFacilities?.massDriver === true;
-  if (route === 'mercuryOrbit') {
-    const massDrivers = massDriverPaused ? 0 : fromBigInt(state.locationFacilities.mercury.massDriver);
-    const bonus = 1 + (massDrivers * BALANCE.massDriverCapacityMultiplier);
-    return BALANCE.rocketCapacityLowOrbit * bonus;
-  }
-
-  const massDrivers = massDriverPaused ? 0 : fromBigInt(state.locationFacilities.moon.massDriver);
-  const bonus = 1 + (massDrivers * BALANCE.massDriverCapacityMultiplier);
-  return BALANCE.rocketCapacityMercury * bonus;
-}
-
 function routeMatchesSource(route: TransportRouteId, source: LocationId): boolean {
   if (source === 'earth') return route === 'earthOrbit' || route === 'earthMoon';
   if (source === 'moon') return route === 'moonMercury';
@@ -116,29 +87,23 @@ function getBatchRocketCount(
   amount: bigint,
   launchedRockets?: bigint,
 ): number {
-  if (launchedRockets !== undefined) return Math.max(0, Math.floor(fromBigInt(launchedRockets)));
-  const capacityKg = getRouteCapacityKg(state, route);
-  if (capacityKg <= 0) return 0;
-  const units = Math.floor(fromBigInt(amount));
-  if (units <= 0) return 0;
-  const massKg = units * getPayloadWeight(payload);
-  return Math.max(0, Math.ceil(massKg / capacityKg));
+  return estimateTransportRockets(state, route, payload, amount, launchedRockets);
 }
 
 function getSourceRocketFleetCount(state: GameState, source: LocationId): number {
   let total = Math.floor(fromBigInt(state.locationResources[source].rockets));
 
-  const reserved = state.logisticsReservedRockets || { earthOrbit: 0n, earthMoon: 0n, moonMercury: 0n, mercuryOrbit: 0n };
-  if (source === 'earth') total += Math.floor(fromBigInt((reserved.earthOrbit || 0n) + (reserved.earthMoon || 0n)));
-  if (source === 'moon') total += Math.floor(fromBigInt(reserved.moonMercury || 0n));
-  if (source === 'mercury') total += Math.floor(fromBigInt(reserved.mercuryOrbit || 0n));
+  const reserved = state.logisticsReservedRockets;
+  if (source === 'earth') total += Math.floor(fromBigInt(reserved.earthOrbit + reserved.earthMoon));
+  if (source === 'moon') total += Math.floor(fromBigInt(reserved.moonMercury));
+  if (source === 'mercury') total += Math.floor(fromBigInt(reserved.mercuryOrbit));
 
-  for (const batch of state.transportBatches || []) {
+  for (const batch of state.transportBatches) {
     if (!routeMatchesSource(batch.route, source)) continue;
     total += getBatchRocketCount(state, batch.route, batch.payload, batch.amount, batch.launchedRockets);
   }
 
-  for (const batch of state.rocketReturnBatches || []) {
+  for (const batch of state.rocketReturnBatches) {
     if (batch.location !== source) continue;
     total += Math.max(0, Math.floor(fromBigInt(batch.amount)));
   }
@@ -147,7 +112,7 @@ function getSourceRocketFleetCount(state: GameState, source: LocationId): number
 }
 
 function getRouteLaunchesPerMin(state: GameState, route: TransportRouteId): number {
-  const source = getSourceLocation(route);
+  const source = getTransportRouteSource(route);
   const rockets = getSourceRocketFleetCount(state, source);
   return Math.max(10, rockets * 2);
 }
@@ -201,7 +166,7 @@ function processDeliveries(state: GameState, now: number): void {
 }
 
 function launchRoute(state: GameState, route: TransportRouteId, dtMs: number, now: number): void {
-  if (!routeUnlocked(state, route)) return;
+  if (!isTransportRouteUnlocked(state, route)) return;
 
   const payloads: TransportPayloadId[] = route === 'earthOrbit'
     ? ['gpuSatellites']
@@ -248,7 +213,7 @@ function launchRoute(state: GameState, route: TransportRouteId, dtMs: number, no
   launchesToUse = Math.min(launchesToUse, Math.floor(rocketsAvailable));
   if (launchesToUse <= 0) return;
 
-  const capacityKg = getRouteCapacityKg(state, route);
+  const capacityKg = getTransportRouteCapacityKg(state, route);
 
   let rocketsConsumed = 0;
   let launchesRemaining = launchesToUse;
@@ -269,7 +234,7 @@ function launchRoute(state: GameState, route: TransportRouteId, dtMs: number, no
     const pendingUnits = fromBigInt(pending);
     if (pendingUnits <= 0) continue;
 
-    const weight = getPayloadWeight(payload);
+    const weight = getTransportPayloadWeight(payload);
     const maxUnitsByMass = Math.floor((share * capacityKg) / weight);
     const movedUnits = Math.max(0, Math.min(maxUnitsByMass, Math.floor(pendingUnits)));
     if (movedUnits <= 0) continue;
@@ -303,7 +268,7 @@ function launchRoute(state: GameState, route: TransportRouteId, dtMs: number, no
 }
 
 function estimateRocketsNeededForPending(state: GameState, route: TransportRouteId): number {
-  if (!routeUnlocked(state, route)) return 0;
+  if (!isTransportRouteUnlocked(state, route)) return 0;
 
   const payloads: TransportPayloadId[] = route === 'earthOrbit'
     ? ['gpuSatellites']
@@ -313,7 +278,7 @@ function estimateRocketsNeededForPending(state: GameState, route: TransportRoute
       ? ['gpus', 'solarPanels', 'robots']
       : ['robots'];
 
-  const capacityKg = getRouteCapacityKg(state, route);
+  const capacityKg = getTransportRouteCapacityKg(state, route);
   if (capacityKg <= 0) return 0;
 
   let rockets = 0;
@@ -321,14 +286,14 @@ function estimateRocketsNeededForPending(state: GameState, route: TransportRoute
     const key = orderKey(route, payload);
     const pendingUnits = Math.floor(fromBigInt(state.logisticsOrders[key] || 0n));
     if (pendingUnits <= 0) continue;
-    const weight = getPayloadWeight(payload);
+    const weight = getTransportPayloadWeight(payload);
     rockets += Math.ceil((pendingUnits * weight) / capacityKg);
   }
   return rockets;
 }
 
 function reserveRocketsForRoute(state: GameState, route: TransportRouteId): void {
-  if (!routeUnlocked(state, route)) return;
+  if (!isTransportRouteUnlocked(state, route)) return;
   const needed = estimateRocketsNeededForPending(state, route);
   const reservedNow = Math.floor(fromBigInt(state.logisticsReservedRockets[route] || 0n));
 
@@ -355,21 +320,8 @@ function reserveRocketsForRoute(state: GameState, route: TransportRouteId): void
   state.logisticsReservedRockets[route] = (state.logisticsReservedRockets[route] || 0n) + toBigInt(reserve);
 }
 
-function syncLegacy(state: GameState): void {
-  state.gpuCount = state.locationResources.earth.gpus;
-  state.rockets = state.locationResources.earth.rockets;
-  state.robots = state.locationResources.earth.robots;
-  state.solarPanels = state.locationResources.earth.solarPanels;
-  state.gpuSatellites = state.locationResources.earth.gpuSatellites;
-  state.lunarRobots = state.locationResources.moon.robots;
-  state.lunarGPUs = state.locationResources.moon.installedGpus;
-  state.lunarSolarPanels = state.locationResources.moon.installedSolarPanels;
-  state.mercuryRobots = state.locationResources.mercury.robots;
-  reconcileEarthGpuInstallation(state);
-}
-
 function autoQueueMercuryOrbitPayload(state: GameState): void {
-  if (!routeUnlocked(state, 'mercuryOrbit')) return;
+  if (!isTransportRouteUnlocked(state, 'mercuryOrbit')) return;
   const produced = state.locationResources.mercury.gpuSatellites;
   if (produced <= 0n) return;
 
@@ -380,7 +332,7 @@ function autoQueueMercuryOrbitPayload(state: GameState): void {
 }
 
 export function tickSpace(state: GameState, dtMs: number): void {
-  const now = Date.now();
+  const now = state.time;
   ensureLogisticsState(state);
 
   processReturns(state, now);
@@ -417,20 +369,15 @@ export function tickSpace(state: GameState, dtMs: number): void {
     state.mercuryMassTotal = BALANCE.mercuryBaseMassTotal;
   }
 
-  // Legacy visual/flags compatibility
-  state.lunarBase = state.completedResearch.includes('payloadToMoon');
-  state.mercuryBase = state.completedResearch.includes('payloadToMercury');
-  state.lunarMassDriverRate = fromBigInt(state.locationFacilities.moon.massDriver);
-
-  syncLegacy(state);
+  reconcileEarthGpuInstallation(state);
 }
 
 export function schedulePayload(state: GameState, route: TransportRouteId, payload: TransportPayloadId, amount: number): boolean {
-  if (!routeUnlocked(state, route)) return false;
+  if (!isTransportRouteUnlocked(state, route)) return false;
   if (amount <= 0) return false;
 
   const amountB = toBigInt(amount);
-  const source = state.locationResources[getSourceLocation(route)];
+  const source = state.locationResources[getTransportRouteSource(route)];
 
   if (route === 'earthOrbit' && payload !== 'gpuSatellites') return false;
   if (route === 'mercuryOrbit' && payload !== 'gpuSatellites') return false;
@@ -452,47 +399,8 @@ export function schedulePayload(state: GameState, route: TransportRouteId, paylo
   state.logisticsOrders[key] = (state.logisticsOrders[key] || 0n) + amountB;
   state.logisticsSent[key] = (state.logisticsSent[key] || 0n) + amountB;
 
-  syncLegacy(state);
+  reconcileEarthGpuInstallation(state);
   return true;
-}
-
-// Compatibility wrappers used by existing code
-export function launchSatellite(state: GameState, amount: number): boolean {
-  return schedulePayload(state, 'earthOrbit', 'gpuSatellites', amount);
-}
-
-export function launchLunarPayload(state: GameState, type: 'robot' | 'solar' | 'gpu', amount: number): boolean {
-  if (type === 'robot') return schedulePayload(state, 'earthMoon', 'robots', amount);
-  if (type === 'solar') return schedulePayload(state, 'earthMoon', 'solarPanels', amount);
-  return schedulePayload(state, 'earthMoon', 'gpus', amount);
-}
-
-export function buildLunarBase(state: GameState): boolean {
-  if (state.completedResearch.includes('payloadToMoon')) {
-    state.lunarBase = true;
-    return true;
-  }
-  return false;
-}
-
-export function buildMercuryBase(state: GameState): boolean {
-  if (state.completedResearch.includes('payloadToMercury')) {
-    state.mercuryBase = true;
-    return true;
-  }
-  return false;
-}
-
-export function buildMoonFacility(state: GameState, type: 'mine' | 'datacenter' | 'solarFactory' | 'gpuFactory' | 'massDriver' | 'rocketFactory' | 'gpuSatelliteFactory' | 'robotFactory', amount: number): boolean {
-  if (type === 'mine') return buildFacility(state, 'moon', 'materialMine', amount);
-  if (type === 'solarFactory') return buildFacility(state, 'moon', 'solarFactory', amount);
-  if (type === 'gpuFactory') return buildFacility(state, 'moon', 'gpuFactory', amount);
-  if (type === 'massDriver') return buildFacility(state, 'moon', 'massDriver', amount);
-  if (type === 'rocketFactory') return buildFacility(state, 'moon', 'rocketFactory', amount);
-  if (type === 'gpuSatelliteFactory') return buildFacility(state, 'moon', 'gpuSatelliteFactory', amount);
-  if (type === 'robotFactory') return buildFacility(state, 'moon', 'robotFactory', amount);
-  // datacenter not used in moon flow now
-  return false;
 }
 
 export function installSolarPanels(state: GameState, location: LocationId, amount: number): boolean {
@@ -512,7 +420,7 @@ export function installSolarPanels(state: GameState, location: LocationId, amoun
     state.locationResources.earth.solarPanels -= amountB;
     state.locationResources.earth.installedSolarPanels += amountB;
     state.locationResources.earth.labor -= laborCost;
-    syncLegacy(state);
+    reconcileEarthGpuInstallation(state);
     return true;
   }
 
@@ -528,7 +436,7 @@ export function installSolarPanels(state: GameState, location: LocationId, amoun
     state.locationResources.moon.solarPanels -= amountB;
     state.locationResources.moon.installedSolarPanels += amountB;
     state.locationResources.moon.labor -= laborCost;
-    syncLegacy(state);
+    reconcileEarthGpuInstallation(state);
     return true;
   }
 
@@ -548,12 +456,12 @@ export function installMoonGpus(state: GameState, amount: number): boolean {
   state.locationResources.moon.gpus -= amountB;
   state.locationResources.moon.installedGpus += amountB;
   state.locationResources.moon.labor -= laborCost;
-  syncLegacy(state);
+  reconcileEarthGpuInstallation(state);
   return true;
 }
 
 export function launchVonNeumannProbe(state: GameState): boolean {
-  if (!state.completedResearch.includes('vonNeumannProbes') && !state.completedResearch.includes('selfReplicating')) return false;
+  if (!state.completedResearch.includes('vonNeumannProbes')) return false;
   if (state.gameWon) return false;
 
   // Any launch-capable location can trigger the end.
@@ -567,6 +475,6 @@ export function launchVonNeumannProbe(state: GameState): boolean {
 
   state.gameWon = true;
   state.pendingFlavorTexts.push('"Von Neumann probe launch confirmed. Expansion is now irreversible."');
-  syncLegacy(state);
+  reconcileEarthGpuInstallation(state);
   return true;
 }

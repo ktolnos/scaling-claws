@@ -90,17 +90,17 @@ export class EarthSurface {
     this.syncBuildings('datacenter', totalDCs, datacenterBuildingSvg);
     this.syncBuildings('gas', Math.floor(fromBigInt(state.gasPlants)), gasPlantSvg);
     this.syncBuildings('nuclear', Math.floor(fromBigInt(state.nuclearPlants)), nuclearPlantSvg);
-    this.syncBuildings('solar', Math.floor(fromBigInt(state.solarFarms)), solarFarmSvg);
+    this.syncBuildings('solar', Math.floor(fromBigInt(state.locationResources.earth.installedSolarPanels)), solarFarmSvg);
     
     // Use Rocket Factory count? Or Rockets? Usually Silos = Rockets. 
     // But rockets are inventory now. Let's show Rocket Factories.
     // Or keep Rockets as Silos? "Rocket factory makes rockets". 
     // I'll show Rocket Factories as "rocketSilo".
-    this.syncBuildings('rocket', Math.floor(fromBigInt(state.rocketFactories)), rocketSiloSvg);
+    this.syncBuildings('rocket', Math.floor(fromBigInt(state.locationFacilities.earth.rocketFactory)), rocketSiloSvg);
     
-    this.syncBuildings('robotFactory', Math.floor(fromBigInt(state.robotFactories)), robotFactorySvg);
-    this.syncBuildings('mine', Math.floor(fromBigInt(state.materialMines)), siliconMineSvg);
-    this.syncBuildings('gpuFactory', Math.floor(fromBigInt(state.gpuFactories)), waferFabSvg);
+    this.syncBuildings('robotFactory', Math.floor(fromBigInt(state.locationFacilities.earth.robotFactory)), robotFactorySvg);
+    this.syncBuildings('mine', Math.floor(fromBigInt(state.locationFacilities.earth.materialMine)), siliconMineSvg);
+    this.syncBuildings('gpuFactory', Math.floor(fromBigInt(state.locationFacilities.earth.gpuFactory)), waferFabSvg);
 
     // Update zoom level based on total building count
     const totalBuildings = this.buildings.length;

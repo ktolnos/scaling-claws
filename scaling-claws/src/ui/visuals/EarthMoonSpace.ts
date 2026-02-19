@@ -18,7 +18,7 @@ export class EarthMoonSpace {
   private renderedSats: number = 0;
   private moonShown: boolean = false;
   private lunarBaseShown: boolean = false;
-  private lastMassDriverTime: number = 0;
+  private lastMassDriverTime: number = -Infinity;
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -81,7 +81,7 @@ export class EarthMoonSpace {
   }
 
   update(state: GameState): void {
-    const shouldShow = state.completedResearch.includes('spaceSystems1') && state.satellites > 0n;
+    const shouldShow = state.completedResearch.includes('orbitalLogistics') && state.satellites > 0n;
 
     if (shouldShow && !this.isVisible) {
       this.stageEl.classList.remove('hidden');
@@ -117,7 +117,7 @@ export class EarthMoonSpace {
     }
 
     // Show lunar base
-    if (state.lunarBase && !this.lunarBaseShown) {
+    if (state.completedResearch.includes('payloadToMoon') && !this.lunarBaseShown) {
       this.lunarBaseEl.style.display = '';
       // Add glowing dots on the moon
       for (let i = 0; i < 3; i++) {
@@ -131,9 +131,10 @@ export class EarthMoonSpace {
     }
 
     // Mass driver streaks (periodic animation)
-    if (state.lunarMassDriverRate > 0) {
-      const now = Date.now();
-      const interval = Math.max(1000, 60000 / state.lunarMassDriverRate);
+    const moonMassDriverRate = fromBigInt(state.locationFacilities.moon.massDriver);
+    if (moonMassDriverRate > 0) {
+      const now = state.time;
+      const interval = Math.max(1000, 60000 / moonMassDriverRate);
       if (now - this.lastMassDriverTime > interval) {
         this.fireMassDriver();
         this.lastMassDriverTime = now;

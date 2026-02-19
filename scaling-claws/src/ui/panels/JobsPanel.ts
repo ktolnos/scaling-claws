@@ -6,8 +6,10 @@ import type { JobType } from '../../game/BalanceConfig.ts';
 import { formatNumber, fromBigInt, scaleBigInt, mulB, divB, scaleB, toBigInt } from '../../game/utils.ts';
 import { ProgressBar } from '../components/ProgressBar.ts';
 import { BulkBuyGroup } from '../components/BulkBuyGroup.ts';
+import { createPanelScaffold } from '../components/PanelScaffold.ts';
 import { flashElement } from '../UIUtils.ts';
 import { moneyWithEmojiHtml, resourceLabelHtml, emojiHtml } from '../emoji.ts';
+import { getJobOutputAmount, getRobotLaborPerMin } from '../../game/systems/JobRules.ts';
 import {
   nudgeAgent,
   assignAgentsToJob, removeAgentsFromJob,
@@ -43,19 +45,13 @@ export class JobsPanel implements Panel {
 
   constructor(state: GameState) {
     this.state = state;
-    this.el = document.createElement('div');
-    this.el.className = 'panel';
+    const { panel } = createPanelScaffold('JOBS');
+    this.el = panel;
     this.build();
   }
 
   private build(): void {
-    const header = document.createElement('div');
-    header.className = 'panel-header';
-    header.textContent = 'JOBS';
-    this.el.appendChild(header);
-
-    const body = document.createElement('div');
-    body.className = 'panel-body';
+    const body = this.el.querySelector('.panel-body') as HTMLDivElement;
 
     this.jobListEl = document.createElement('div');
     this.jobListEl.className = 'job-list';
@@ -92,8 +88,6 @@ export class JobsPanel implements Panel {
         if (refs) flashElement(refs.row);
       }
     });
-
-    this.el.appendChild(body);
   }
 
   private createJobRow(jobType: JobType): JobRowRefs {
@@ -237,18 +231,13 @@ export class JobsPanel implements Panel {
   private getJobProductionPerMin(state: GameState, jobType: JobType): bigint {
     if (jobType === 'robotWorker') {
       const earthRobots = state.locationResources.earth.robots;
-      const laborMult = state.completedResearch.includes('robotics3')
-        ? BALANCE.robotLaborMultRobotics3
-        : state.completedResearch.includes('robotics2')
-          ? BALANCE.robotLaborMultRobotics2
-          : 1;
-      const perRobotPerMin = mulB(BALANCE.robotLaborPerMinBase, toBigInt(laborMult));
+      const perRobotPerMin = getRobotLaborPerMin(state);
       return mulB(perRobotPerMin, earthRobots);
     }
 
     const config = BALANCE.jobs[jobType];
     if (config.timeMs <= 0) return 0n;
-    const outputAmount = this.getJobOutputAmount(state, jobType, config.produces.amount);
+    const outputAmount = getJobOutputAmount(state, jobType, config.produces.amount);
 
     const singlePerMin = divB(mulB(outputAmount, scaleBigInt(60000n)), toBigInt(config.timeMs));
     if (config.workerType === 'human') {
@@ -264,14 +253,6 @@ export class JobsPanel implements Panel {
     let effectivePerAgent = scaleB(singlePerMin, state.agentEfficiency * state.intelligence);
     effectivePerAgent = mulB(effectivePerAgent, working);
     return effectivePerAgent;
-  }
-
-  private getJobOutputAmount(state: GameState, jobType: JobType, baseAmount: bigint): bigint {
-    if (jobType !== 'aiDataSynthesizer') return baseAmount;
-    let output = baseAmount;
-    if (state.completedResearch.includes('syntheticData2')) output *= 2n;
-    if (state.completedResearch.includes('syntheticData3')) output *= 2n;
-    return output;
   }
 
   private formatProductionTotal(resource: string, amountPerMin: bigint): string {
@@ -337,15 +318,10 @@ export class JobsPanel implements Panel {
 
       // Reward/resource display
       const { resource, amount } = config.produces;
-      const outputAmount = this.getJobOutputAmount(state, jobType, amount);
+      const outputAmount = getJobOutputAmount(state, jobType, amount);
       let baseLine = '';
       if (isRobotWorker) {
-        const laborMult = state.completedResearch.includes('robotics3')
-          ? BALANCE.robotLaborMultRobotics3
-          : state.completedResearch.includes('robotics2')
-            ? BALANCE.robotLaborMultRobotics2
-            : 1;
-        const perRobotPerMin = mulB(BALANCE.robotLaborPerMinBase, toBigInt(laborMult));
+        const perRobotPerMin = getRobotLaborPerMin(state);
         baseLine = `<span class="job-reward-main">${formatNumber(perRobotPerMin)} ${resourceLabelHtml('labor')} / m per robot</span>`;
       } else if (resource === 'funds' && amount > 0) {
         baseLine = `<span class="job-reward-main">${moneyWithEmojiHtml(outputAmount, 'funds')} / ${config.timeMs / 1000}s</span>`;

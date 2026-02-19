@@ -17,7 +17,6 @@ export class GameLoop {
   }
 
   start(): void {
-    this.state.lastTickTime = Date.now();
     this.intervalId = window.setInterval(
       () => this.tick(),
       BALANCE.tickIntervalMs,
@@ -25,9 +24,8 @@ export class GameLoop {
   }
 
   private tick(): void {
-    const now = Date.now();
-    const dt = Math.min(now - this.state.lastTickTime, 500); // Cap dt to prevent spiral
-    this.state.lastTickTime = now;
+    const dt = BALANCE.tickIntervalMs;
+    this.state.time += dt;
     this.state.tickCount++;
 
     // Reset breakdowns before systems run

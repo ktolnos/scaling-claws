@@ -5,6 +5,7 @@ import { BALANCE, getNextTier } from '../../game/BalanceConfig.ts';
 import { formatNumber, mulB, fromBigInt } from '../../game/utils.ts';
 import { buyMicMini, goSelfHosted, upgradeTier, hireAgent } from '../../game/systems/ComputeSystem.ts';
 import { flashElement } from '../UIUtils.ts';
+import { createPanelDivider, createPanelScaffold } from '../components/PanelScaffold.ts';
 import { emojiHtml, moneyWithEmojiHtml, resourceLabelHtml } from '../emoji.ts';
 
 export class AgentsPanel implements Panel {
@@ -16,12 +17,11 @@ export class AgentsPanel implements Panel {
   private subTierNameEl!: HTMLSpanElement;
   private subTierIntelEl!: HTMLSpanElement;
   private subTierCostEl!: HTMLSpanElement;
-  private nextTierInfoEl!: HTMLDivElement;
   private upgradeBtn!: HTMLButtonElement;
 
   // Agent Controls
   private agentCountEl!: HTMLSpanElement;
-  private unassignedCountEl!: HTMLSpanElement; // NEW
+  private unassignedCountEl!: HTMLSpanElement;
   private agentCostEl!: HTMLSpanElement;
   private incBtn!: HTMLButtonElement;
 
@@ -38,20 +38,13 @@ export class AgentsPanel implements Panel {
   constructor(state: GameState, onTransition?: () => void) {
     this.state = state;
     this.onTransition = onTransition ?? null;
-    this.el = document.createElement('div');
-    this.el.className = 'panel';
+    const { panel } = createPanelScaffold('AGENTS');
+    this.el = panel;
     this.build();
   }
 
   private build(): void {
-    // Header
-    const header = document.createElement('div');
-    header.className = 'panel-header';
-    header.textContent = 'AGENTS';
-    this.el.appendChild(header);
-
-    const body = document.createElement('div');
-    body.className = 'panel-body';
+    const body = this.el.querySelector('.panel-body') as HTMLDivElement;
 
     // --- Subscription Tier Section ---
     const tierSection = document.createElement('div');
@@ -93,11 +86,6 @@ export class AgentsPanel implements Panel {
     intelHint.style.marginTop = '4px';
     intelHint.textContent = 'Higher intelligence = faster job completion.';
     tierSection.appendChild(intelHint);
-
-    // Next Tier / Upgrade
-    this.nextTierInfoEl = document.createElement('div');
-    // Using a button, so this div might just hold extra info properly or we put button inside
-    this.nextTierInfoEl.style.display = 'none'; // Hidden, button will have text
 
     this.upgradeBtn = document.createElement('button');
     this.upgradeBtn.className = 'btn-buy';
@@ -195,7 +183,7 @@ export class AgentsPanel implements Panel {
 
     // --- Hardware ---
     // Divider
-    body.appendChild(this.createDivider());
+    body.appendChild(createPanelDivider());
 
     // CPU Cores
     const coresRow = document.createElement('div');
@@ -238,7 +226,7 @@ export class AgentsPanel implements Panel {
     body.appendChild(micRow);
 
     // Divider
-    body.appendChild(this.createDivider());
+    body.appendChild(createPanelDivider());
 
     // Summary
     const summary = document.createElement('div');
@@ -293,14 +281,6 @@ export class AgentsPanel implements Panel {
     this.selfHostedSection.appendChild(this.selfHostedCostEl);
     this.selfHostedSection.appendChild(this.selfHostedBtn);
     body.appendChild(this.selfHostedSection);
-
-    this.el.appendChild(body);
-  }
-
-  private createDivider(): HTMLHRElement {
-    const hr = document.createElement('hr');
-    hr.className = 'panel-divider';
-    return hr;
   }
 
   update(state: GameState): void {
@@ -328,8 +308,6 @@ export class AgentsPanel implements Panel {
       
     } else {
       this.upgradeBtn.style.display = 'none';
-      // Or show "Max Tier" text? Removed nextTierInfoEl usage essentially, reusing button area or just hiding.
-      // If hiding, maybe show text.
     }
 
     // -- Agent Controls --

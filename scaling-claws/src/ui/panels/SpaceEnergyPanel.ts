@@ -5,6 +5,7 @@ import { formatMW, formatNumber, toBigInt, mulB, fromBigInt, scaleBigInt } from 
 import { buyGridPower, sellGridPower, buyGasPlant, buyNuclearPlant } from '../../game/systems/EnergySystem.ts';
 import { schedulePayload, installSolarPanels, installMoonGpus, launchVonNeumannProbe } from '../../game/systems/SpaceSystem.ts';
 import { BulkBuyGroup } from '../components/BulkBuyGroup.ts';
+import { createPanelDivider, createPanelScaffold } from '../components/PanelScaffold.ts';
 import { emojiHtml, moneyWithEmojiHtml, resourceLabelHtml } from '../emoji.ts';
 
 interface PlantRowRefs {
@@ -78,33 +79,22 @@ export class SpaceEnergyPanel implements Panel {
 
   constructor(state: GameState) {
     this.state = state;
-    this.el = document.createElement('div');
-    this.el.className = 'panel space-energy-panel';
+    const { panel } = createPanelScaffold('SPACE & ENERGY', {
+      panelClassName: 'panel space-energy-panel',
+      bodyClassName: 'panel-body panel-body-tight',
+    });
+    this.el = panel;
     this.build();
   }
 
   private build(): void {
-    const header = document.createElement('div');
-    header.className = 'panel-header';
-    header.textContent = 'SPACE & ENERGY';
-    this.el.appendChild(header);
-
-    const body = document.createElement('div');
-    body.className = 'panel-body panel-body-tight';
+    const body = this.el.querySelector('.panel-body') as HTMLDivElement;
 
     this.buildEarthEnergy(body);
-    body.appendChild(this.createDivider());
+    body.appendChild(createPanelDivider());
     this.buildLogistics(body);
     this.buildMoon(body);
     this.buildMercury(body);
-
-    this.el.appendChild(body);
-  }
-
-  private createDivider(): HTMLHRElement {
-    const hr = document.createElement('hr');
-    hr.className = 'panel-divider';
-    return hr;
   }
 
   private buildEarthEnergy(parent: HTMLElement): void {
@@ -517,7 +507,7 @@ export class SpaceEnergyPanel implements Panel {
   private buildMoon(parent: HTMLElement): void {
     this.moonSection = document.createElement('div');
     this.moonSection.style.display = 'none';
-    this.moonSection.appendChild(this.createDivider());
+    this.moonSection.appendChild(createPanelDivider());
 
     const title = document.createElement('div');
     title.className = 'panel-section-title';
@@ -646,7 +636,7 @@ export class SpaceEnergyPanel implements Panel {
   private buildMercury(parent: HTMLElement): void {
     this.mercurySection = document.createElement('div');
     this.mercurySection.style.display = 'none';
-    this.mercurySection.appendChild(this.createDivider());
+    this.mercurySection.appendChild(createPanelDivider());
 
     const title = document.createElement('div');
     title.className = 'panel-section-title';
@@ -894,7 +884,7 @@ export class SpaceEnergyPanel implements Panel {
         `<span style="color:${rateColor}">${rateSign}${formatNumber(rateAbs)}/m</span>`;
       this.mercuryPieEl.style.background = `conic-gradient(var(--bg-panel) 0 ${minedPct.toFixed(3)}%, transparent ${minedPct.toFixed(3)}% 100%)`;
 
-      const hasProbeTech = state.completedResearch.includes('vonNeumannProbes') || state.completedResearch.includes('selfReplicating');
+      const hasProbeTech = state.completedResearch.includes('vonNeumannProbes');
       this.probeBtn.style.display = hasProbeTech ? '' : 'none';
       this.probeBtn.disabled = !hasProbeTech || state.gameWon;
       if (state.gameWon) {

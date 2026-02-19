@@ -88,20 +88,6 @@ export function formatMoney(n: number | bigint): string {
   return '$' + formatNumber(val);
 }
 
-export function formatRate(perMin: number | bigint): string {
-  const val = typeof perMin === 'bigint' ? fromBigInt(perMin) : perMin;
-  if (val >= 0) return '+' + formatMoney(val) + '/min';
-  return '-' + formatMoney(-val) + '/min';
-}
-
-export function formatTime(ms: number): string {
-  const totalSec = Math.ceil(ms / 1000);
-  if (totalSec < 60) return totalSec + 's';
-  const min = Math.floor(totalSec / 60);
-  const sec = totalSec % 60;
-  return sec > 0 ? min + 'm ' + sec + 's' : min + 'm';
-}
-
 export function formatMW(mw: number | bigint): string {
   // Power is always scaled
   const val = typeof mw === 'bigint' ? fromBigInt(mw) : mw;

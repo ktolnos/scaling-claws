@@ -33,7 +33,7 @@ function computeResearchBonuses(state: GameState): void {
 
   // Rocket loss / recovery tiers
   let rocketLoss = BALANCE.rocketLossNoReuse;
-  if (state.completedResearch.includes('reusableRockets') || state.completedResearch.includes('reusableRockets1')) {
+  if (state.completedResearch.includes('reusableRockets1')) {
     rocketLoss = BALANCE.rocketLossReusable1;
   }
   if (state.completedResearch.includes('reusableRockets2')) {
@@ -46,7 +46,7 @@ function computeResearchBonuses(state: GameState): void {
   state.launchCostBonus = 1 - rocketLoss;
 }
 
-export function getResearchConfig(id: ResearchId): ResearchConfig | undefined {
+function getResearchConfig(id: ResearchId): ResearchConfig | undefined {
   return BALANCE.research.find(r => r.id === id);
 }
 
@@ -83,7 +83,7 @@ export function purchaseResearch(state: GameState, id: ResearchId): boolean {
     state.pendingFlavorTexts.push('"Mercury corridor unlocked. The Dyson route is open."');
   } else if (id === 'moonMassDrivers') {
     state.pendingFlavorTexts.push('"Mass drivers active. Payload throughput surges."');
-  } else if (id === 'vonNeumannProbes' || id === 'selfReplicating') {
+  } else if (id === 'vonNeumannProbes') {
     state.pendingFlavorTexts.push('"Probe architecture complete. You can now trigger the endgame launch."');
   }
 

@@ -3,6 +3,7 @@ import { getTotalAssignedAgents } from '../GameState.ts';
 import { BALANCE, JOB_ORDER, getStuckRate } from '../BalanceConfig.ts';
 import type { JobType } from '../BalanceConfig.ts';
 import { toBigInt, fromBigInt, mulB, divB, scaleB, scaleBigInt } from '../utils.ts';
+import { getJobOutputAmount } from './JobRules.ts';
 
 const FLAVOR_TEXTS_EARLY = [
   '"Your first Sixxer task: \'Rewrite my cat\'s Instagram bio.\' $6 is $6."',
@@ -52,10 +53,7 @@ function applyProduction(state: GameState, resource: string, amount: bigint, com
       state.science += total;
       break;
     case 'labor':
-      state.labor += total;
-      if (state.locationResources?.earth) {
-        state.locationResources.earth.labor += total;
-      }
+      state.locationResources.earth.labor += total;
       break;
     case 'data':
       state.trainingData += total;
@@ -67,21 +65,7 @@ function applyProduction(state: GameState, resource: string, amount: bigint, com
   }
 }
 
-function getJobOutputAmount(state: GameState, jobType: JobType, baseAmount: bigint): bigint {
-  if (jobType !== 'aiDataSynthesizer') return baseAmount;
-
-  let output = baseAmount;
-  if (state.completedResearch.includes('syntheticData2')) output *= 2n;
-  if (state.completedResearch.includes('syntheticData3')) output *= 2n;
-  return output;
-}
-
 export function tickJobs(state: GameState, dtMs: number): void {
-  // Back-compat for older saves that predate nudgeBuffer.
-  if ((state as any).nudgeBuffer === undefined) {
-    state.nudgeBuffer = 0n;
-  }
-
   const intel = state.intelligence;
 
   // 1. Recompute unlocked jobs from current state
@@ -413,83 +397,7 @@ function canAssignAiAgent(state: GameState, jobType: JobType): boolean {
   return true;
 }
 
-export function incrementJobAssignments(state: GameState, targetJob: JobType): boolean {
-  if (!canAssignAiAgent(state, targetJob)) return false;
-
-  const assignedCount = getTotalAssignedAgents(state);
-  if (assignedCount >= state.activeAgentCount) return false;
-
-  const unassignedPool = state.agentPools['unassigned'];
-  if (unassignedPool.totalCount === 0n) return false;
-
-  const targetPool = state.agentPools[targetJob];
-
-  // Simple count updates (O(1))
-  unassignedPool.totalCount -= scaleBigInt(1n);
-  targetPool.totalCount += scaleBigInt(1n);
-
-  // Update idle count proportionally (agents keep idle status)
-  if (unassignedPool.idleCount > 0n) {
-    const idleFraction = Number(unassignedPool.idleCount) / (fromBigInt(unassignedPool.totalCount) + 1);
-    if (Math.random() < idleFraction) {
-      unassignedPool.idleCount -= scaleBigInt(1n);
-      targetPool.idleCount += scaleBigInt(1n);
-    }
-  }
-
-  return true;
-}
-
-export function decrementJobAssignments(state: GameState, sourceJob: JobType): boolean {
-  const targetPool = state.agentPools[sourceJob];
-  if (targetPool.totalCount === 0n) return false;
-
-  const unassignedPool = state.agentPools['unassigned'];
-
-  // Simple count updates (O(1))
-  targetPool.totalCount -= scaleBigInt(1n);
-  unassignedPool.totalCount += scaleBigInt(1n);
-
-  // Update idle count proportionally
-  if (targetPool.idleCount > 0n) {
-    const idleFraction = Number(targetPool.idleCount) / (fromBigInt(targetPool.totalCount) + 1);
-    if (Math.random() < idleFraction) {
-      targetPool.idleCount -= scaleBigInt(1n);
-      unassignedPool.idleCount += scaleBigInt(1n);
-    }
-  }
-
-  // Update stuck count proportionally (can't have more stuck than total)
-  if (targetPool.stuckCount > targetPool.totalCount) {
-    targetPool.stuckCount = targetPool.totalCount;
-  }
-
-  return true;
-}
-
-export function assignAllToJob(state: GameState, targetJob: JobType): void {
-  if (!canAssignAiAgent(state, targetJob)) return;
-
-  const assignedCount = getTotalAssignedAgents(state);
-  const remainingSlots = state.activeAgentCount - assignedCount;
-
-  const unassignedPool = state.agentPools['unassigned'];
-  const targetPool = state.agentPools[targetJob];
-
-  const toMove = unassignedPool.totalCount < remainingSlots ? unassignedPool.totalCount : remainingSlots;
-  if (toMove <= 0n) return;
-
-  // Bulk transfer (O(1))
-  targetPool.totalCount += toMove;
-  unassignedPool.totalCount -= toMove;
-
-  // Transfer proportional idle count
-  const idleToMove = (unassignedPool.idleCount * toMove) / (unassignedPool.totalCount + toMove);
-  targetPool.idleCount += idleToMove;
-  unassignedPool.idleCount -= idleToMove;
-}
-
-export function removeAllFromJob(state: GameState, sourceJob: JobType): void {
+function removeAllFromJob(state: GameState, sourceJob: JobType): void {
   const targetPool = state.agentPools[sourceJob];
   const unassignedPool = state.agentPools['unassigned'];
   const count = targetPool.totalCount;
@@ -571,34 +479,6 @@ export function removeAgentsFromJob(state: GameState, sourceJob: JobType, count:
 
 // --- Human worker actions ---
 
-export function hireHumanWorker(state: GameState, jobType: JobType): boolean {
-  const jobConfig = BALANCE.jobs[jobType];
-  if (jobConfig.workerType !== 'human') return false;
-  if (state.intelligence < jobConfig.unlockAtIntel) return false;
-
-  const hireCost = jobConfig.hireCost ?? 0n;
-  if (state.funds < hireCost) return false;
-
-  state.funds -= hireCost;
-  const pool = state.humanPools[jobType];
-  pool.totalCount += scaleBigInt(1n);
-  
-  // Initialize sample if needed
-  if (pool.totalCount <= scaleBigInt(4n)) {
-    pool.samples.progress[Math.floor(fromBigInt(pool.totalCount)) - 1] = 0;
-  }
-
-  return true;
-}
-
-export function fireHumanWorker(state: GameState, jobType: JobType): boolean {
-  const pool = state.humanPools[jobType];
-  if (pool.totalCount <= 0n) return false;
-
-  pool.totalCount -= scaleBigInt(1n);
-  return true;
-}
-
 /** Hire N human workers for a job (for bulk buy). */
 export function hireHumanWorkers(state: GameState, jobType: JobType, count: number): number {
   const jobConfig = BALANCE.jobs[jobType];
@@ -657,7 +537,6 @@ export function buyRobotWorkers(state: GameState, count: number): number {
 
   state.funds -= mulB(toBuy, unitCost);
   state.locationResources.earth.robots += toBuy;
-  state.robots = state.locationResources.earth.robots;
   return Math.floor(fromBigInt(toBuy));
 }
 
@@ -670,7 +549,6 @@ export function fireRobotWorkers(state: GameState, count: number): number {
   if (toFire <= 0n) return 0;
 
   state.locationResources.earth.robots -= toFire;
-  state.robots = state.locationResources.earth.robots;
   return Math.floor(fromBigInt(toFire));
 }
 

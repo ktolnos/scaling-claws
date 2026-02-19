@@ -1,40 +1,23 @@
-import type { GameState, FacilityId, LocationId, LocationResourceState } from '../GameState.ts';
-import { BALANCE } from '../BalanceConfig.ts';
+import type { GameState, FacilityId, LocationId, LocationRateState } from '../GameState.ts';
+import { BALANCE, getFacilityProductionMultiplier } from '../BalanceConfig.ts';
 import { toBigInt, mulB, divB, scaleBigInt, fromBigInt } from '../utils.ts';
 import { reconcileEarthGpuInstallation } from './GpuState.ts';
+import { getRobotLaborPerMin } from './JobRules.ts';
 
 function toScaled(value: number | bigint): bigint {
   if (typeof value === 'bigint') return value;
   return toBigInt(value);
 }
 
-const ALL_FACILITIES: FacilityId[] = [
-  'materialMine',
-  'solarFactory',
-  'robotFactory',
-  'gpuFactory',
-  'rocketFactory',
-  'gpuSatelliteFactory',
-  'massDriver',
-];
-
-function ensurePausedFacilities(state: GameState): void {
-  const maybe = (state as any).pausedFacilities as Record<FacilityId, boolean> | undefined;
-  if (!maybe) {
-    (state as any).pausedFacilities = {
-      materialMine: false,
-      solarFactory: false,
-      robotFactory: false,
-      gpuFactory: false,
-      rocketFactory: false,
-      gpuSatelliteFactory: false,
-      massDriver: false,
-    };
-    return;
-  }
-  for (const facility of ALL_FACILITIES) {
-    if (typeof maybe[facility] !== 'boolean') maybe[facility] = false;
-  }
+function getFacilityOutputPerMin(
+  state: GameState,
+  facility: FacilityId,
+  baseOutputPerMin: number | bigint,
+): bigint {
+  return mulB(
+    toScaled(baseOutputPerMin),
+    toBigInt(getFacilityProductionMultiplier(state.completedResearch, facility)),
+  );
 }
 
 function resetLocationRates(state: GameState): void {
@@ -65,43 +48,9 @@ function ensureLocationState(state: GameState): void {
   if (!state.locationResources || !state.locationFacilities) {
     throw new Error('Location state is missing. Start from a fresh save.');
   }
-
-  // Keep Earth aliases in sync with the newer location model.
-  const earth = state.locationResources.earth;
-  if (earth.material === 0n && state.material > 0n) earth.material = state.material;
-  if (earth.solarPanels === 0n && state.solarPanels > 0n) earth.solarPanels = state.solarPanels;
-  if (earth.robots === 0n && state.robots > 0n) earth.robots = state.robots;
-  if (earth.gpus === 0n && state.gpuCount > 0n) earth.gpus = state.gpuCount;
-  if (earth.rockets === 0n && state.rockets > 0n) earth.rockets = state.rockets;
-  if (earth.gpuSatellites === 0n && state.gpuSatellites > 0n) earth.gpuSatellites = state.gpuSatellites;
-  if (earth.labor === 0n && state.labor > 0n) earth.labor = state.labor;
-
-  const moon = state.locationResources.moon;
-  if (moon.material === 0n && state.moonMaterials > 0n) moon.material = state.moonMaterials;
-  if (moon.robots === 0n && state.lunarRobots > 0n) moon.robots = state.lunarRobots;
-  if (moon.installedGpus === 0n && state.lunarGPUs > 0n) moon.installedGpus = state.lunarGPUs;
-  if (moon.installedSolarPanels === 0n && state.lunarSolarPanels > 0n) moon.installedSolarPanels = state.lunarSolarPanels;
-
-  const mercury = state.locationResources.mercury;
-  if (mercury.robots === 0n && state.mercuryRobots > 0n) mercury.robots = state.mercuryRobots;
-
-  const earthFacilities = state.locationFacilities.earth;
-  if (earthFacilities.materialMine === 0n && state.materialMines > 0n) earthFacilities.materialMine = state.materialMines;
-  if (earthFacilities.solarFactory === 0n && state.solarFactories > 0n) earthFacilities.solarFactory = state.solarFactories;
-  if (earthFacilities.robotFactory === 0n && state.robotFactories > 0n) earthFacilities.robotFactory = state.robotFactories;
-  if (earthFacilities.gpuFactory === 0n && state.gpuFactories > 0n) earthFacilities.gpuFactory = state.gpuFactories;
-  if (earthFacilities.rocketFactory === 0n && state.rocketFactories > 0n) earthFacilities.rocketFactory = state.rocketFactories;
-  if (earthFacilities.gpuSatelliteFactory === 0n && state.gpuSatelliteFactories > 0n) earthFacilities.gpuSatelliteFactory = state.gpuSatelliteFactories;
-
-  const moonFacilities = state.locationFacilities.moon;
-  if (moonFacilities.materialMine === 0n && state.moonMines > 0n) moonFacilities.materialMine = state.moonMines;
-  if (moonFacilities.gpuFactory === 0n && state.moonGpuFactories > 0n) moonFacilities.gpuFactory = state.moonGpuFactories;
-  if (moonFacilities.solarFactory === 0n && state.moonSolarFactories > 0n) moonFacilities.solarFactory = state.moonSolarFactories;
-  if (moonFacilities.gpuSatelliteFactory === 0n && state.moonGpuSatelliteFactories > 0n) moonFacilities.gpuSatelliteFactory = state.moonGpuSatelliteFactories;
-  if (moonFacilities.massDriver === 0n && state.moonMassDrivers > 0n) moonFacilities.massDriver = state.moonMassDrivers;
 }
 
-function isFacilityUnlocked(state: GameState, location: LocationId, facility: FacilityId): boolean {
+export function isFacilityUnlocked(state: GameState, location: LocationId, facility: FacilityId): boolean {
   if (location === 'earth') {
     if (facility === 'materialMine') return true;
     if (facility === 'solarFactory') return state.completedResearch.includes('solarTechnology');
@@ -128,17 +77,12 @@ function isFacilityUnlocked(state: GameState, location: LocationId, facility: Fa
   return true;
 }
 
-function getLaborMultiplier(state: GameState): number {
-  if (state.completedResearch.includes('robotics3')) return BALANCE.robotLaborMultRobotics3;
-  if (state.completedResearch.includes('robotics2')) return BALANCE.robotLaborMultRobotics2;
-  return 1;
-}
-
-type FactoryInput = { resource: keyof LocationResourceState; reqPerFactoryPerMin: bigint };
+type RateResourceId = keyof LocationRateState;
+type FactoryInput = { resource: RateResourceId; reqPerFactoryPerMin: bigint };
 
 interface FacilityOperation {
   facility: FacilityId;
-  outputResource: keyof LocationResourceState;
+  outputResource: RateResourceId;
   outputPerFactoryPerMin: bigint;
   inputA?: FactoryInput;
   inputB?: FactoryInput;
@@ -161,7 +105,7 @@ function clampUnitScaled(ratio: bigint): bigint {
   return ratio;
 }
 
-function getOutputStockpileCap(location: LocationId, resource: keyof LocationResourceState): bigint | null {
+function getOutputStockpileCap(location: LocationId, resource: RateResourceId): bigint | null {
   if (resource === 'rockets' || resource === 'gpus' || resource === 'solarPanels' || resource === 'robots') {
     return BALANCE.locationResourceStockpileCap;
   }
@@ -228,7 +172,7 @@ function applyPlannedOperation(
   state: GameState,
   location: LocationId,
   op: PlannedOperation,
-  resourceEff: Partial<Record<keyof LocationResourceState, bigint>>,
+  resourceEff: Partial<Record<RateResourceId, bigint>>,
 ): void {
   let effScaled = op.capEffScaled;
   if (op.inputA && op.consumeA > 0n) {
@@ -246,20 +190,20 @@ function applyPlannedOperation(
   resources[op.outputResource] += actualOutput;
 
   const effectivePerMin = mulB(op.maxOutputPerMin, effScaled);
-  (state.locationProductionPerMin[location] as any)[op.outputResource] += effectivePerMin;
+  state.locationProductionPerMin[location][op.outputResource] += effectivePerMin;
 
   if (op.inputA && op.consumeA > 0n) {
     const inputPerMin = mulB(op.count, op.inputA.reqPerFactoryPerMin);
     const actualInput = mulB(op.consumeA, effScaled);
     resources[op.inputA.resource] -= actualInput;
-    (state.locationConsumptionPerMin[location] as any)[op.inputA.resource] += mulB(inputPerMin, effScaled);
+    state.locationConsumptionPerMin[location][op.inputA.resource] += mulB(inputPerMin, effScaled);
   }
 
   if (op.inputB && op.consumeB > 0n) {
     const inputPerMin = mulB(op.count, op.inputB.reqPerFactoryPerMin);
     const actualInput = mulB(op.consumeB, effScaled);
     resources[op.inputB.resource] -= actualInput;
-    (state.locationConsumptionPerMin[location] as any)[op.inputB.resource] += mulB(inputPerMin, effScaled);
+    state.locationConsumptionPerMin[location][op.inputB.resource] += mulB(inputPerMin, effScaled);
   }
 
   const eff = Number(effScaled) / Number(UNIT_SCALED);
@@ -283,7 +227,7 @@ function runOperationsProportionally(
   }
   if (planned.length === 0) return;
 
-  const totalDemand: Partial<Record<keyof LocationResourceState, bigint>> = {};
+  const totalDemand: Partial<Record<RateResourceId, bigint>> = {};
   for (const p of planned) {
     if (p.inputA && p.consumeA > 0n) {
       const demand = mulB(p.consumeA, p.capEffScaled);
@@ -295,8 +239,8 @@ function runOperationsProportionally(
     }
   }
 
-  const resourceEff: Partial<Record<keyof LocationResourceState, bigint>> = {};
-  const resourceKeys = Object.keys(totalDemand) as Array<keyof LocationResourceState>;
+  const resourceEff: Partial<Record<RateResourceId, bigint>> = {};
+  const resourceKeys = Object.keys(totalDemand) as RateResourceId[];
   for (const resource of resourceKeys) {
     const demand = totalDemand[resource] ?? 0n;
     if (demand <= 0n) continue;
@@ -309,83 +253,12 @@ function runOperationsProportionally(
   }
 }
 
-function syncLegacyAliases(state: GameState): void {
-  const earth = state.locationResources.earth;
-  const moon = state.locationResources.moon;
-  const mercury = state.locationResources.mercury;
-
-  // Earth resource aliases
-  state.material = earth.material;
-  state.solarPanels = earth.solarPanels;
-  state.robots = earth.robots;
-  state.gpuCount = earth.gpus;
-  state.rockets = earth.rockets;
-  state.gpuSatellites = earth.gpuSatellites;
-  state.labor = earth.labor;
-  reconcileEarthGpuInstallation(state);
-
-  // Earth rates aliases
-  state.materialProductionPerMin = state.locationProductionPerMin.earth.material;
-  state.solarPanelProductionPerMin = state.locationProductionPerMin.earth.solarPanels;
-  state.robotProductionPerMin = state.locationProductionPerMin.earth.robots;
-  state.gpuProductionPerMin = state.locationProductionPerMin.earth.gpus;
-  state.rocketProductionPerMin = state.locationProductionPerMin.earth.rockets;
-  state.gpuSatelliteProductionPerMin = state.locationProductionPerMin.earth.gpuSatellites;
-
-  state.materialConsumptionPerMin = state.locationConsumptionPerMin.earth.material;
-  state.solarPanelConsumptionPerMin = state.locationConsumptionPerMin.earth.solarPanels;
-  state.robotConsumptionPerMin = state.locationConsumptionPerMin.earth.robots;
-  state.gpuConsumptionPerMin = state.locationConsumptionPerMin.earth.gpus;
-  state.rocketConsumptionPerMin = state.locationConsumptionPerMin.earth.rockets;
-  state.gpuSatelliteConsumptionPerMin = state.locationConsumptionPerMin.earth.gpuSatellites;
-
-  // Earth facility aliases
-  state.materialMines = state.locationFacilities.earth.materialMine;
-  state.solarFactories = state.locationFacilities.earth.solarFactory;
-  state.robotFactories = state.locationFacilities.earth.robotFactory;
-  state.gpuFactories = state.locationFacilities.earth.gpuFactory;
-  state.rocketFactories = state.locationFacilities.earth.rocketFactory;
-  state.gpuSatelliteFactories = state.locationFacilities.earth.gpuSatelliteFactory;
-
-  state.materialMineRate = state.locationFacilityRates.earth.materialMine;
-  state.solarFactoryRate = state.locationFacilityRates.earth.solarFactory;
-  state.robotFactoryRate = state.locationFacilityRates.earth.robotFactory;
-  state.gpuFactoryRate = state.locationFacilityRates.earth.gpuFactory;
-  state.rocketFactoryRate = state.locationFacilityRates.earth.rocketFactory;
-  state.gpuSatelliteFactoryRate = state.locationFacilityRates.earth.gpuSatelliteFactory;
-
-  // Legacy moon aliases
-  state.lunarRobots = moon.robots;
-  state.lunarGPUs = moon.installedGpus;
-  state.lunarSolarPanels = moon.installedSolarPanels;
-  state.moonMaterials = moon.material;
-  state.moonMines = state.locationFacilities.moon.materialMine;
-  state.moonGpuFactories = state.locationFacilities.moon.gpuFactory;
-  state.moonSolarFactories = state.locationFacilities.moon.solarFactory;
-  state.moonGpuSatelliteFactories = state.locationFacilities.moon.gpuSatelliteFactory;
-  state.moonMassDrivers = state.locationFacilities.moon.massDriver;
-
-  // Legacy mercury aliases
-  state.mercuryRobots = mercury.robots;
-}
-
 export function tickSupply(state: GameState, dtMs: number): void {
   ensureLocationState(state);
-  ensurePausedFacilities(state);
   resetLocationRates(state);
 
-  // Keep Earth GPU value from compute actions before running supply simulation.
-  state.locationResources.earth.gpus = state.gpuCount;
-  state.locationResources.earth.rockets = state.rockets;
-  state.locationResources.earth.gpuSatellites = state.gpuSatellites;
-  state.locationResources.earth.solarPanels = state.solarPanels;
-  state.locationResources.earth.robots = state.robots;
-  state.locationResources.earth.material = state.material;
-  state.locationResources.earth.labor = state.labor;
-
   // Robot labor generation at each location
-  const laborMult = getLaborMultiplier(state);
-  const robotLaborPerMin = mulB(BALANCE.robotLaborPerMinBase, toBigInt(laborMult));
+  const robotLaborPerMin = getRobotLaborPerMin(state);
   const locations: LocationId[] = ['earth', 'moon', 'mercury'];
   for (const location of locations) {
     const robots = state.locationResources[location].robots;
@@ -411,7 +284,7 @@ export function tickSupply(state: GameState, dtMs: number): void {
       mineOps.push({
         facility: 'materialMine',
         outputResource: 'material',
-        outputPerFactoryPerMin: BALANCE.materialMineOutput,
+        outputPerFactoryPerMin: getFacilityOutputPerMin(state, 'materialMine', BALANCE.materialMineOutput),
         inputA: { resource: 'labor', reqPerFactoryPerMin: BALANCE.materialMineLaborReq },
       });
     } else if (state.pausedFacilities.materialMine) {
@@ -424,7 +297,7 @@ export function tickSupply(state: GameState, dtMs: number): void {
       factoryOps.push({
         facility: 'solarFactory',
         outputResource: 'solarPanels',
-        outputPerFactoryPerMin: BALANCE.solarFactoryOutput,
+        outputPerFactoryPerMin: getFacilityOutputPerMin(state, 'solarFactory', BALANCE.solarFactoryOutput),
         inputA: { resource: 'material', reqPerFactoryPerMin: BALANCE.solarFactoryMaterialReq },
         inputB: { resource: 'labor', reqPerFactoryPerMin: BALANCE.solarFactoryLaborCost },
       });
@@ -435,7 +308,7 @@ export function tickSupply(state: GameState, dtMs: number): void {
       factoryOps.push({
         facility: 'robotFactory',
         outputResource: 'robots',
-        outputPerFactoryPerMin: BALANCE.robotFactoryOutput,
+        outputPerFactoryPerMin: getFacilityOutputPerMin(state, 'robotFactory', BALANCE.robotFactoryOutput),
         inputA: { resource: 'material', reqPerFactoryPerMin: BALANCE.robotFactoryMaterialReq },
         inputB: { resource: 'labor', reqPerFactoryPerMin: BALANCE.robotFactoryLaborCost },
       });
@@ -446,7 +319,7 @@ export function tickSupply(state: GameState, dtMs: number): void {
       factoryOps.push({
         facility: 'gpuFactory',
         outputResource: 'gpus',
-        outputPerFactoryPerMin: BALANCE.gpuFactoryOutput,
+        outputPerFactoryPerMin: getFacilityOutputPerMin(state, 'gpuFactory', BALANCE.gpuFactoryOutput),
         inputA: { resource: 'material', reqPerFactoryPerMin: BALANCE.gpuFactoryMaterialReq },
         inputB: { resource: 'labor', reqPerFactoryPerMin: BALANCE.gpuFactoryLaborCost },
       });
@@ -457,7 +330,7 @@ export function tickSupply(state: GameState, dtMs: number): void {
       factoryOps.push({
         facility: 'rocketFactory',
         outputResource: 'rockets',
-        outputPerFactoryPerMin: toScaled(BALANCE.rocketFactoryOutput),
+        outputPerFactoryPerMin: getFacilityOutputPerMin(state, 'rocketFactory', BALANCE.rocketFactoryOutput),
         inputA: { resource: 'material', reqPerFactoryPerMin: BALANCE.rocketFactoryMaterialReq },
         inputB: { resource: 'labor', reqPerFactoryPerMin: BALANCE.rocketFactoryLaborCost },
       });
@@ -468,7 +341,7 @@ export function tickSupply(state: GameState, dtMs: number): void {
       factoryOps.push({
         facility: 'gpuSatelliteFactory',
         outputResource: 'gpuSatellites',
-        outputPerFactoryPerMin: toScaled(BALANCE.gpuSatelliteFactoryOutput),
+        outputPerFactoryPerMin: getFacilityOutputPerMin(state, 'gpuSatelliteFactory', BALANCE.gpuSatelliteFactoryOutput),
         inputA: { resource: 'solarPanels', reqPerFactoryPerMin: BALANCE.gpuSatelliteFactoryMaterialReq },
         inputB: { resource: 'gpus', reqPerFactoryPerMin: BALANCE.gpuSatelliteFactoryGpuReq },
       });
@@ -488,35 +361,7 @@ export function tickSupply(state: GameState, dtMs: number): void {
     }
   }
 
-  syncLegacyAliases(state);
-}
-
-// Generic imports (Earth only)
-export function importResource(state: GameState, resource: 'material' | 'solarPanels' | 'robots' | 'rockets' | 'gpuSatellites' | 'gpu', amount: number): boolean {
-  const amountB = toBigInt(amount);
-  let cost = 0n;
-
-  if (resource === 'material') cost = BALANCE.materialCost;
-  else if (resource === 'solarPanels') cost = BALANCE.solarPanelImportCost;
-  else if (resource === 'robots') cost = BALANCE.robotImportCost;
-  else if (resource === 'rockets') cost = BALANCE.rocketImportCost;
-  else if (resource === 'gpuSatellites') cost = BALANCE.gpuSatelliteImportCost;
-  else if (resource === 'gpu') cost = BALANCE.gpuImportCost;
-
-  const totalCost = mulB(amountB, cost);
-  if (state.funds < totalCost) return false;
-
-  state.funds -= totalCost;
-
-  if (resource === 'material') state.locationResources.earth.material += amountB;
-  else if (resource === 'solarPanels') state.locationResources.earth.solarPanels += amountB;
-  else if (resource === 'robots') state.locationResources.earth.robots += amountB;
-  else if (resource === 'rockets') state.locationResources.earth.rockets += amountB;
-  else if (resource === 'gpuSatellites') state.locationResources.earth.gpuSatellites += amountB;
-  else if (resource === 'gpu') state.locationResources.earth.gpus += amountB;
-
-  syncLegacyAliases(state);
-  return true;
+  reconcileEarthGpuInstallation(state);
 }
 
 function getEarthLimit(type: FacilityId): number {
@@ -544,21 +389,6 @@ function getFacilityBaseCost(type: FacilityId): { money: bigint; labor: bigint }
   if (type === 'gpuSatelliteFactory') return { money: BALANCE.gpuSatelliteFactoryCost, labor: 0n };
   // Mass driver uses rocket factory-scale economics
   return { money: BALANCE.rocketFactoryCost, labor: 0n };
-}
-
-function resolveBuildArgs(
-  locationOrType: LocationId | FacilityId,
-  maybeTypeOrAmount: FacilityId | number,
-  maybeAmount?: number,
-): { location: LocationId; type: FacilityId; amount: number } {
-  if (typeof maybeTypeOrAmount === 'number') {
-    return { location: 'earth', type: locationOrType as FacilityId, amount: maybeTypeOrAmount };
-  }
-  return {
-    location: locationOrType as LocationId,
-    type: maybeTypeOrAmount,
-    amount: maybeAmount ?? 1,
-  };
 }
 
 export function canBuildFacility(state: GameState, location: LocationId, type: FacilityId, amount: number): boolean {
@@ -601,15 +431,12 @@ export function canBuildFacility(state: GameState, location: LocationId, type: F
   return true;
 }
 
-// Supports both old signature buildFacility(state, type, amount)
-// and new signature buildFacility(state, location, type, amount)
 export function buildFacility(
   state: GameState,
-  locationOrType: LocationId | FacilityId,
-  maybeTypeOrAmount: FacilityId | number,
-  maybeAmount?: number,
+  location: LocationId,
+  type: FacilityId,
+  amount: number,
 ): boolean {
-  const { location, type, amount } = resolveBuildArgs(locationOrType, maybeTypeOrAmount, maybeAmount);
   if (!canBuildFacility(state, location, type, amount)) return false;
 
   const base = getFacilityBaseCost(type);
@@ -631,7 +458,7 @@ export function buildFacility(
   state.locationResources[location].labor -= totalLabor;
   state.locationFacilities[location][type] += toBigInt(amount);
 
-  syncLegacyAliases(state);
+  reconcileEarthGpuInstallation(state);
   return true;
 }
 

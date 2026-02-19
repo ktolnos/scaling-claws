@@ -12,7 +12,6 @@ import { PanelManager } from './ui/PanelManager.ts';
 import { JobsPanel } from './ui/panels/JobsPanel.ts';
 import { AgentsPanel } from './ui/panels/AgentsPanel.ts';
 import { ComputePanel } from './ui/panels/ComputePanel.ts';
-import { EnergyPanel } from './ui/panels/EnergyPanel.ts';
 import { TrainingPanel } from './ui/panels/TrainingPanel.ts';
 import { SupplyPanel } from './ui/panels/SupplyPanel.ts';
 import { SpaceEnergyPanel } from './ui/panels/SpaceEnergyPanel.ts';
@@ -44,13 +43,11 @@ function handleGpuTransition(): void {
 // Register panels
 panelManager.register('jobs', new JobsPanel(state));
 
-// If already post-GPU (loaded from save), show compute + energy/space panels
+// If already post-GPU (loaded from save), show compute + energy panel
 if (state.isPostGpuTransition) {
   panelManager.register('compute', new ComputePanel(state));
-  if (state.completedResearch.includes('orbitalLogistics')) {
+  if (state.completedResearch.includes('orbitalLogistics') || state.datacenters.some(c => c > 0n)) {
     panelManager.register('energy', new SpaceEnergyPanel(state));
-  } else if (state.datacenters.some(c => c > 0n)) {
-    panelManager.register('energy', new EnergyPanel(state));
   }
 } else {
   panelManager.register('agents', new AgentsPanel(state, handleGpuTransition));
@@ -69,8 +66,8 @@ if (state.completedResearch.includes('materialProcessing')) {
 // Track whether panels have been added (for mid-game unlocks)
 let trainingPanelAdded = state.intelligence >= BALANCE.trainingUnlockIntel;
 let supplyPanelAdded = state.completedResearch.includes('materialProcessing');
-let spacePanelAdded = state.completedResearch.includes('orbitalLogistics');
-let energyPanelAdded = state.datacenters.some(c => c > 0n) || spacePanelAdded;
+let energyPanelAdded = state.isPostGpuTransition &&
+  (state.completedResearch.includes('orbitalLogistics') || state.datacenters.some(c => c > 0n));
 
 // UI update loop
 setInterval(() => {
@@ -88,22 +85,9 @@ setInterval(() => {
     supplyPanelAdded = true;
   }
 
-  // Check for mid-game energy unlock (first datacenter)
-  if (!energyPanelAdded && s.datacenters.some(c => c > 0n)) {
-    if (!s.completedResearch.includes('orbitalLogistics')) {
-      panelManager.register('energy', new EnergyPanel(s));
-    }
-    energyPanelAdded = true;
-  }
-
-  // Check for mid-game space unlock (use unified panel)
-  if (!spacePanelAdded && s.completedResearch.includes('orbitalLogistics')) {
-    if (energyPanelAdded) {
-      panelManager.replace('energy', new SpaceEnergyPanel(s));
-    } else {
-      panelManager.register('energy', new SpaceEnergyPanel(s));
-    }
-    spacePanelAdded = true;
+  // Check for mid-game energy unlock (first datacenter or direct orbital unlock)
+  if (!energyPanelAdded && (s.datacenters.some(c => c > 0n) || s.completedResearch.includes('orbitalLogistics'))) {
+    panelManager.register('energy', new SpaceEnergyPanel(s));
     energyPanelAdded = true;
   }
 

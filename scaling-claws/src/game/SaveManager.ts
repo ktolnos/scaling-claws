@@ -45,9 +45,6 @@ export function loadGame(): GameState | null {
 
     const parsed = JSON.parse(json, bigIntReviver) as GameState;
 
-    // Reset tick time to prevent offline catch-up issues
-    parsed.lastTickTime = Date.now();
-
     console.log('[SaveManager] Game loaded successfully');
     return parsed;
   } catch (e) {
@@ -59,30 +56,4 @@ export function loadGame(): GameState | null {
 export function deleteSave(): void {
   localStorage.removeItem(SAVE_KEY);
   console.log('[SaveManager] Save deleted');
-}
-
-export function exportSave(state: GameState): string {
-  return btoa(JSON.stringify(state, bigIntReplacer));
-}
-
-export function importSave(data: string): GameState | null {
-  try {
-    const json = atob(data);
-    const parsed = JSON.parse(json, bigIntReviver) as GameState;
-
-    // Basic validation
-    if (!parsed.agentPools) {
-      console.error('[SaveManager] Invalid save data: missing agentPools');
-      return null;
-    }
-
-    // Reset tick time
-    parsed.lastTickTime = Date.now();
-
-    console.log('[SaveManager] Save imported successfully');
-    return parsed;
-  } catch (e) {
-    console.error('[SaveManager] Failed to import save:', e);
-    return null;
-  }
 }

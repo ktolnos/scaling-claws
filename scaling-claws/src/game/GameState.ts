@@ -109,22 +109,14 @@ export interface GameState {
 
   // Time
   tickCount: number;
-  lastTickTime: number;
-  gameStartTime: number;
+  time: number; // simulation time in milliseconds
 
-  // AI Agents (legacy fields kept for structural reference if needed, but no longer processed)
-  agents?: any[];
-  nextAgentId?: number;
-
-  // AI Agent Pools (new aggregate structure)
+  // AI Agent Pools
   agentPools: Record<JobType, JobPool>;
   totalAgents: bigint;
-  poolsVersion: number;
 
   // Human Workers
-  humanWorkers: any[];
   humanPools: Record<JobType, HumanPool>;
-  nextHumanWorkerId: number;
 
   // Global Subscription Tier
   subscriptionTier: SubscriptionTier;
@@ -134,8 +126,7 @@ export interface GameState {
   micMiniCount: bigint;
 
   // GPU & Compute
-  gpuCount: bigint;
-  installedGpuCount: bigint;   // computed: min(gpuCount, gpuCapacity)
+  installedGpuCount: bigint;   // computed: min(earth GPUs, gpuCapacity)
   totalPflops: bigint;         // Earth compute used for gameplay allocation
   earthPflops: bigint;         // computed
   moonPflops: bigint;          // computed
@@ -149,11 +140,10 @@ export interface GameState {
   // Datacenters: count per tier [small, medium, large, mega]
   datacenters: bigint[];
   gpuCapacity: bigint;         // computed
-  needsDatacenter: boolean;    // computed: gpuCount approaching capacity
+  needsDatacenter: boolean;    // computed: Earth GPU count approaching capacity
 
-  // Labor (legacy Earth alias)
-  labor: bigint;               // stockpile (Earth labor alias)
-  laborPerMin: bigint;         // computed (Earth labor alias)
+  // Labor
+  laborPerMin: bigint;         // computed Earth labor production rate
 
   // Multi-location supply state
   locationResources: Record<LocationId, LocationResourceState>;
@@ -167,7 +157,6 @@ export interface GameState {
   gridPowerKW: bigint;
   gasPlants: bigint;
   nuclearPlants: bigint;
-  solarFarms: bigint; // Legacy
   powerDemandMW: bigint;       // computed
   powerSupplyMW: bigint;       // computed
   powerThrottle: number;       // 0..1, 1 = no throttle
@@ -194,48 +183,6 @@ export interface GameState {
   synthDataRate: bigint;          // computed
   algoEfficiencyBonus: number;    // computed: multiplier for training speed
   gpuFlopsBonus: number;          // computed: multiplier for GPU PFLOPS
-
-  // Supply Chain Resources (Earth aliases for compatibility)
-  material: bigint;
-  solarPanels: bigint;
-  robots: bigint;
-  rockets: bigint;
-  gpuSatellites: bigint;
-
-  // Facilities (Earth aliases for compatibility)
-  materialMines: bigint;
-  solarFactories: bigint;
-  robotFactories: bigint;
-  gpuFactories: bigint;
-  rocketFactories: bigint;
-  gpuSatelliteFactories: bigint;
-
-  // Production Rates (Earth aliases for compatibility)
-  materialProductionPerMin: bigint;
-  solarPanelProductionPerMin: bigint;
-  robotProductionPerMin: bigint;
-  gpuProductionPerMin: bigint;
-  rocketProductionPerMin: bigint;
-  gpuSatelliteProductionPerMin: bigint;
-
-  // Consumption Rates (Earth aliases for compatibility)
-  materialConsumptionPerMin: bigint;
-  solarPanelConsumptionPerMin: bigint;
-  robotConsumptionPerMin: bigint;
-  gpuConsumptionPerMin: bigint;
-  rocketConsumptionPerMin: bigint;
-  gpuSatelliteConsumptionPerMin: bigint;
-
-  // Operating Rates (Earth aliases for compatibility)
-  materialMineRate: number;
-  solarFactoryRate: number;
-  robotFactoryRate: number;
-  gpuFactoryRate: number;
-  rocketFactoryRate: number;
-  gpuSatelliteFactoryRate: number;
-
-  // Rocket Logistics (legacy)
-  rocketReturns: number[];
 
   // New Logistics
   logisticsOrders: Record<string, bigint>;
@@ -270,23 +217,7 @@ export interface GameState {
   spaceUnlocked: boolean;
   launchCostBonus: number;
 
-  // Legacy moon/mercury fields kept for visuals
-  lunarBase: boolean;
-  lunarRobots: bigint;
-  lunarGPUs: bigint;
-  lunarSolarPanels: bigint;
-  moonMaterials: bigint;
-  moonMines: bigint;
-  moonDatacenters: bigint;
-  moonGpuFactories: bigint;
-  moonSolarFactories: bigint;
-  moonGpuSatelliteFactories: bigint;
-  moonMassDrivers: bigint;
-  lunarMassDriverRate: number;
-
-  mercuryBase: boolean;
-  mercuryRobots: bigint;
-  mercuryMiningRate: number;
+  // Mercury progress
   mercuryMassMined: bigint;
   mercuryMassTotal: bigint;
 
@@ -409,8 +340,6 @@ function createInitialPausedFacilities(): Record<FacilityId, boolean> {
 }
 
 export function createInitialState(): GameState {
-  const now = Date.now();
-
   const locationResources: Record<LocationId, LocationResourceState> = {
     earth: createEmptyLocationResources(),
     moon: createEmptyLocationResources(),
@@ -454,12 +383,9 @@ export function createInitialState(): GameState {
     },
 
     tickCount: 0,
-    lastTickTime: now,
-    gameStartTime: now,
+    time: 0,
 
-    humanWorkers: [],
     humanPools: initializeHumanPools(),
-    nextHumanWorkerId: 0,
 
     subscriptionTier: 'basic',
 
@@ -467,7 +393,6 @@ export function createInitialState(): GameState {
     micMiniCount: 0n,
 
     // GPU & Compute
-    gpuCount: 0n,
     installedGpuCount: 0n,
     totalPflops: 0n,
     earthPflops: 0n,
@@ -485,7 +410,6 @@ export function createInitialState(): GameState {
     needsDatacenter: false,
 
     // Labor
-    labor: 0n,
     laborPerMin: 0n,
 
     // Multi-location
@@ -500,7 +424,6 @@ export function createInitialState(): GameState {
     gridPowerKW: 0n,
     gasPlants: 0n,
     nuclearPlants: 0n,
-    solarFarms: 0n,
     powerDemandMW: 0n,
     powerSupplyMW: 0n,
     powerThrottle: 1,
@@ -528,43 +451,6 @@ export function createInitialState(): GameState {
     algoEfficiencyBonus: 1,
     gpuFlopsBonus: 1,
 
-    // Earth aliases
-    material: 0n,
-    solarPanels: 0n,
-    robots: 0n,
-    rockets: 0n,
-    gpuSatellites: 0n,
-
-    materialMines: 0n,
-    solarFactories: 0n,
-    robotFactories: 0n,
-    gpuFactories: 0n,
-    rocketFactories: 0n,
-    gpuSatelliteFactories: 0n,
-
-    materialProductionPerMin: 0n,
-    solarPanelProductionPerMin: 0n,
-    robotProductionPerMin: 0n,
-    gpuProductionPerMin: 0n,
-    rocketProductionPerMin: 0n,
-    gpuSatelliteProductionPerMin: 0n,
-
-    materialConsumptionPerMin: 0n,
-    solarPanelConsumptionPerMin: 0n,
-    robotConsumptionPerMin: 0n,
-    gpuConsumptionPerMin: 0n,
-    rocketConsumptionPerMin: 0n,
-    gpuSatelliteConsumptionPerMin: 0n,
-
-    materialMineRate: 0,
-    solarFactoryRate: 0,
-    robotFactoryRate: 0,
-    gpuFactoryRate: 0,
-    rocketFactoryRate: 0,
-    gpuSatelliteFactoryRate: 0,
-
-    rocketReturns: [],
-
     logisticsOrders: createInitialLogisticsMap(),
     logisticsSent: createInitialLogisticsMap(),
     logisticsInTransit: createInitialLogisticsMap(),
@@ -580,23 +466,6 @@ export function createInitialState(): GameState {
     satellites: 0n,
     dysonSwarmSatellites: 0n,
     dysonSwarmPowerMW: 0n,
-    lunarBase: false,
-    lunarRobots: 0n,
-    lunarGPUs: 0n,
-    lunarSolarPanels: 0n,
-    lunarMassDriverRate: 0,
-
-    moonMaterials: 0n,
-    moonMines: 0n,
-    moonDatacenters: 0n,
-    moonGpuFactories: 0n,
-    moonSolarFactories: 0n,
-    moonGpuSatelliteFactories: 0n,
-    moonMassDrivers: 0n,
-
-    mercuryBase: false,
-    mercuryRobots: 0n,
-    mercuryMiningRate: 0,
     mercuryMassMined: 0n,
     mercuryMassTotal: BALANCE.mercuryBaseMassTotal,
 
@@ -650,11 +519,10 @@ export function createInitialState(): GameState {
     // Agent pools (new structure)
     agentPools: initializeAgentPools(),
     totalAgents: toBigInt(1),
-    poolsVersion: 1,
   };
 }
 
-export function initializeJobPool(): JobPool {
+function initializeJobPool(): JobPool {
   return {
     totalCount: 0n,
     stuckCount: 0n,

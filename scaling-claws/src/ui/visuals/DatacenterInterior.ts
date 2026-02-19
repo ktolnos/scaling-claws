@@ -148,11 +148,11 @@ export class DatacenterInterior {
     }
 
     if (this.currentStage === 'rack') {
-      this.gpuCountLabel.textContent = formatNumber(state.gpuCount) + ' GPUs';
+      this.gpuCountLabel.textContent = formatNumber(state.locationResources.earth.gpus) + ' GPUs';
     }
 
     if (this.currentStage === 'datacenter' || this.currentStage === 'fullroom') {
-      const gcNum = fromBigInt(state.gpuCount);
+      const gcNum = fromBigInt(state.locationResources.earth.gpus);
       const targetRacks = Math.max(1, Math.min(12, Math.ceil(gcNum / 32)));
       while (this.rackCount < targetRacks) {
         const rack = document.createElement('div');

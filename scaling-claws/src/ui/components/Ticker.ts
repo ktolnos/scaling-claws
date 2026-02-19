@@ -5,7 +5,7 @@ const TICKER_INTERVAL_MS = 8000;
 export class Ticker {
   private el: HTMLElement;
   private textEl: HTMLDivElement;
-  private lastShowTime: number = 0;
+  private lastShowTime: number = -Infinity;
   private currentText: string = '';
 
   constructor(container: HTMLElement) {
@@ -16,7 +16,7 @@ export class Ticker {
   }
 
   update(state: GameState): void {
-    const now = Date.now();
+    const now = state.time;
 
     // Check if there's a pending text to show
     if (state.pendingFlavorTexts.length > 0 && now - this.lastShowTime > TICKER_INTERVAL_MS) {

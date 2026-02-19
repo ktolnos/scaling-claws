@@ -183,7 +183,7 @@ export class TopBar {
     }
 
     // Aggregate labor across Earth/Moon/Mercury
-    const earthLabor = state.locationResources?.earth?.labor ?? state.labor;
+    const earthLabor = state.locationResources.earth.labor;
     const moonLabor = state.locationResources?.moon?.labor ?? 0n;
     const mercuryLabor = state.locationResources?.mercury?.labor ?? 0n;
     const totalLabor = earthLabor + moonLabor + mercuryLabor;

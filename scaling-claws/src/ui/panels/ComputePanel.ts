@@ -5,6 +5,7 @@ import { BALANCE } from '../../game/BalanceConfig.ts';
 import { formatNumber, formatMoney, fromBigInt, toBigInt, divB, scaleB, mulB } from '../../game/utils.ts';
 import { buyGpu, upgradeModel, buyDatacenter, setApiPrice, buyAds, improveApi, unlockApi, setComputeAllocations } from '../../game/systems/ComputeSystem.ts';
 import { BulkBuyGroup, getBuyTiers } from '../components/BulkBuyGroup.ts';
+import { createPanelDivider, createPanelScaffold } from '../components/PanelScaffold.ts';
 import { UI_EMOJI, emojiHtml, moneyWithEmojiHtml, resourceLabelHtml } from '../emoji.ts';
 
 export class ComputePanel implements Panel {
@@ -12,7 +13,6 @@ export class ComputePanel implements Panel {
   private state: GameState;
 
   private modelNameEl!: HTMLSpanElement;
-  // private modelIntelEl!: HTMLSpanElement; // REMOVED
   private gpuCountEl!: HTMLSpanElement;
   private gpuStatusEl!: HTMLSpanElement;
   private installedGpuRow!: HTMLDivElement;
@@ -74,19 +74,13 @@ export class ComputePanel implements Panel {
 
   constructor(state: GameState) {
     this.state = state;
-    this.el = document.createElement('div');
-    this.el.className = 'panel';
+    const { panel } = createPanelScaffold('COMPUTE');
+    this.el = panel;
     this.build();
   }
 
   private build(): void {
-    const header = document.createElement('div');
-    header.className = 'panel-header';
-    header.textContent = 'COMPUTE';
-    this.el.appendChild(header);
-
-    const body = document.createElement('div');
-    body.className = 'panel-body';
+    const body = this.el.querySelector('.panel-body') as HTMLDivElement;
 
     // Model info
     const modelRow = document.createElement('div');
@@ -100,8 +94,6 @@ export class ComputePanel implements Panel {
     modelRow.appendChild(modelLabel);
     modelRow.appendChild(this.modelNameEl);
     body.appendChild(modelRow);
-
-    // Intel row REMOVED
 
     // Unassigned Agents
     const unassignedRow = document.createElement('div');
@@ -202,7 +194,7 @@ export class ComputePanel implements Panel {
     this.computeAllocationWrap.appendChild(this.allocSliderTrack);
     body.appendChild(this.computeAllocationWrap);
 
-    body.appendChild(this.createDivider());
+    body.appendChild(createPanelDivider());
 
     // GPUs buttons with count display
     this.buyGpuRow = document.createElement('div');
@@ -294,7 +286,7 @@ export class ComputePanel implements Panel {
     uRow.appendChild(this.upgradeBtn);
     this.upgradeSection.appendChild(uRow);
 
-    body.appendChild(this.createDivider());
+    body.appendChild(createPanelDivider());
 
     // Datacenter hint / buy section
     this.datacenterHintEl = document.createElement('div');
@@ -504,13 +496,6 @@ export class ComputePanel implements Panel {
 
     body.appendChild(this.apiSection);
 
-    this.el.appendChild(body);
-  }
-
-  private createDivider(): HTMLHRElement {
-    const hr = document.createElement('hr');
-    hr.className = 'panel-divider';
-    return hr;
   }
 
   private isTrainingAllocationUnlocked(state: GameState): boolean {
@@ -690,23 +675,24 @@ export class ComputePanel implements Panel {
 
   update(state: GameState): void {
     this.state = state;
+    const earthGpuCount = state.locationResources.earth.gpus;
 
     const model = BALANCE.models[state.currentModelIndex];
 
     this.modelNameEl.innerHTML = `${model.name} (${resourceLabelHtml('intel')} ${(Math.round(model.intel * 10) / 10).toString()})`;
-    this.gpuCountEl.textContent = 'x' + formatNumber(state.gpuCount);
+    this.gpuCountEl.textContent = 'x' + formatNumber(earthGpuCount);
 
-    const allInstallable = state.gpuCount <= state.gpuCapacity;
-    const shownInstalled = allInstallable ? state.gpuCount : state.installedGpuCount;
-    const installedPct = state.gpuCount > 0n ? Number(shownInstalled * 100n / state.gpuCount) : 100;
-    const stockLow = state.gpuCapacity > 0n && (state.gpuCount * 2n < state.gpuCapacity);
-    const capacityReached = state.gpuCount >= state.gpuCapacity;
+    const allInstallable = earthGpuCount <= state.gpuCapacity;
+    const shownInstalled = allInstallable ? earthGpuCount : state.installedGpuCount;
+    const installedPct = earthGpuCount > 0n ? Number(shownInstalled * 100n / earthGpuCount) : 100;
+    const stockLow = state.gpuCapacity > 0n && (earthGpuCount * 2n < state.gpuCapacity);
+    const capacityReached = earthGpuCount >= state.gpuCapacity;
     const installedPctLow = installedPct < 50;
     const stockColor = stockLow ? 'var(--accent-blue)' : '';
     const capacityColor = capacityReached ? 'var(--accent-red)' : '';
     const installedPctColor = installedPctLow ? 'var(--accent-red)' : '';
     this.gpuStatusEl.innerHTML =
-      `Stock <span style="color:${stockColor}">${formatNumber(state.gpuCount)}</span> | ` +
+      `Stock <span style="color:${stockColor}">${formatNumber(earthGpuCount)}</span> | ` +
       `Installed ${formatNumber(shownInstalled)} (` +
       `<span style="color:${installedPctColor}">${installedPct}%</span>) | ` +
       `Capacity <span style="color:${capacityColor}">${formatNumber(state.gpuCapacity)}</span>`;
@@ -741,7 +727,7 @@ export class ComputePanel implements Panel {
     this.updateUnifiedAllocationUi(state);
 
     // GPU buy buttons — rebuild if tiers changed, then update enabled state
-    const gpuNum = Math.floor(fromBigInt(state.gpuCount));
+    const gpuNum = Math.floor(fromBigInt(earthGpuCount));
     const tiers = getBuyTiers(gpuNum);
     const tiersKey = tiers.join(',');
     if (tiersKey !== this.lastGpuTiers) {
@@ -772,7 +758,7 @@ export class ComputePanel implements Panel {
       }
       if (this.upgradeBtn && this.upgradeBtnReq) {
           // nextModel.minGpus is already scaled in BalanceConfig
-          const gpuMet = state.gpuCount >= nextModel.minGpus;
+          const gpuMet = earthGpuCount >= nextModel.minGpus;
           const gpuColor = gpuMet ? '' : 'var(--accent-red)';
       this.upgradeBtnReq.innerHTML = `(Requires ${formatNumber(nextModel.minGpus)} ${emojiHtml('gpus')} GPUs)`;
           this.upgradeBtnReq.style.color = gpuColor;
@@ -783,13 +769,13 @@ export class ComputePanel implements Panel {
     }
 
     // Datacenter hint
-    if (state.gpuCount > state.gpuCapacity) {
+    if (earthGpuCount > state.gpuCapacity) {
       this.datacenterHintEl.innerHTML = `Unutilized ${resourceLabelHtml('gpus')}! Buy datacenters to install them.`;
       this.datacenterHintEl.style.color = 'var(--accent-red)';
-    } else if (state.gpuCount > scaleB(state.gpuCapacity, 0.8)) {
+    } else if (earthGpuCount > scaleB(state.gpuCapacity, 0.8)) {
       this.datacenterHintEl.innerHTML = `At ${formatNumber(state.gpuCapacity)} ${emojiHtml('gpus')} GPUs you'll need a datacenter.`;
       this.datacenterHintEl.style.color = 'var(--accent-blue)';
-    } else if (state.gpuCapacity > state.gpuCount * 2n) {
+    } else if (state.gpuCapacity > earthGpuCount * 2n) {
       this.datacenterHintEl.innerHTML = `Hint: ${resourceLabelHtml('gpus', 'GPUs')} must be bought separately from datacenters.`;
       this.datacenterHintEl.style.color = 'var(--accent-blue)';
     } else {
@@ -803,7 +789,7 @@ export class ComputePanel implements Panel {
         // Only show if player is near needing it or already has previous tiers
         if (i === 0 || state.datacenters[i] > 0n || state.datacenters[Math.max(0, i - 1)] > 0n) {
             refs.row.style.display = 'flex';
-            const earthLabor = state.locationResources?.earth?.labor ?? state.labor;
+            const earthLabor = state.locationResources.earth.labor;
             const laborMet = earthLabor >= dc.laborCost;
             const moneyMet = state.funds >= dc.cost;
 

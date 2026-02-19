@@ -5,6 +5,10 @@
  * - All prices are in dollars
  * - The game strives to have realistic numbers when possible.
  * - bigint is used for all large numbers. All bigints are scaled by default to allow for fixed-point precision (see utils.ts for details). If a number is not scaled, it should be noted in a comment.
+ * - This is not an idle game when played optimally. No wait times > 10 seconds.
+ * - new mechanics should be introcued gradually to the player.
+ * - the bottlneck resource should change throughout the game. The player should see the way to remove the bottleneck. E.g. if the bottleneck is money, the player should see the job that produces more money (even if it is locked), if the bottleneck is data, the player should see a research that increases data generation, etc. 
+ * - No research should be useless, each research should exist to solve some bottleneck. E.g. if the player is never constrained by the data, the synthetic data research would be useless. This should be resolved by adjusting data requirements in such a way that the player is constrained by the data when the research is unlocked. This applies to all research.
  */
 
 import { toBigInt, scaleBigInt, mulB } from './utils.ts';
@@ -55,6 +59,14 @@ export const JobTypes = {
 } as const;
 
 export type JobType = typeof JobTypes[keyof typeof JobTypes];
+export type FacilityProductionId =
+  | 'materialMine'
+  | 'solarFactory'
+  | 'robotFactory'
+  | 'gpuFactory'
+  | 'rocketFactory'
+  | 'gpuSatelliteFactory'
+  | 'massDriver';
 
 /** Display order for jobs in the UI. */
 export const JOB_ORDER: JobType[] = [
@@ -109,14 +121,11 @@ export const ResearchIds = {
 
   robotics2: 'robotics2',
   robotics3: 'robotics3',
+  facilityThroughput1: 'facilityThroughput1',
+  facilityThroughput2: 'facilityThroughput2',
+  jobThroughput1: 'jobThroughput1',
+  jobThroughput2: 'jobThroughput2',
 
-  // Legacy ids kept for compatibility
-  reusableRockets: 'reusableRockets',
-  spaceSystems1: 'spaceSystems1',
-  spaceSystems2: 'spaceSystems2',
-  spaceSystems3: 'spaceSystems3',
-
-  selfReplicating: 'selfReplicating',
   vonNeumannProbes: 'vonNeumannProbes',
 } as const;
 
@@ -128,6 +137,10 @@ export interface ResearchConfig {
   cost: bigint;
   prereqs: ResearchId[];
   description: string;
+  productionBoosts?: {
+    jobs?: Partial<Record<JobType, number>>;
+    facilities?: Partial<Record<FacilityProductionId, number>>;
+  };
 }
 
 export interface TierConfig {
@@ -186,7 +199,7 @@ export const BALANCE = {
   startingFunds: 10000000000000,
   startingCpuCores: 4,
   homePowerMW: 0.02,
-  tickIntervalMs: 50,
+  tickIntervalMs: 100,
   uiUpdateIntervalMs: 200,
   autoSaveIntervalMs: 30000,
 
@@ -303,8 +316,22 @@ export const BALANCE = {
     { id: 'synthData2', name: 'API Data Generation II',  cost: toBigInt(2000),  prereqs: ['synthData1'], description: 'API user data generation x2' },
     { id: 'synthData3', name: 'API Data Generation III', cost: toBigInt(20000), prereqs: ['synthData2'], description: 'API user data generation x2' },
     { id: 'syntheticData1', name: 'Synthetic Data I',    cost: toBigInt(1200),  prereqs: ['synthData1'], description: 'Unlock AI Data Synthesizer job' },
-    { id: 'syntheticData2', name: 'Synthetic Data II',   cost: toBigInt(6000),  prereqs: ['syntheticData1'], description: 'AI Data Synthesizer output x2' },
-    { id: 'syntheticData3', name: 'Synthetic Data III',  cost: toBigInt(30000), prereqs: ['syntheticData2'], description: 'AI Data Synthesizer output x2' },
+    {
+      id: 'syntheticData2',
+      name: 'Synthetic Data II',
+      cost: toBigInt(6000),
+      prereqs: ['syntheticData1'],
+      description: 'AI Data Synthesizer output x2',
+      productionBoosts: { jobs: { aiDataSynthesizer: 2 } },
+    },
+    {
+      id: 'syntheticData3',
+      name: 'Synthetic Data III',
+      cost: toBigInt(30000),
+      prereqs: ['syntheticData2'],
+      description: 'AI Data Synthesizer output x2',
+      productionBoosts: { jobs: { aiDataSynthesizer: 2 } },
+    },
 
     // Earth industrial start (pick order)
     { id: 'materialProcessing',   name: 'Material Processing',    cost: toBigInt(200),   prereqs: [],                    description: 'Unlock Earth material mines' },
@@ -334,26 +361,118 @@ export const BALANCE = {
     { id: 'reusableRockets3',     name: 'Reusable Rockets III',   cost: toBigInt(120000), prereqs: ['reusableRockets2'], description: 'Most rockets are recovered' },
 
     // Robotics scaling
-    { id: 'robotics2',            name: 'Robotics II',            cost: toBigInt(3000),  prereqs: ['robotics1'], description: 'Robots generate 2x labor' },
-    { id: 'robotics3',            name: 'Robotics III',           cost: toBigInt(30000), prereqs: ['robotics2'], description: 'Robots generate 4x labor' },
+    {
+      id: 'robotics2',
+      name: 'Robotics II',
+      cost: toBigInt(3000),
+      prereqs: ['robotics1'],
+      description: 'Robots generate 2x labor',
+      productionBoosts: { jobs: { robotWorker: 2 } },
+    },
+    {
+      id: 'robotics3',
+      name: 'Robotics III',
+      cost: toBigInt(30000),
+      prereqs: ['robotics2'],
+      description: 'Robots generate 4x labor',
+      productionBoosts: { jobs: { robotWorker: 2 } },
+    },
 
-    // Legacy path for compatibility/visual triggers
-    { id: 'spaceSystems1',        name: 'Space Systems I',        cost: toBigInt(5000),  prereqs: ['orbitalLogistics'], description: 'Legacy milestone' },
-    { id: 'spaceSystems2',        name: 'Space Systems II',       cost: toBigInt(30000), prereqs: ['spaceSystems1'], description: 'Legacy milestone' },
-    { id: 'spaceSystems3',        name: 'Space Systems III',      cost: toBigInt(200000), prereqs: ['spaceSystems2'], description: 'Legacy milestone' },
+    {
+      id: 'facilityThroughput1',
+      name: 'Facility Throughput I',
+      cost: toBigInt(80000),
+      prereqs: ['payloadToMercury'],
+      description: 'All industrial facilities produce 50% more',
+      productionBoosts: {
+        facilities: {
+          materialMine: 1.5,
+          solarFactory: 1.5,
+          robotFactory: 1.5,
+          gpuFactory: 1.5,
+          rocketFactory: 1.5,
+          gpuSatelliteFactory: 1.5,
+        },
+      },
+    },
+    {
+      id: 'facilityThroughput2',
+      name: 'Facility Throughput II',
+      cost: toBigInt(300000),
+      prereqs: ['facilityThroughput1'],
+      description: 'All industrial facilities produce 100% more',
+      productionBoosts: {
+        facilities: {
+          materialMine: 2,
+          solarFactory: 2,
+          robotFactory: 2,
+          gpuFactory: 2,
+          rocketFactory: 2,
+          gpuSatelliteFactory: 2,
+        },
+      },
+    },
+    {
+      id: 'jobThroughput1',
+      name: 'Workforce Throughput I',
+      cost: toBigInt(90000),
+      prereqs: ['payloadToMercury', 'syntheticData3'],
+      description: 'All late-game jobs produce 50% more',
+      productionBoosts: {
+        jobs: {
+          humanWorker: 1.5,
+          humanResearcher: 1.5,
+          humanSWE: 1.5,
+          aiSWE: 1.5,
+          aiResearcher: 1.5,
+          aiDataSynthesizer: 1.5,
+          robotWorker: 1.5,
+          manager: 1.5,
+        },
+      },
+    },
+    {
+      id: 'jobThroughput2',
+      name: 'Workforce Throughput II',
+      cost: toBigInt(350000),
+      prereqs: ['jobThroughput1'],
+      description: 'All late-game jobs produce 100% more',
+      productionBoosts: {
+        jobs: {
+          humanWorker: 2,
+          humanResearcher: 2,
+          humanSWE: 2,
+          aiSWE: 2,
+          aiResearcher: 2,
+          aiDataSynthesizer: 2,
+          robotWorker: 2,
+          manager: 2,
+        },
+      },
+    },
 
     { id: 'vonNeumannProbes',     name: 'Von Neumann Probes',     cost: scaleBigInt(1_000_000_000_000_000n), prereqs: ['payloadToMercury', 'robotics3'], description: 'Unlock endgame probe launch' },
-    { id: 'selfReplicating',      name: 'Self-Replicating Systems', cost: scaleBigInt(1_000_000_000_000_000n), prereqs: ['vonNeumannProbes'], description: 'Legacy alias for endgame' },
-
-    // Legacy aliases
-    { id: 'reusableRockets',      name: 'Reusable Rockets (Legacy)', cost: toBigInt(10000), prereqs: ['rocketry'], description: 'Legacy alias' },
 
     // Compute techs
     { id: 'gpuArch1', name: 'GPU Architecture v1', cost: toBigInt(400),    prereqs: ['chipManufacturing'], description: 'GPUs +50% FLOPS' },
     { id: 'gpuArch2', name: 'GPU Architecture v2', cost: toBigInt(3000),   prereqs: ['gpuArch1'], description: 'GPUs +50% FLOPS' },
     { id: 'gpuArch3', name: 'GPU Architecture v3', cost: toBigInt(25000),  prereqs: ['gpuArch2'], description: 'GPUs +100% FLOPS' },
-    { id: 'solarEfficiency1', name: 'Solar Efficiency I', cost: toBigInt(500),  prereqs: ['solarTechnology'], description: 'Solar +50% output' },
-    { id: 'solarEfficiency2', name: 'Solar Efficiency II', cost: toBigInt(5000), prereqs: ['solarEfficiency1'], description: 'Solar +100% output' },
+    {
+      id: 'solarEfficiency1',
+      name: 'Solar Efficiency I',
+      cost: toBigInt(500),
+      prereqs: ['solarTechnology'],
+      description: 'Solar factory output +50%',
+      productionBoosts: { facilities: { solarFactory: 1.5 } },
+    },
+    {
+      id: 'solarEfficiency2',
+      name: 'Solar Efficiency II',
+      cost: toBigInt(5000),
+      prereqs: ['solarEfficiency1'],
+      description: 'Solar factory output +100%',
+      productionBoosts: { facilities: { solarFactory: 2 } },
+    },
   ] as ResearchConfig[],
 
   // Supply chain costs
@@ -465,8 +584,6 @@ export const BALANCE = {
 
   // Robot labor by location
   robotLaborPerMinBase: toBigInt(20),
-  robotLaborMultRobotics2: 2,
-  robotLaborMultRobotics3: 4,
 
   // API Services
   apiUnlockIntel: 5.0,
@@ -489,11 +606,6 @@ export const BALANCE = {
  */
 export function getStuckRate(intel: number): number {
   return 1.2 * Math.min(0.5, 0.5 * Math.pow(1 / intel, 1));
-}
-
-/** Get intelligence for a subscription tier. */
-export function getIntelFromTier(tier: SubscriptionTier): number {
-  return BALANCE.tiers[tier].intel;
 }
 
 /** Get next tier in sequence, or null if maxed. */
@@ -519,4 +631,31 @@ export function getTotalGpuCapacity(datacenters: bigint[]): bigint {
     total += mulB(datacenters[i], BALANCE.datacenters[i].gpuCapacity);
   }
   return total;
+}
+
+const RESEARCH_BY_ID: Record<string, ResearchConfig> = Object.fromEntries(
+  BALANCE.research.map((research) => [research.id, research]),
+) as Record<string, ResearchConfig>;
+
+export function getJobProductionMultiplier(completedResearch: string[], jobType: JobType): number {
+  let multiplier = 1;
+  for (const researchId of completedResearch) {
+    const research = RESEARCH_BY_ID[researchId];
+    const boost = research?.productionBoosts?.jobs?.[jobType];
+    if (boost !== undefined) multiplier *= boost;
+  }
+  return multiplier;
+}
+
+export function getFacilityProductionMultiplier(
+  completedResearch: string[],
+  facilityId: FacilityProductionId,
+): number {
+  let multiplier = 1;
+  for (const researchId of completedResearch) {
+    const research = RESEARCH_BY_ID[researchId];
+    const boost = research?.productionBoosts?.facilities?.[facilityId];
+    if (boost !== undefined) multiplier *= boost;
+  }
+  return multiplier;
 }

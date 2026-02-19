@@ -1,18 +1,13 @@
 import type { GameState } from '../GameState.ts';
 import { BALANCE } from '../BalanceConfig.ts';
-import { toBigInt, mulB, scaleBigInt, fromBigInt } from '../utils.ts';
+import { toBigInt, mulB, fromBigInt } from '../utils.ts';
 
 function getEarthLaborPool(state: GameState): bigint {
-  return state.locationResources?.earth?.labor ?? state.labor;
+  return state.locationResources.earth.labor;
 }
 
 function spendEarthLabor(state: GameState, amount: bigint): void {
-  if (state.locationResources?.earth) {
-    state.locationResources.earth.labor -= amount;
-    state.labor = state.locationResources.earth.labor;
-  } else {
-    state.labor -= amount;
-  }
+  state.locationResources.earth.labor -= amount;
 }
 
 export function tickEnergy(state: GameState): void {
@@ -38,8 +33,8 @@ export function tickEnergy(state: GameState): void {
   }
 
   // Moon grid
-  const moonInstalledGpus = state.locationResources?.moon?.installedGpus ?? state.lunarGPUs;
-  const moonInstalledSolar = state.locationResources?.moon?.installedSolarPanels ?? state.lunarSolarPanels;
+  const moonInstalledGpus = state.locationResources.moon.installedGpus;
+  const moonInstalledSolar = state.locationResources.moon.installedSolarPanels;
 
   state.lunarPowerDemandMW = mulB(moonInstalledGpus, toBigInt(BALANCE.gpuPowerMW));
   state.lunarPowerSupplyMW = mulB(moonInstalledSolar, toBigInt(BALANCE.solarPanelMW));
@@ -123,29 +118,6 @@ export function buyNuclearPlant(state: GameState, amount: number = 1): boolean {
   state.funds -= totalCost;
   spendEarthLabor(state, totalLabor);
   state.nuclearPlants += amountB;
-  return true;
-}
-
-// Legacy APIs (unused in new flow but kept for compatibility)
-export function buySolarFarm(state: GameState): boolean {
-  if (state.funds < BALANCE.powerPlants.solar.cost) return false;
-  if (getEarthLaborPool(state) < BALANCE.powerPlants.solar.laborCost) return false;
-
-  state.funds -= BALANCE.powerPlants.solar.cost;
-  spendEarthLabor(state, BALANCE.powerPlants.solar.laborCost);
-  state.solarFarms += scaleBigInt(1n);
-  return true;
-}
-
-export function buySolarPanel(state: GameState, amount: number): boolean {
-  if (!state.locationResources?.earth) return false;
-  const amountB = toBigInt(amount);
-  const cost = mulB(amountB, BALANCE.solarPanelCost);
-  if (state.funds < cost) return false;
-
-  state.funds -= cost;
-  state.locationResources.earth.solarPanels += amountB;
-  state.solarPanels = state.locationResources.earth.solarPanels;
   return true;
 }
 
