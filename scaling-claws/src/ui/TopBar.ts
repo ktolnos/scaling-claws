@@ -1,6 +1,7 @@
 import type { GameState } from '../game/GameState.ts';
-import { formatMoney, formatFlops, formatNumber, formatMW } from '../game/utils.ts';
+import { formatFlops, formatNumber, formatMW } from '../game/utils.ts';
 import { deleteSave } from '../game/SaveManager.ts';
+import { emojiHtml, locationLabelHtml, moneyWithEmojiHtml, resourceLabelHtml } from './emoji.ts';
 
 export class TopBar {
   private container: HTMLElement;
@@ -8,7 +9,6 @@ export class TopBar {
   private fundsIncomeEl!: HTMLSpanElement;
   private fundsExpenseEl!: HTMLSpanElement;
   private intelValueEl!: HTMLSpanElement;
-  private efficiencyItem!: HTMLDivElement;
   private flopsItem!: HTMLDivElement;
   private codeItem!: HTMLDivElement;
   private scienceItem!: HTMLDivElement;
@@ -22,15 +22,13 @@ export class TopBar {
 
   private build(): void {
     this.container.innerHTML = '';
-    
-    // Detailed Breakdown Panel (Hidden initially)
+
     const breakdownPanel = document.createElement('div');
     breakdownPanel.id = 'top-bar-breakdown';
     breakdownPanel.className = 'hidden';
     this.container.appendChild(breakdownPanel);
 
-    // Funds
-    const fundsItem = this.createResourceItem('Funds');
+    const fundsItem = this.createResourceItem('Funds', 'funds');
     fundsItem.dataset.resource = 'funds';
     this.fundsValueEl = fundsItem.querySelector('.value')!;
     this.fundsIncomeEl = fundsItem.querySelector('[data-role="income"]')!;
@@ -39,52 +37,39 @@ export class TopBar {
 
     this.container.appendChild(this.createSeparator());
 
-    // Intelligence
-    const intelItem = this.createItem('Intel');
+    const intelItem = this.createItem('Intel', 'intel');
     this.intelValueEl = intelItem.querySelector('.value')!;
     intelItem.querySelector('.rate')!.remove();
     this.container.appendChild(intelItem);
 
-    // Efficiency (hidden initially)
-    this.efficiencyItem = this.createItem('Efficiency');
-    this.efficiencyItem.classList.add('hidden');
-    this.container.appendChild(this.efficiencyItem);
-
-    // FLOPS (hidden initially)
-    this.flopsItem = this.createItem('FLOPS');
+    this.flopsItem = this.createItem('FLOPS', 'flops');
     this.flopsItem.dataset.resource = 'compute';
     this.flopsItem.classList.add('hidden');
     this.container.appendChild(this.flopsItem);
 
-    // Code (hidden initially)
-    this.codeItem = this.createResourceItem('Code');
+    this.codeItem = this.createResourceItem('Code', 'code');
     this.codeItem.dataset.resource = 'code';
     this.codeItem.classList.add('hidden');
     this.container.appendChild(this.codeItem);
 
-    // Science (hidden initially)
-    this.scienceItem = this.createResourceItem('Science');
+    this.scienceItem = this.createResourceItem('Science', 'science');
     this.scienceItem.dataset.resource = 'science';
     this.scienceItem.classList.add('hidden');
     this.container.appendChild(this.scienceItem);
 
-    // Labor (hidden initially)
-    this.laborItem = this.createResourceItem('Labor');
+    this.laborItem = this.createResourceItem('Labor', 'labor');
     this.laborItem.dataset.resource = 'labor';
     this.laborItem.classList.add('hidden');
     this.container.appendChild(this.laborItem);
 
-    // Energy (hidden initially, shows once space unlocks)
-    this.energyItem = this.createItem('Energy');
+    this.energyItem = this.createItem('Energy', 'energy');
     this.energyItem.classList.add('hidden');
     this.container.appendChild(this.energyItem);
 
-    // Spacer to push restart button to the right
     const spacer = document.createElement('div');
     spacer.style.flex = '1';
     this.container.appendChild(spacer);
 
-    // Restart Button
     const restartBtn = document.createElement('button');
     restartBtn.className = 'btn-danger btn-restart';
     restartBtn.textContent = 'Restart Game';
@@ -96,7 +81,6 @@ export class TopBar {
     };
     this.container.appendChild(restartBtn);
 
-    // Hover logic for expansion
     this.container.onmouseenter = () => {
       this.container.classList.add('is-expanded');
       breakdownPanel.classList.remove('hidden');
@@ -107,14 +91,13 @@ export class TopBar {
     };
   }
 
-  /** Creates a simple item with label + value + rate (for intel, efficiency, flops). */
-  private createItem(label: string): HTMLDivElement {
+  private createItem(label: string, emojiKey?: Parameters<typeof emojiHtml>[0]): HTMLDivElement {
     const item = document.createElement('div');
     item.className = 'top-bar-item';
 
     const labelEl = document.createElement('span');
     labelEl.className = 'label';
-    labelEl.textContent = label + ':';
+    labelEl.innerHTML = emojiKey ? `${emojiHtml(emojiKey)} ${label}:` : `${label}:`;
     item.appendChild(labelEl);
 
     const valueEl = document.createElement('span');
@@ -129,14 +112,13 @@ export class TopBar {
     return item;
   }
 
-  /** Creates a resource item with label + value + separate income/expense spans. */
-  private createResourceItem(label: string): HTMLDivElement {
+  private createResourceItem(label: string, emojiKey?: Parameters<typeof emojiHtml>[0]): HTMLDivElement {
     const item = document.createElement('div');
     item.className = 'top-bar-item';
 
     const labelEl = document.createElement('span');
     labelEl.className = 'label';
-    labelEl.textContent = label + ':';
+    labelEl.innerHTML = emojiKey ? `${emojiHtml(emojiKey)} ${label}:` : `${label}:`;
     item.appendChild(labelEl);
 
     const valueEl = document.createElement('span');
@@ -170,32 +152,18 @@ export class TopBar {
   }
 
   update(state: GameState): void {
-    // Funds
-    this.fundsValueEl.textContent = formatMoney(state.funds);
-    const totalIncome = state.incomePerMin;
-    const totalExpense = state.expensePerMin;
-    this.fundsIncomeEl.textContent = totalIncome > 0n ? '+' + formatMoney(totalIncome) + '/m' : '';
-    this.fundsExpenseEl.textContent = totalExpense > 0n ? '-' + formatMoney(totalExpense) + '/m' : '';
+    this.fundsValueEl.innerHTML = moneyWithEmojiHtml(state.funds, 'funds');
+    this.fundsIncomeEl.innerHTML = state.incomePerMin > 0n ? '+' + moneyWithEmojiHtml(state.incomePerMin, 'funds') + '/m' : '';
+    this.fundsExpenseEl.innerHTML = state.expensePerMin > 0n ? '-' + moneyWithEmojiHtml(state.expensePerMin, 'funds') + '/m' : '';
 
-    // Intelligence
     this.intelValueEl.textContent = (Math.round(state.intelligence * 10) / 10).toString();
 
-    // Efficiency: show after GPU transition
-    if (state.isPostGpuTransition) {
-      this.efficiencyItem.classList.remove('hidden');
-      const eff = Math.round(state.agentEfficiency * 100);
-      const valueEl = this.efficiencyItem.querySelector('.value')!;
-      valueEl.textContent = eff + '%';
-      valueEl.className = eff < 100 ? 'value negative' : 'value';
-    }
-
-    // FLOPS: show after GPU transition
     if (state.isPostGpuTransition) {
       this.flopsItem.classList.remove('hidden');
-      this.flopsItem.querySelector('.value')!.textContent = formatFlops(state.totalPflops);
+      const totalFlops = state.totalPflopsDisplay > 0n ? state.totalPflopsDisplay : state.totalPflops;
+      this.flopsItem.querySelector('.value')!.textContent = formatFlops(totalFlops);
     }
 
-    // Code: show when player has code or code production
     if (state.code > 0n || state.codePerMin > 0n) {
       this.codeItem.classList.remove('hidden');
       this.codeItem.querySelector('.value')!.textContent = formatNumber(state.code);
@@ -205,7 +173,6 @@ export class TopBar {
       expenseEl.textContent = '';
     }
 
-    // Science: show when player has science or science production
     if (state.science > 0n || state.sciencePerMin > 0n) {
       this.scienceItem.classList.remove('hidden');
       this.scienceItem.querySelector('.value')!.textContent = formatNumber(state.science);
@@ -215,72 +182,70 @@ export class TopBar {
       expenseEl.textContent = '';
     }
 
-    // Labor: show when player has labor or labor production
-    if (state.labor > 0n || state.laborPerMin > 0n) {
+    // Aggregate labor across Earth/Moon/Mercury
+    const earthLabor = state.locationResources?.earth?.labor ?? state.labor;
+    const moonLabor = state.locationResources?.moon?.labor ?? 0n;
+    const mercuryLabor = state.locationResources?.mercury?.labor ?? 0n;
+    const totalLabor = earthLabor + moonLabor + mercuryLabor;
+
+    const moonLaborIncome = state.locationProductionPerMin?.moon?.labor ?? 0n;
+    const mercuryLaborIncome = state.locationProductionPerMin?.mercury?.labor ?? 0n;
+    const totalLaborIncome = state.laborPerMin + moonLaborIncome + mercuryLaborIncome;
+
+    if (totalLabor > 0n || totalLaborIncome > 0n) {
       this.laborItem.classList.remove('hidden');
-      this.laborItem.querySelector('.value')!.textContent = formatNumber(state.labor);
+      this.laborItem.querySelector('.value')!.textContent = formatNumber(totalLabor);
       const incomeEl = this.laborItem.querySelector('[data-role="income"]') as HTMLSpanElement;
       const expenseEl = this.laborItem.querySelector('[data-role="expense"]') as HTMLSpanElement;
-      incomeEl.textContent = state.laborPerMin > 0n ? '+' + formatNumber(state.laborPerMin) + '/m' : '';
+      incomeEl.textContent = totalLaborIncome > 0n ? '+' + formatNumber(totalLaborIncome) + '/m' : '';
       expenseEl.textContent = '';
     }
 
-    // Energy: show once space is unlocked (separate grids become interesting)
-    if (state.spaceUnlocked) {
+    if (state.isPostGpuTransition) {
       this.energyItem.classList.remove('hidden');
       const valueEl = this.energyItem.querySelector('.value')!;
       valueEl.textContent = formatMW(state.totalEnergyMW);
-      const rateEl = this.energyItem.querySelector('.rate')!;
-      rateEl.textContent = '';
+      this.energyItem.querySelector('.rate')!.textContent = '';
     }
 
-
-    // Update Breakdown Panel
     const breakdownEl = this.container.querySelector('#top-bar-breakdown')!;
     if (this.container.classList.contains('is-expanded')) {
-       this.renderBreakdown(breakdownEl, state);
+      this.renderBreakdown(breakdownEl, state);
     }
   }
 
   private renderBreakdown(container: Element, state: GameState): void {
     let html = '<div class="breakdown-grid">';
-    
-    // Funds
-    html += this.renderBreakdownSection('Funds ($/min)', state.resourceBreakdown.funds, formatMoney);
-    
-    // Code
-    html += this.renderBreakdownSection('Code (u/min)', state.resourceBreakdown.code, (v) => formatNumber(v));
-    
-    // Science
-    html += this.renderBreakdownSection('Science (u/min)', state.resourceBreakdown.science, (v) => formatNumber(v));
-    
-    // Labor
-    html += this.renderBreakdownSection('Labor (u/min)', state.resourceBreakdown.labor, (v) => formatNumber(v));
 
+    html += this.renderBreakdownSection(`${resourceLabelHtml('funds')} (${emojiHtml('funds')}/min)`, state.resourceBreakdown.funds, (v) => moneyWithEmojiHtml(v, 'funds'));
+    html += this.renderBreakdownSection(`${resourceLabelHtml('code')} (u/min)`, state.resourceBreakdown.code, (v) => formatNumber(v));
+    html += this.renderBreakdownSection(`${resourceLabelHtml('science')} (u/min)`, state.resourceBreakdown.science, (v) => formatNumber(v));
+    html += this.renderBreakdownSection(`${resourceLabelHtml('labor')} (u/min)`, state.resourceBreakdown.labor, (v) => formatNumber(v));
 
-    // Energy
-    if (state.spaceUnlocked) {
-      html += '<div class="breakdown-section">';
-      html += '<div class="section-title">Energy</div>';
-      html += `<div class="breakdown-row"><span class="label">Earth</span><span class="value">${formatMW(state.powerSupplyMW)} supply / ${formatMW(state.powerDemandMW)} demand</span></div>`;
-      if (state.lunarBase) {
-        html += `<div class="breakdown-row"><span class="label">Lunar</span><span class="value">${formatMW(state.lunarPowerSupplyMW)} supply / ${formatMW(state.lunarPowerDemandMW)} demand</span></div>`;
-      }
-      if (state.satellites > 0n) {
-        html += `<div class="breakdown-row"><span class="label">Orbital</span><span class="value">${formatMW(state.orbitalPowerMW)} (self-sufficient)</span></div>`;
-      }
-      html += '</div>';
-    }
-
-    // Compute
     if (state.isPostGpuTransition) {
       html += '<div class="breakdown-section">';
-      html += '<div class="section-title">Compute (PFLOPS)</div>';
+      html += `<div class="section-title">${resourceLabelHtml('energy')} by Location</div>`;
+      html += `<div class="breakdown-row"><span class="label">${locationLabelHtml('earth')}</span><span class="value">Supply ${formatMW(state.powerSupplyMW)} / Demand ${formatMW(state.powerDemandMW)}</span></div>`;
+      html += `<div class="breakdown-row"><span class="label">${locationLabelHtml('moon')}</span><span class="value">Supply ${formatMW(state.lunarPowerSupplyMW)} / Demand ${formatMW(state.lunarPowerDemandMW)}</span></div>`;
+      html += `<div class="breakdown-row"><span class="label">${locationLabelHtml('mercury')}</span><span class="value">Supply ${formatMW(state.mercuryPowerSupplyMW + (state.dysonSwarmPowerMW ?? 0n))} / Demand ${formatMW(state.mercuryPowerDemandMW)}</span></div>`;
+      html += `<div class="breakdown-row"><span class="label">${locationLabelHtml('orbit', 'Space (Orbit)')}</span><span class="value">${formatMW(state.orbitalPowerMW)}</span></div>`;
+      html += '</div>';
+
+      html += '<div class="breakdown-section">';
+      html += `<div class="section-title">${resourceLabelHtml('flops')} by Location</div>`;
+      html += `<div class="breakdown-row"><span class="label">${locationLabelHtml('earth')}</span><span class="value">${formatFlops(state.earthPflops)}</span></div>`;
+      html += `<div class="breakdown-row"><span class="label">${locationLabelHtml('moon')}</span><span class="value">${formatFlops(state.moonPflops)}</span></div>`;
+      html += `<div class="breakdown-row"><span class="label">${locationLabelHtml('mercury')}</span><span class="value">${formatFlops(state.mercuryPflops)}</span></div>`;
+      html += `<div class="breakdown-row"><span class="label">${locationLabelHtml('orbit', 'Space (Orbit)')}</span><span class="value">${formatFlops(state.orbitalPflops)}</span></div>`;
+      html += `<div class="breakdown-row"><span class="label">Total</span><span class="value">${formatFlops(state.totalPflopsDisplay > 0n ? state.totalPflopsDisplay : state.totalPflops)}</span></div>`;
+      html += '</div>';
+
+      html += '<div class="breakdown-section">';
+      html += `<div class="section-title">${resourceLabelHtml('flops', 'Compute Allocation')} (Earth Runtime)</div>`;
       for (const item of state.resourceBreakdown.compute) {
         const pflopsNum = typeof item.pflops === 'bigint' ? Number(item.pflops) / 1_000_000 : item.pflops;
         html += `<div class="breakdown-row"><span class="label">${item.label}</span><span class="value">${(Math.round(pflopsNum * 10) / 10).toString()}</span></div>`;
       }
-
       html += '</div>';
     }
 
@@ -288,19 +253,19 @@ export class TopBar {
     container.innerHTML = html;
   }
 
-  private renderBreakdownSection(title: string, data: { income: any[], expense: any[] }, formatter: (v: bigint) => string): string {
+  private renderBreakdownSection(title: string, data: { income: any[]; expense: any[] }, formatter: (v: bigint) => string): string {
     if (data.income.length === 0 && data.expense.length === 0) return '';
-    
+
     let html = '<div class="breakdown-section">';
     html += `<div class="section-title">${title}</div>`;
-    
+
     for (const item of data.income) {
       html += `<div class="breakdown-row"><span class="label">${item.label}</span><span class="value income">+${formatter(item.ratePerMin)}</span></div>`;
     }
     for (const item of data.expense) {
       html += `<div class="breakdown-row"><span class="label">${item.label}</span><span class="value expense">-${formatter(item.ratePerMin)}</span></div>`;
     }
-    
+
     html += '</div>';
     return html;
   }

@@ -2,9 +2,10 @@ import type { GameState } from '../../game/GameState.ts';
 import { getTotalAssignedAgents } from '../../game/GameState.ts';
 import type { Panel } from '../PanelManager.ts';
 import { BALANCE, getNextTier } from '../../game/BalanceConfig.ts';
-import { formatMoney, formatNumber, mulB, fromBigInt } from '../../game/utils.ts';
+import { formatNumber, mulB, fromBigInt } from '../../game/utils.ts';
 import { buyMicMini, goSelfHosted, upgradeTier, hireAgent } from '../../game/systems/ComputeSystem.ts';
 import { flashElement } from '../UIUtils.ts';
+import { emojiHtml, moneyWithEmojiHtml, resourceLabelHtml } from '../emoji.ts';
 
 export class AgentsPanel implements Panel {
   readonly el: HTMLElement;
@@ -225,7 +226,7 @@ export class AgentsPanel implements Panel {
     micLeft.appendChild(this.micMiniCountEl);
 
     this.micMiniBuyBtn = document.createElement('button');
-    this.micMiniBuyBtn.innerHTML = 'Buy ' + formatMoney(BALANCE.micMini.cost) + ' <span style="font-size:0.8em;opacity:0.8">+8 cores</span>';
+    this.micMiniBuyBtn.innerHTML = `Buy ${moneyWithEmojiHtml(BALANCE.micMini.cost, 'funds')} <span style="font-size:0.8em;color:var(--text-secondary)">+8 cores</span>`;
     this.micMiniBuyBtn.className = 'btn-mini';
     this.micMiniBuyBtn.style.minWidth = '120px';
     this.micMiniBuyBtn.addEventListener('click', () => {
@@ -308,8 +309,8 @@ export class AgentsPanel implements Panel {
     // -- Subscription Tier --
     const currentTier = BALANCE.tiers[state.subscriptionTier];
     this.subTierNameEl.textContent = currentTier.displayName;
-    this.subTierIntelEl.textContent = `Intel ${(Math.round(currentTier.intel * 10) / 10).toString()}`;
-    this.subTierCostEl.textContent = `${formatMoney(currentTier.cost)} upfront`;
+    this.subTierIntelEl.innerHTML = `${resourceLabelHtml('intel')} ${(Math.round(currentTier.intel * 10) / 10).toString()}`;
+    this.subTierCostEl.innerHTML = `${moneyWithEmojiHtml(currentTier.cost, 'funds')} upfront`;
     
     // Upgrade Info
     const nextTierType = getNextTier(state.subscriptionTier);
@@ -321,7 +322,7 @@ export class AgentsPanel implements Panel {
       this.upgradeBtn.style.display = 'block';
       const agentCount = state.totalAgents;
       const upgradeCost = mulB(nextTier.cost, agentCount);
-      this.upgradeBtn.textContent = `Upgrade to ${nextTier.displayName} (${formatNumber(agentCount)}×${formatMoney(nextTier.cost)} = ${formatMoney(upgradeCost)}, ${(Math.round(nextTier.intel * 10) / 10).toString()} Intel)`;
+      this.upgradeBtn.innerHTML = `Upgrade to ${nextTier.displayName} (${formatNumber(agentCount)} × ${moneyWithEmojiHtml(nextTier.cost, 'funds')} = ${moneyWithEmojiHtml(upgradeCost, 'funds')}, ${resourceLabelHtml('intel')} ${(Math.round(nextTier.intel * 10) / 10).toString()})`;
       
       this.upgradeBtn.disabled = state.funds < upgradeCost;
       
@@ -349,10 +350,10 @@ export class AgentsPanel implements Panel {
       this.unassignedCountEl.style.color = '';
     }
     
-    this.incBtn.textContent = `Hire (${formatMoney(currentTier.cost)})`;
+    this.incBtn.innerHTML = `Hire (${moneyWithEmojiHtml(currentTier.cost, 'funds')})`;
     this.incBtn.disabled = state.funds < currentTier.cost;
 
-    this.agentCostEl.textContent = `${formatMoney(currentTier.cost)} per agent`;
+    this.agentCostEl.innerHTML = `${moneyWithEmojiHtml(currentTier.cost, 'funds')} per agent`;
 
     // CPU Cores
     const coresFree = state.cpuCoresTotal - state.usedCores;
@@ -367,13 +368,13 @@ export class AgentsPanel implements Panel {
       this.micMiniBuyBtn.textContent = 'MAX REACHED';
     } else {
       this.micMiniBuyBtn.disabled = state.funds < BALANCE.micMini.cost;
-      this.micMiniBuyBtn.innerHTML = 'Buy ' + formatMoney(BALANCE.micMini.cost) + ' <span style="font-size:0.8em;opacity:0.8">+8 cores</span>';
+      this.micMiniBuyBtn.innerHTML = `Buy ${moneyWithEmojiHtml(BALANCE.micMini.cost, 'funds')} <span style="font-size:0.8em;color:var(--text-secondary)">+8 cores</span>`;
     }
 
     // Summary
     const totalAgents = state.totalAgents;
     this.totalAgentsEl.textContent = 'Total agents: ' + formatNumber(totalAgents);
-    this.totalCostEl.textContent = 'Income potential: ' + formatMoney(state.incomePerMin) + '/min';
+    this.totalCostEl.innerHTML = `Income potential: ${moneyWithEmojiHtml(state.incomePerMin, 'funds')}/min`;
 
     // Go Self-Hosted
     const minGpus = BALANCE.models[0].minGpus;
@@ -381,7 +382,7 @@ export class AgentsPanel implements Panel {
     const gpuCost = mulB(gpuCount, BALANCE.gpuCost);
     if (!state.isPostGpuTransition && state.intelligence >= BALANCE.selfHostedUnlockIntel) {
       this.selfHostedSection.classList.remove('hidden');
-      this.selfHostedCostEl.textContent = formatNumber(gpuCount) + ' GPUs x ' + formatMoney(BALANCE.gpuCost) + ' = ' + formatMoney(gpuCost);
+      this.selfHostedCostEl.innerHTML = `${formatNumber(gpuCount)} ${emojiHtml('gpus')} GPUs x ${moneyWithEmojiHtml(BALANCE.gpuCost, 'funds')} = ${moneyWithEmojiHtml(gpuCost, 'funds')}`;
       this.selfHostedBtn.disabled = state.funds < gpuCost;
     } else {
       this.selfHostedSection.classList.add('hidden');

@@ -17,9 +17,8 @@ const FLAVOR_TEXTS_MIC_MINI = [
 /** Unstick stuck agents in bulk. */
 function nudgeAgents(state: GameState, count: bigint): void {
   let remaining = count;
-  for (const jobType of JOB_ORDER) {
+  for (const pool of Object.values(state.agentPools)) {
     if (remaining <= 0n) break;
-    const pool = state.agentPools[jobType];
     if (!pool || pool.stuckCount <= 0n) continue;
 
     const toUnstick = remaining < pool.stuckCount ? remaining : pool.stuckCount;
@@ -54,14 +53,35 @@ function applyProduction(state: GameState, resource: string, amount: bigint, com
       break;
     case 'labor':
       state.labor += total;
+      if (state.locationResources?.earth) {
+        state.locationResources.earth.labor += total;
+      }
+      break;
+    case 'data':
+      state.trainingData += total;
       break;
     case 'nudge':
-      nudgeAgents(state, total);
+      // Apply nudges after all jobs finish this tick so managers can clear newly stuck agents too.
+      state.nudgeBuffer += total;
       break;
   }
 }
 
+function getJobOutputAmount(state: GameState, jobType: JobType, baseAmount: bigint): bigint {
+  if (jobType !== 'aiDataSynthesizer') return baseAmount;
+
+  let output = baseAmount;
+  if (state.completedResearch.includes('syntheticData2')) output *= 2n;
+  if (state.completedResearch.includes('syntheticData3')) output *= 2n;
+  return output;
+}
+
 export function tickJobs(state: GameState, dtMs: number): void {
+  // Back-compat for older saves that predate nudgeBuffer.
+  if ((state as any).nudgeBuffer === undefined) {
+    state.nudgeBuffer = 0n;
+  }
+
   const intel = state.intelligence;
 
   // 1. Recompute unlocked jobs from current state
@@ -89,6 +109,12 @@ export function tickJobs(state: GameState, dtMs: number): void {
     }
 
     let visible = intel >= jobConfig.unlockAtIntel;
+    if (jobType === 'robotWorker') {
+      visible = visible && state.completedResearch.includes('robotics1');
+    }
+    if (visible && jobConfig.agentResearchReq && jobConfig.agentResearchReq.length > 0) {
+      visible = jobConfig.agentResearchReq.every((id) => state.completedResearch.includes(id));
+    }
 
     if (visible) {
       unlocked.push(jobType);
@@ -108,6 +134,7 @@ export function tickJobs(state: GameState, dtMs: number): void {
   let codePerMin = 0n;
   let sciencePerMin = 0n;
   let laborPerMin = 0n;
+  let dataPerMin = 0n;
 
   // --- Unified Worker Processing ---
   let humanSalaryPerMin = 0n;
@@ -121,6 +148,7 @@ export function tickJobs(state: GameState, dtMs: number): void {
 
     // 1. Process AI Agents
     if (aiPool && aiPool.totalCount > 0n) {
+      const outputAmount = getJobOutputAmount(state, jobType, jobConfig.produces.amount);
       const taskTime = jobConfig.timeMs;
       // Progress per tick for ONE agent, scaled
       const progressPerTickScaled = scaleB(toBigInt(state.agentEfficiency * intel * dtMs), 1.0 / taskTime);
@@ -167,7 +195,7 @@ export function tickJobs(state: GameState, dtMs: number): void {
           aiPool.aggregateProgress -= completions * scaleBigInt(1n);
           completedThisTick += completions;
           state.completedTasks += completions;
-          applyProduction(state, jobConfig.produces.resource, jobConfig.produces.amount, completions);
+          applyProduction(state, jobConfig.produces.resource, outputAmount, completions);
 
           // Milestone flavor texts
           if (state.completedTasks === 1n && !state.shownFlavorTexts.includes(FLAVOR_TEXTS_EARLY[0])) {
@@ -191,7 +219,7 @@ export function tickJobs(state: GameState, dtMs: number): void {
         }
 
         // Rates for UI
-        let effectiveRate = divB(mulB(jobConfig.produces.amount, scaleBigInt(60000n)), toBigInt(taskTime));
+        let effectiveRate = divB(mulB(outputAmount, scaleBigInt(60000n)), toBigInt(taskTime));
         effectiveRate = scaleB(effectiveRate, state.agentEfficiency * intel);
         effectiveRate = mulB(effectiveRate, workingAgents);
 
@@ -200,12 +228,14 @@ export function tickJobs(state: GameState, dtMs: number): void {
         else if (jobConfig.produces.resource === 'code') codePerMin += effectiveRate;
         else if (jobConfig.produces.resource === 'science') sciencePerMin += effectiveRate;
         else if (jobConfig.produces.resource === 'labor') laborPerMin += effectiveRate;
+        else if (jobConfig.produces.resource === 'data') dataPerMin += effectiveRate;
       }
       aiPool.stuckCount = sampleStuck + restStuck;
     }
 
     // 2. Process Human Workers
     if (humanPool && humanPool.totalCount > 0n) {
+      const outputAmount = getJobOutputAmount(state, jobType, jobConfig.produces.amount);
       const progressPerTickScaled = scaleB(toBigInt(dtMs), 1.0 / jobConfig.timeMs);
       
       humanPool.aggregateProgress += mulB(progressPerTickScaled, humanPool.totalCount);
@@ -215,7 +245,7 @@ export function tickJobs(state: GameState, dtMs: number): void {
         humanPool.aggregateProgress -= completions * scaleBigInt(1n);
         completedThisTick += completions;
         state.completedTasks += completions;
-        applyProduction(state, jobConfig.produces.resource, jobConfig.produces.amount, completions);
+        applyProduction(state, jobConfig.produces.resource, outputAmount, completions);
       }
 
       // Update sample progress for UI
@@ -230,25 +260,56 @@ export function tickJobs(state: GameState, dtMs: number): void {
       if (jobConfig.salaryPerMin) humanSalaryPerMin += mulB(jobConfig.salaryPerMin, humanPool.totalCount);
 
       // Rates for UI
-      let effectiveRate = divB(mulB(jobConfig.produces.amount, scaleBigInt(60000n)), toBigInt(jobConfig.timeMs));
+      let effectiveRate = divB(mulB(outputAmount, scaleBigInt(60000n)), toBigInt(jobConfig.timeMs));
       effectiveRate = mulB(effectiveRate, humanPool.totalCount);
       updateBreakdown(state, jobConfig, jobType, effectiveRate, true);
       if (jobConfig.produces.resource === 'funds') fundsIncomePerMin += effectiveRate;
       else if (jobConfig.produces.resource === 'code') codePerMin += effectiveRate;
       else if (jobConfig.produces.resource === 'science') sciencePerMin += effectiveRate;
       else if (jobConfig.produces.resource === 'labor') laborPerMin += effectiveRate;
+      else if (jobConfig.produces.resource === 'data') dataPerMin += effectiveRate;
     }
   }
 
   // Global stuck count sync
-  state.stuckCount = 0n;
-  for (const pool of Object.values(state.agentPools)) state.stuckCount += pool.stuckCount;
+  let stuckBeforeNudges = 0n;
+  for (const pool of Object.values(state.agentPools)) stuckBeforeNudges += pool.stuckCount;
+  state.stuckCount = stuckBeforeNudges;
+
+  // Keep a small carryover window so manager output can smooth random spikes in stuck agents.
+  const managerPool = state.agentPools['manager'];
+  const activeManagers = managerPool.totalCount - managerPool.idleCount;
+  const managerCfg = BALANCE.jobs['manager'];
+  let managerNudgesPerMin = divB(mulB(managerCfg.produces.amount, scaleBigInt(60000n)), toBigInt(managerCfg.timeMs));
+  managerNudgesPerMin = scaleB(managerNudgesPerMin, state.agentEfficiency * intel);
+  managerNudgesPerMin = mulB(managerNudgesPerMin, activeManagers > 0n ? activeManagers : 0n);
+  const nudgeBufferCap = (managerNudgesPerMin * 5n) / 60n; // ~5s carryover
+  if (state.nudgeBuffer > nudgeBufferCap) {
+    state.nudgeBuffer = nudgeBufferCap;
+  }
+
+  // Spend buffered nudges after all stuck rolls have been processed.
+  if (state.stuckCount > 0n && state.nudgeBuffer > 0n) {
+    const toSpend = state.nudgeBuffer < state.stuckCount ? state.nudgeBuffer : state.stuckCount;
+    nudgeAgents(state, toSpend);
+    state.nudgeBuffer -= toSpend;
+
+    let stuckAfterNudges = 0n;
+    for (const pool of Object.values(state.agentPools)) stuckAfterNudges += pool.stuckCount;
+    state.stuckCount = stuckAfterNudges;
+  }
 
   // Update computed rates
   state.incomePerMin = fundsIncomePerMin + (state.apiUnlocked ? state.apiIncomePerMin : 0n);
   state.codePerMin = codePerMin;
   state.sciencePerMin = sciencePerMin;
-  state.laborPerMin = laborPerMin;
+  const robotLaborEarthPerMin = state.locationProductionPerMin?.earth?.labor ?? 0n;
+  if (state.locationProductionPerMin?.earth) {
+    state.locationProductionPerMin.earth.labor += laborPerMin;
+  }
+  state.laborPerMin = laborPerMin + robotLaborEarthPerMin;
+  const apiDataPerMin = state.apiUnlocked ? mulB(state.apiUserCount, state.apiUserSynthRate) : 0n;
+  state.synthDataRate = apiDataPerMin + dataPerMin;
   state.humanSalaryPerMin = humanSalaryPerMin;
 
   // --- Auto-Firing Logic ---
@@ -577,4 +638,40 @@ export function fireHumanWorkers(state: GameState, jobType: JobType, count: numb
   pool.totalCount -= toFire;
   return Math.floor(fromBigInt(toFire));
 }
+
+export function buyRobotWorkers(state: GameState, count: number): number {
+  const countB = toBigInt(count);
+  if (countB <= 0n) return 0;
+  if (!state.completedResearch.includes('robotics1')) return 0;
+
+  const maxBuyable = toBigInt(BALANCE.robotWorkerBuyLimit);
+  const owned = state.locationResources.earth.robots;
+  const remaining = maxBuyable > owned ? (maxBuyable - owned) : 0n;
+  if (remaining <= 0n) return 0;
+
+  const cappedByLimit = countB < remaining ? countB : remaining;
+  const unitCost = BALANCE.robotImportCost;
+  const affordable = unitCost > 0n ? divB(state.funds, unitCost) : cappedByLimit;
+  const toBuy = cappedByLimit < affordable ? cappedByLimit : affordable;
+  if (toBuy <= 0n) return 0;
+
+  state.funds -= mulB(toBuy, unitCost);
+  state.locationResources.earth.robots += toBuy;
+  state.robots = state.locationResources.earth.robots;
+  return Math.floor(fromBigInt(toBuy));
+}
+
+export function fireRobotWorkers(state: GameState, count: number): number {
+  const countB = toBigInt(count);
+  if (countB <= 0n) return 0;
+
+  const pool = state.locationResources.earth.robots;
+  const toFire = countB < pool ? countB : pool;
+  if (toFire <= 0n) return 0;
+
+  state.locationResources.earth.robots -= toFire;
+  state.robots = state.locationResources.earth.robots;
+  return Math.floor(fromBigInt(toFire));
+}
+
 

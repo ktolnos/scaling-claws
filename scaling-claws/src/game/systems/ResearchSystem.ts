@@ -3,7 +3,6 @@ import { BALANCE } from '../BalanceConfig.ts';
 import type { ResearchId, ResearchConfig } from '../BalanceConfig.ts';
 
 export function tickResearch(state: GameState, _dtMs: number): void {
-  // Compute research bonuses from completedResearch
   computeResearchBonuses(state);
 }
 
@@ -16,14 +15,14 @@ function computeResearchBonuses(state: GameState): void {
   if (state.completedResearch.includes('algoEfficiency4')) algoBonus *= 1.25;
   state.algoEfficiencyBonus = algoBonus;
 
-  // GPU FLOPS: v1 +50%, v2 +50%, v3 +100%
+  // GPU FLOPS
   let gpuBonus = 1.0;
   if (state.completedResearch.includes('gpuArch1')) gpuBonus *= 1.5;
   if (state.completedResearch.includes('gpuArch2')) gpuBonus *= 1.5;
   if (state.completedResearch.includes('gpuArch3')) gpuBonus *= 2.0;
   state.gpuFlopsBonus = gpuBonus;
 
-  // Synth Data from research
+  // API user data generation bonuses
   let synthRate = 0n;
   if (state.completedResearch.includes('synthData1')) {
     synthRate = BALANCE.apiUserSynthBase;
@@ -32,10 +31,19 @@ function computeResearchBonuses(state: GameState): void {
   }
   state.apiUserSynthRate = synthRate;
 
-  // Launch cost reduction from space research
-  let launchBonus = 1.0;
-  if (state.completedResearch.includes('reusableRockets')) launchBonus *= 0.6; // Changed from spaceRockets2
-  state.launchCostBonus = launchBonus;
+  // Rocket loss / recovery tiers
+  let rocketLoss = BALANCE.rocketLossNoReuse;
+  if (state.completedResearch.includes('reusableRockets') || state.completedResearch.includes('reusableRockets1')) {
+    rocketLoss = BALANCE.rocketLossReusable1;
+  }
+  if (state.completedResearch.includes('reusableRockets2')) {
+    rocketLoss = BALANCE.rocketLossReusable2;
+  }
+  if (state.completedResearch.includes('reusableRockets3')) {
+    rocketLoss = BALANCE.rocketLossReusable3;
+  }
+  state.rocketLossPct = rocketLoss;
+  state.launchCostBonus = 1 - rocketLoss;
 }
 
 export function getResearchConfig(id: ResearchId): ResearchConfig | undefined {
@@ -50,7 +58,6 @@ export function canPurchaseResearch(state: GameState, id: ResearchId): boolean {
 
   if (state.science < config.cost) return false;
 
-  // Check prereqs
   for (const prereq of config.prereqs) {
     if (!state.completedResearch.includes(prereq)) return false;
   }
@@ -65,35 +72,19 @@ export function purchaseResearch(state: GameState, id: ResearchId): boolean {
   state.science -= config.cost;
   state.completedResearch.push(id);
 
-  // Flavor texts for notable research
-  if (id === 'chipManufacturing') {
-    state.pendingFlavorTexts.push(
-      '"Your first chip fab. TSMC is not worried. Yet."'
-    );
-  } else if (id === 'robotics1') {
-    state.pendingFlavorTexts.push(
-      '"Robot factory blueprints acquired. The future is automation."'
-    );
-  } else if (id === 'synthData1') {
-    state.pendingFlavorTexts.push(
-      '"Synthetic data pipeline online. Your users are now training the model for you."'
-    );
-  } else if (id === 'rocketry') {
-    state.pendingFlavorTexts.push(
-      '"Rocket blueprints acquired. Your neighbors have questions about the delivery."'
-    );
-  } else if (id === 'orbitalLogistics') {
-    state.pendingFlavorTexts.push(
-      '"Orbital satellite capability unlocked. The sun works for free."'
-    );
-  } else if (id === 'spaceSystems2') { // Assuming this stayed same?
-    state.pendingFlavorTexts.push(
-      '"Lunar operations unlocked. One small step for AI, one giant leap for compute."'
-    );
-  } else if (id === 'spaceSystems3') {
-    state.pendingFlavorTexts.push(
-      '"Mercury operations unlocked. The closest planet to the sun has the best solar real estate."'
-    );
+  // Flavor text highlights
+  if (id === 'robotics1') {
+    state.pendingFlavorTexts.push('"Robots now generate labor wherever they are deployed."');
+  } else if (id === 'syntheticData1') {
+    state.pendingFlavorTexts.push('"AI Data Synthesizer unlocked. Agents can now generate training data directly."');
+  } else if (id === 'payloadToMoon') {
+    state.pendingFlavorTexts.push('"Lunar logistics online. Earth no longer runs alone."');
+  } else if (id === 'payloadToMercury') {
+    state.pendingFlavorTexts.push('"Mercury corridor unlocked. The Dyson route is open."');
+  } else if (id === 'moonMassDrivers') {
+    state.pendingFlavorTexts.push('"Mass drivers active. Payload throughput surges."');
+  } else if (id === 'vonNeumannProbes' || id === 'selfReplicating') {
+    state.pendingFlavorTexts.push('"Probe architecture complete. You can now trigger the endgame launch."');
   }
 
   return true;
@@ -102,7 +93,6 @@ export function purchaseResearch(state: GameState, id: ResearchId): boolean {
 export function getAvailableResearch(state: GameState): ResearchConfig[] {
   return BALANCE.research.filter(r => {
     if (state.completedResearch.includes(r.id)) return false;
-    // All prereqs met?
     for (const prereq of r.prereqs) {
       if (!state.completedResearch.includes(prereq)) return false;
     }

@@ -105,9 +105,17 @@ export function formatTime(ms: number): string {
 export function formatMW(mw: number | bigint): string {
   // Power is always scaled
   const val = typeof mw === 'bigint' ? fromBigInt(mw) : mw;
+  if (val < 0) return '-' + formatMW(-val);
   if (val < 1) return Math.round(val * 1000).toString() + ' kW';
-  if (val < 1000) return (Math.round(val * 10) / 10).toString() + ' MW';
-  return (Math.round((val / 1000) * 10) / 10).toString() + ' GW';
+
+  const units = ['MW', 'GW', 'TW', 'PW', 'EW', 'ZW', 'YW'];
+  let scaled = val;
+  let unitIdx = 0;
+  while (scaled >= 1000 && unitIdx < units.length - 1) {
+    scaled /= 1000;
+    unitIdx++;
+  }
+  return (Math.round(scaled * 10) / 10).toString() + ' ' + units[unitIdx];
 }
 
 export function formatFlops(flops: number | bigint): string {
@@ -117,4 +125,3 @@ export function formatFlops(flops: number | bigint): string {
   if (val < 1e6) return (Math.round((val / 1e3) * 10) / 10).toString() + ' EFLOPS';
   return (Math.round((val / 1e6) * 10) / 10).toString() + ' ZFLOPS';
 }
-

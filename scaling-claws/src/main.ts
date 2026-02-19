@@ -39,7 +39,6 @@ const ticker = new Ticker(document.getElementById('ticker')!);
 // GPU transition callback
 function handleGpuTransition(): void {
   panelManager.replace('agents', new ComputePanel(loop.getState()));
-  // Energy panel now added when first datacenter purchased
 }
 
 // Register panels
@@ -76,12 +75,6 @@ let energyPanelAdded = state.datacenters.some(c => c > 0n) || spacePanelAdded;
 // UI update loop
 setInterval(() => {
   const s = loop.getState();
-  topBar.update(s);
-  panelManager.update(s);
-  datacenterVisual.update(s);
-  earthSurface.update(s);
-  earthMoonSpace.update(s);
-  ticker.update(s);
 
   // Check for mid-game training/research unlock
   if (!trainingPanelAdded && s.intelligence >= BALANCE.trainingUnlockIntel) {
@@ -97,18 +90,29 @@ setInterval(() => {
 
   // Check for mid-game energy unlock (first datacenter)
   if (!energyPanelAdded && s.datacenters.some(c => c > 0n)) {
-      if (!s.completedResearch.includes('orbitalLogistics')) {
-          panelManager.register('energy', new EnergyPanel(s));
-      }
-      energyPanelAdded = true;
+    if (!s.completedResearch.includes('orbitalLogistics')) {
+      panelManager.register('energy', new EnergyPanel(s));
+    }
+    energyPanelAdded = true;
   }
 
-  // Check for mid-game space unlock (replace energy with space+energy)
+  // Check for mid-game space unlock (use unified panel)
   if (!spacePanelAdded && s.completedResearch.includes('orbitalLogistics')) {
-    panelManager.replace('energy', new SpaceEnergyPanel(s));
+    if (energyPanelAdded) {
+      panelManager.replace('energy', new SpaceEnergyPanel(s));
+    } else {
+      panelManager.register('energy', new SpaceEnergyPanel(s));
+    }
     spacePanelAdded = true;
-    energyPanelAdded = true; // Implicitly unlocked/handled
+    energyPanelAdded = true;
   }
+
+  topBar.update(s);
+  panelManager.update(s);
+  datacenterVisual.update(s);
+  earthSurface.update(s);
+  earthMoonSpace.update(s);
+  ticker.update(s);
 }, BALANCE.uiUpdateIntervalMs);
 
 // Auto-save

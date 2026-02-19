@@ -104,7 +104,7 @@ export function startAriesTraining(state: GameState, index: number): boolean {
 }
 
 export function setTrainingAllocation(state: GameState, pct: number): boolean {
-  const newPct = Math.max(0, Math.min(100, Math.round(pct / 5) * 5));
+  const newPct = Math.max(0, Math.min(100, Math.round(pct)));
   const inferencePct = state.apiInferenceAllocationPct;
 
   if (newPct + inferencePct > 100) {
@@ -114,4 +114,3 @@ export function setTrainingAllocation(state: GameState, pct: number): boolean {
   state.trainingAllocationPct = newPct;
   return true;
 }
-

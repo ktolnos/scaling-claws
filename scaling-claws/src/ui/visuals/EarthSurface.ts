@@ -1,5 +1,5 @@
 import type { GameState } from '../../game/GameState.ts';
-import { fromBigInt, scaleBigInt } from '../../game/utils.ts';
+import { fromBigInt } from '../../game/utils.ts';
 import {
   datacenterBuildingSvg, gasPlantSvg, nuclearPlantSvg, solarFarmSvg,
   rocketSiloSvg, robotFactorySvg, siliconMineSvg, waferFabSvg,
@@ -99,7 +99,7 @@ export class EarthSurface {
     this.syncBuildings('rocket', Math.floor(fromBigInt(state.rocketFactories)), rocketSiloSvg);
     
     this.syncBuildings('robotFactory', Math.floor(fromBigInt(state.robotFactories)), robotFactorySvg);
-    this.syncBuildings('mine', Math.floor(fromBigInt(state.siliconMines)), siliconMineSvg);
+    this.syncBuildings('mine', Math.floor(fromBigInt(state.materialMines)), siliconMineSvg);
     this.syncBuildings('gpuFactory', Math.floor(fromBigInt(state.gpuFactories)), waferFabSvg);
 
     // Update zoom level based on total building count

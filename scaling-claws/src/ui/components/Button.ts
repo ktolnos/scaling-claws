@@ -1,4 +1,4 @@
-import { formatMoney } from '../../game/utils.ts';
+import { moneyWithEmojiHtml } from '../emoji.ts';
 
 export class Button {
   readonly el: HTMLButtonElement;
@@ -24,8 +24,8 @@ export class Button {
     if (opts.cost !== undefined) {
       this.costEl = document.createElement('span');
       this.costEl.className = 'btn-cost';
-      this.costEl.textContent = ' ' + formatMoney(opts.cost);
-      this.costEl.style.opacity = '0.7';
+      this.costEl.innerHTML = ' ' + moneyWithEmojiHtml(opts.cost, 'funds');
+      this.costEl.style.color = 'var(--text-secondary)';
       this.costEl.style.fontSize = '0.8em';
       this.el.appendChild(this.costEl);
     }
@@ -39,7 +39,7 @@ export class Button {
 
   updateCost(cost: number): void {
     if (this.costEl) {
-      this.costEl.textContent = ' ' + formatMoney(cost);
+      this.costEl.innerHTML = ' ' + moneyWithEmojiHtml(cost, 'funds');
     }
   }
 

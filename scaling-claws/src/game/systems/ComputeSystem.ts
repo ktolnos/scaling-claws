@@ -1,8 +1,9 @@
 import type { GameState } from '../GameState.ts';
 import { getTotalAssignedAgents } from '../GameState.ts';
-import { BALANCE, getBestModel, getTotalGpuCapacity, JOB_ORDER } from '../BalanceConfig.ts';
+import { BALANCE, getBestModel, JOB_ORDER } from '../BalanceConfig.ts';
 import type { SubscriptionTier } from '../BalanceConfig.ts';
 import { toBigInt, divB, mulB, scaleB, fromBigInt, scaleBigInt } from '../utils.ts';
+import { reconcileEarthGpuInstallation } from './GpuState.ts';
 
 export function tickCompute(state: GameState, dtMs: number): void {
   if (state.isPostGpuTransition) {
@@ -43,12 +44,8 @@ function tickSubscriptionEra(state: GameState, dtMs: number): void {
 
 function tickGpuEra(state: GameState, dtMs: number): void {
 
-  // GPU capacity check - MUST happen before installedGpuCount calculation
-  state.gpuCapacity = getTotalGpuCapacity(state.datacenters);
-  state.needsDatacenter = state.gpuCount >= state.gpuCapacity;
-
-  // Compute GPU metrics (apply GPU architecture research bonus)
-  state.installedGpuCount = state.gpuCount < state.gpuCapacity ? state.gpuCount : state.gpuCapacity;
+  // Keep GPU stock/capacity/install state coherent before compute math.
+  reconcileEarthGpuInstallation(state);
   
   // totalPflops = GPUs * pflopsPerGpu * bonus * throttle
   // gpuCount is scaled, pflopsPerGpu is number? 
@@ -57,6 +54,24 @@ function tickGpuEra(state: GameState, dtMs: number): void {
   pflops = scaleB(pflops, state.gpuFlopsBonus);
   pflops = scaleB(pflops, state.powerThrottle);
   state.totalPflops = pflops;
+
+  // Location compute totals for TopBar aggregation (Earth + Moon + Mercury + Orbit)
+  state.earthPflops = pflops;
+
+  const moonInstalled = state.locationResources?.moon?.installedGpus ?? state.lunarGPUs;
+  let moonPflops = scaleB(moonInstalled, BALANCE.pflopsPerGpu);
+  moonPflops = scaleB(moonPflops, state.gpuFlopsBonus);
+  moonPflops = scaleB(moonPflops, state.lunarPowerThrottle);
+  state.moonPflops = moonPflops;
+
+  const mercuryInstalled = state.locationResources?.mercury?.installedGpus ?? 0n;
+  let mercuryPflops = scaleB(mercuryInstalled, BALANCE.pflopsPerGpu);
+  mercuryPflops = scaleB(mercuryPflops, state.gpuFlopsBonus);
+  mercuryPflops = scaleB(mercuryPflops, state.mercuryPowerThrottle ?? 1);
+  state.mercuryPflops = mercuryPflops;
+
+  state.orbitalPflops = 0n;
+  state.totalPflopsDisplay = state.earthPflops + state.moonPflops + state.mercuryPflops + state.orbitalPflops;
 
   // Only set intelligence from model if no training has been done yet
   if (state.completedFineTunes.length === 0 && state.ariesModelIndex === -1 && state.currentFineTuneIndex === -1) {
@@ -133,8 +148,8 @@ function tickGpuEra(state: GameState, dtMs: number): void {
     // Active users limited by demand and capacity
     state.apiUserCount = state.apiDemand < capacityUsers ? state.apiDemand : capacityUsers;
 
-    // Synth Data from API users
-    state.apiUserSynthRate = BALANCE.apiUserSynthBase; 
+    // Synth data generation is fully gated by research bonuses from ResearchSystem.
+    // Without synthData1, apiUserSynthRate stays 0 and no synthetic data is produced.
     state.synthDataRate = mulB(state.apiUserCount, state.apiUserSynthRate);
     state.trainingData += mulB(state.synthDataRate, toBigInt(dtMs)) / 60000n;
 
@@ -328,12 +343,15 @@ export function goSelfHosted(state: GameState): boolean {
 
   state.funds -= totalCost;
   state.gpuCount = gpuCount;
-  state.installedGpuCount = state.gpuCount < state.gpuCapacity ? state.gpuCount : state.gpuCapacity;
+  if (state.locationResources?.earth) {
+    state.locationResources.earth.gpus = state.gpuCount;
+  }
+  reconcileEarthGpuInstallation(state);
   state.isPostGpuTransition = true;
 
   // Free starting energy: cover the datacenter threshold
   const powerReqMW = mulB(BALANCE.datacenterThreshold, toBigInt(BALANCE.gpuPowerMW)); 
-  state.gridPowerKW = powerReqMW * 1000n;
+  state.gridPowerKW = toBigInt(Math.max(0, Math.ceil(fromBigInt(powerReqMW) * 1000)));
 
   state.subscriptionTier = 'basic';
 
@@ -351,6 +369,10 @@ export function buyGpu(state: GameState, amount: number): boolean {
 
   state.funds -= cost;
   state.gpuCount += amountB;
+  if (state.locationResources?.earth) {
+    state.locationResources.earth.gpus = state.gpuCount;
+  }
+  reconcileEarthGpuInstallation(state);
 
   // Auto-add agents for new GPUs
   const agentsToAdd = state.gpuCount - state.totalAgents;
@@ -391,13 +413,21 @@ export function buyDatacenter(state: GameState, tier: number): boolean {
   if (tier < 0 || tier >= BALANCE.datacenters.length) return false;
 
   const config = BALANCE.datacenters[tier];
+  const limit = config.limit ?? 0;
+  if (limit > 0 && state.datacenters[tier] >= toBigInt(limit)) return false;
   if (state.funds < config.cost) return false;
-  if (state.labor < config.laborCost) return false;
+  const earthLabor = state.locationResources?.earth?.labor ?? state.labor;
+  if (earthLabor < config.laborCost) return false;
 
   state.funds -= config.cost;
-  state.labor -= config.laborCost;
+  if (state.locationResources?.earth) {
+    state.locationResources.earth.labor -= config.laborCost;
+    state.labor = state.locationResources.earth.labor;
+  } else {
+    state.labor -= config.laborCost;
+  }
   state.datacenters[tier] += scaleBigInt(1n);
-  state.gpuCapacity = getTotalGpuCapacity(state.datacenters);
+  reconcileEarthGpuInstallation(state);
 
   return true;
 }
@@ -419,17 +449,23 @@ export function buyAds(state: GameState, amount: number = 1): boolean {
   return true;
 }
 
+function normalizeAllocationPct(pct: number): number {
+  return Math.max(0, Math.min(100, Math.round(pct)));
+}
+
+export function setComputeAllocations(state: GameState, trainingPct: number, inferencePct: number): boolean {
+  const newTraining = normalizeAllocationPct(trainingPct);
+  const newInference = state.apiUnlocked ? normalizeAllocationPct(inferencePct) : 0;
+  if (newTraining + newInference > 100) return false;
+
+  state.trainingAllocationPct = newTraining;
+  state.apiInferenceAllocationPct = newInference;
+  return true;
+}
+
 export function setApiAllocation(state: GameState, pct: number): boolean {
   if (!state.apiUnlocked) return false;
-  const newPct = Math.max(0, Math.min(100, Math.round(pct / 5) * 5));
-  const trainingPct = state.trainingAllocationPct;
-  
-  if (newPct + trainingPct > 100) {
-    return false;
-  }
-  
-  state.apiInferenceAllocationPct = newPct;
-  return true;
+  return setComputeAllocations(state, state.trainingAllocationPct, pct);
 }
 
 export function improveApi(state: GameState, amount: number = 1): boolean {

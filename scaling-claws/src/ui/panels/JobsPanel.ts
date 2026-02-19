@@ -3,14 +3,16 @@ import { getTotalAssignedAgents } from '../../game/GameState.ts';
 import type { Panel } from '../PanelManager.ts';
 import { BALANCE } from '../../game/BalanceConfig.ts';
 import type { JobType } from '../../game/BalanceConfig.ts';
-import { formatNumber, formatMoney, fromBigInt, scaleBigInt } from '../../game/utils.ts';
+import { formatNumber, fromBigInt, scaleBigInt, mulB, divB, scaleB, toBigInt } from '../../game/utils.ts';
 import { ProgressBar } from '../components/ProgressBar.ts';
 import { BulkBuyGroup } from '../components/BulkBuyGroup.ts';
 import { flashElement } from '../UIUtils.ts';
+import { moneyWithEmojiHtml, resourceLabelHtml, emojiHtml } from '../emoji.ts';
 import {
   nudgeAgent,
   assignAgentsToJob, removeAgentsFromJob,
   hireHumanWorkers, fireHumanWorkers,
+  buyRobotWorkers, fireRobotWorkers,
 } from '../../game/systems/JobSystem.ts';
 
 const MAX_PROGRESS_BARS = 4;
@@ -96,6 +98,7 @@ export class JobsPanel implements Panel {
 
   private createJobRow(jobType: JobType): JobRowRefs {
     const config = BALANCE.jobs[jobType];
+    const isRobotWorker = jobType === 'robotWorker';
     const isHuman = config.workerType === 'human';
 
     const row = document.createElement('div');
@@ -122,17 +125,23 @@ export class JobsPanel implements Panel {
     name.style.whiteSpace = 'nowrap';
     name.style.textOverflow = 'ellipsis';
     name.style.overflow = 'hidden';
-    if (isHuman) name.style.color = 'var(--accent-yellow, #e8c547)';
+    if (isRobotWorker) {
+      name.style.color = 'var(--text-primary)';
+    } else if (isHuman) {
+      name.style.color = 'var(--accent-yellow, #e8c547)';
+    }
     infoBlock.appendChild(name);
 
     const rewardEl = document.createElement('span');
-    rewardEl.style.fontSize = '0.68rem';
-    rewardEl.style.color = 'var(--text-muted)';
+    rewardEl.style.fontSize = '0.74rem';
+    rewardEl.style.display = 'flex';
+    rewardEl.style.flexDirection = 'column';
+    rewardEl.style.gap = '1px';
     infoBlock.appendChild(rewardEl);
 
     const reqEl = document.createElement('span');
     reqEl.style.color = 'var(--accent-red)';
-    reqEl.style.fontSize = '0.68rem';
+    reqEl.style.fontSize = '0.72rem';
     infoBlock.appendChild(reqEl);
 
     row.appendChild(infoBlock);
@@ -157,8 +166,8 @@ export class JobsPanel implements Panel {
     }
 
     const overflowEl = document.createElement('span');
-    overflowEl.style.fontSize = '0.6rem';
-    overflowEl.style.color = 'var(--text-muted)';
+    overflowEl.style.fontSize = '0.66rem';
+    overflowEl.style.color = 'var(--text-secondary)';
     overflowEl.style.display = 'none';
     progressContainer.appendChild(overflowEl);
 
@@ -174,7 +183,9 @@ export class JobsPanel implements Panel {
     // Remove group
     const removeGroup = new BulkBuyGroup(
       (amount) => {
-        if (isHuman) {
+        if (isRobotWorker) {
+          fireRobotWorkers(this.state, amount);
+        } else if (isHuman) {
           fireHumanWorkers(this.state, jobType, amount);
         } else {
           removeAgentsFromJob(this.state, jobType, amount);
@@ -197,7 +208,9 @@ export class JobsPanel implements Panel {
     // Add group
     const addGroup = new BulkBuyGroup(
       (amount) => {
-        if (isHuman) {
+        if (isRobotWorker) {
+          buyRobotWorkers(this.state, amount);
+        } else if (isHuman) {
           hireHumanWorkers(this.state, jobType, amount);
         } else {
           const assigned = assignAgentsToJob(this.state, jobType, amount);
@@ -219,6 +232,56 @@ export class JobsPanel implements Panel {
       progressContainer, progressBars, overflowEl,
       addGroup, removeGroup,
     };
+  }
+
+  private getJobProductionPerMin(state: GameState, jobType: JobType): bigint {
+    if (jobType === 'robotWorker') {
+      const earthRobots = state.locationResources.earth.robots;
+      const laborMult = state.completedResearch.includes('robotics3')
+        ? BALANCE.robotLaborMultRobotics3
+        : state.completedResearch.includes('robotics2')
+          ? BALANCE.robotLaborMultRobotics2
+          : 1;
+      const perRobotPerMin = mulB(BALANCE.robotLaborPerMinBase, toBigInt(laborMult));
+      return mulB(perRobotPerMin, earthRobots);
+    }
+
+    const config = BALANCE.jobs[jobType];
+    if (config.timeMs <= 0) return 0n;
+    const outputAmount = this.getJobOutputAmount(state, jobType, config.produces.amount);
+
+    const singlePerMin = divB(mulB(outputAmount, scaleBigInt(60000n)), toBigInt(config.timeMs));
+    if (config.workerType === 'human') {
+      const count = state.humanPools[jobType].totalCount;
+      return mulB(singlePerMin, count);
+    }
+
+    const pool = state.agentPools[jobType];
+    const active = pool.totalCount - pool.idleCount;
+    const working = active > pool.stuckCount ? active - pool.stuckCount : 0n;
+    if (working <= 0n) return 0n;
+
+    let effectivePerAgent = scaleB(singlePerMin, state.agentEfficiency * state.intelligence);
+    effectivePerAgent = mulB(effectivePerAgent, working);
+    return effectivePerAgent;
+  }
+
+  private getJobOutputAmount(state: GameState, jobType: JobType, baseAmount: bigint): bigint {
+    if (jobType !== 'aiDataSynthesizer') return baseAmount;
+    let output = baseAmount;
+    if (state.completedResearch.includes('syntheticData2')) output *= 2n;
+    if (state.completedResearch.includes('syntheticData3')) output *= 2n;
+    return output;
+  }
+
+  private formatProductionTotal(resource: string, amountPerMin: bigint): string {
+    if (resource === 'funds') {
+      return `+${moneyWithEmojiHtml(amountPerMin, 'funds')}/m`;
+    }
+    if (resource === 'code' || resource === 'science' || resource === 'labor' || resource === 'data' || resource === 'nudge') {
+      return `+${formatNumber(amountPerMin)} ${emojiHtml(resource)}/m`;
+    }
+    return `+${formatNumber(amountPerMin)}/m`;
   }
 
   update(state: GameState): void {
@@ -252,11 +315,19 @@ export class JobsPanel implements Panel {
 
     const sortedJobs = state.unlockedJobs
       .filter(j => j !== 'unassigned')
-      .sort((a, b) => BALANCE.jobs[a].unlockAtIntel - BALANCE.jobs[b].unlockAtIntel);
+      .sort((a, b) => {
+        if (a === 'robotWorker' && b !== 'robotWorker') return 1;
+        if (b === 'robotWorker' && a !== 'robotWorker') return -1;
+        return BALANCE.jobs[a].unlockAtIntel - BALANCE.jobs[b].unlockAtIntel;
+      });
 
     for (const jobType of sortedJobs) {
       const config = BALANCE.jobs[jobType];
+      const isRobotWorker = jobType === 'robotWorker';
       const isHuman = config.workerType === 'human';
+      const workerCount = isRobotWorker
+        ? state.locationResources.earth.robots
+        : (isHuman ? state.humanPools[jobType].totalCount : state.agentPools[jobType].totalCount);
 
       let refs = this.jobRows.get(jobType);
       if (!refs) {
@@ -266,28 +337,51 @@ export class JobsPanel implements Panel {
 
       // Reward/resource display
       const { resource, amount } = config.produces;
-      if (resource === 'funds' && amount > 0) {
-        refs.rewardEl.textContent = formatMoney(amount) + ' / ' + (config.timeMs / 1000) + 's';
+      const outputAmount = this.getJobOutputAmount(state, jobType, amount);
+      let baseLine = '';
+      if (isRobotWorker) {
+        const laborMult = state.completedResearch.includes('robotics3')
+          ? BALANCE.robotLaborMultRobotics3
+          : state.completedResearch.includes('robotics2')
+            ? BALANCE.robotLaborMultRobotics2
+            : 1;
+        const perRobotPerMin = mulB(BALANCE.robotLaborPerMinBase, toBigInt(laborMult));
+        baseLine = `<span class="job-reward-main">${formatNumber(perRobotPerMin)} ${resourceLabelHtml('labor')} / m per robot</span>`;
+      } else if (resource === 'funds' && amount > 0) {
+        baseLine = `<span class="job-reward-main">${moneyWithEmojiHtml(outputAmount, 'funds')} / ${config.timeMs / 1000}s</span>`;
       } else if (resource !== 'nudge' && amount > 0) {
-        refs.rewardEl.textContent = formatNumber(amount) + ' ' + resource + ' / ' + (config.timeMs / 1000) + 's';
+        baseLine = `<span class="job-reward-main">${formatNumber(outputAmount)} ${resourceLabelHtml(resource)} / ${config.timeMs / 1000}s</span>`;
       } else if (resource === 'nudge') {
-        refs.rewardEl.textContent = 'nudge / ' + (config.timeMs / 1000) + 's';
+        baseLine = `<span class="job-reward-main">${resourceLabelHtml('nudge')} / ${config.timeMs / 1000}s</span>`;
       } else {
         refs.rewardEl.textContent = '';
       }
 
-      // If human job, also show salary
-      if (isHuman && config.salaryPerMin) {
-        refs.rewardEl.textContent += ' | ' + formatMoney(config.salaryPerMin) + '/min';
+      // Salary and total production lines
+      const totalProductionPerMin = this.getJobProductionPerMin(state, jobType);
+      const productionTotalLine = `<span class="job-reward-total-prod">${this.formatProductionTotal(resource, totalProductionPerMin)}</span>`;
+
+      let salaryLine = '';
+      let totalsLine = productionTotalLine;
+      if (isRobotWorker) {
+        salaryLine = `<span class="job-reward-salary">Price: ${moneyWithEmojiHtml(BALANCE.robotImportCost, 'funds')} per robot</span>`;
+      } else if (isHuman && config.salaryPerMin) {
+        salaryLine = `<span class="job-reward-salary">Salary: ${moneyWithEmojiHtml(config.salaryPerMin, 'funds')} / m per person</span>`;
+        const totalSalary = mulB(config.salaryPerMin, workerCount);
+        totalsLine += ` <span class="job-reward-total-sep">|</span> <span class="job-reward-total-salary">-${moneyWithEmojiHtml(totalSalary, 'funds')}/m</span>`;
+      }
+
+      if (baseLine) {
+        refs.rewardEl.innerHTML = baseLine + salaryLine + `<span class="job-reward-totals">${totalsLine}</span>`;
       }
 
       // Requirements
-      if (!isHuman) {
+      if (!isHuman && !isRobotWorker) {
         const agentEligible = state.intelligence >= config.agentIntelReq &&
           (!config.agentResearchReq || config.agentResearchReq.every(r => state.completedResearch.includes(r)));
 
         if (!agentEligible) {
-          refs.reqEl.textContent = '(req Intel ' + config.agentIntelReq + ')';
+          refs.reqEl.innerHTML = `(req ${resourceLabelHtml('intel')} ${config.agentIntelReq})`;
           refs.reqEl.style.display = 'block';
         } else {
           refs.reqEl.textContent = '';
@@ -299,9 +393,24 @@ export class JobsPanel implements Panel {
       }
 
       // Worker count and progress bars
-      if (isHuman) {
+      if (isRobotWorker) {
+        const count = workerCount;
+        refs.countEl.textContent = formatNumber(count);
+
+        for (let i = 0; i < MAX_PROGRESS_BARS; i++) {
+          refs.progressBars[i].el.style.display = 'none';
+        }
+        refs.overflowEl.style.display = 'none';
+
+        const countNum = Math.floor(fromBigInt(count));
+        refs.addGroup.update(countNum, (amount) => {
+          const totalCost = mulB(toBigInt(amount), BALANCE.robotImportCost);
+          return state.completedResearch.includes('robotics1') && state.funds >= totalCost;
+        }, BALANCE.robotWorkerBuyLimit);
+        refs.removeGroup.update(countNum, (amount) => countNum >= amount);
+      } else if (isHuman) {
         const pool = state.humanPools[jobType];
-        const count = pool.totalCount;
+        const count = workerCount;
         refs.countEl.textContent = formatNumber(count);
 
         // Update progress bars
@@ -334,7 +443,7 @@ export class JobsPanel implements Panel {
       } else {
         // AI job - use agentPools directly
         const pool = state.agentPools[jobType];
-        const count = pool.totalCount;
+        const count = workerCount;
         refs.countEl.textContent = formatNumber(count);
 
         // Show sample progress bars (always 4 or fewer)
@@ -403,7 +512,7 @@ export class JobsPanel implements Panel {
       this.nudgeBtn.disabled = false;
     } else {
       this.stuckCountEl.textContent = 'All running';
-      this.stuckCountEl.style.color = 'var(--text-muted)';
+      this.stuckCountEl.style.color = 'var(--text-secondary)';
       this.nudgeBtn.disabled = true;
     }
   }

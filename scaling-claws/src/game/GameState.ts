@@ -37,7 +37,7 @@ export interface HumanPool {
 export type LocationId = 'earth' | 'moon' | 'mercury';
 export type SupplyResourceId = 'material' | 'solarPanels' | 'robots' | 'gpus' | 'rockets' | 'gpuSatellites' | 'labor';
 export type FacilityId = 'materialMine' | 'solarFactory' | 'robotFactory' | 'gpuFactory' | 'rocketFactory' | 'gpuSatelliteFactory' | 'massDriver';
-export type TransportRouteId = 'earthOrbit' | 'earthMoon' | 'moonMercury';
+export type TransportRouteId = 'earthOrbit' | 'earthMoon' | 'moonMercury' | 'mercuryOrbit';
 export type TransportPayloadId = 'gpuSatellites' | 'gpus' | 'solarPanels' | 'robots';
 
 export interface LocationResourceState {
@@ -86,15 +86,16 @@ export interface TransportBatch {
   route: TransportRouteId;
   payload: TransportPayloadId;
   amount: bigint;
+  launchedRockets?: bigint;
   deliveredAt: number;
   rocketReturnAt: number;
-  rocketReturnsTo: 'earth' | 'moon';
+  rocketReturnsTo: 'earth' | 'moon' | 'mercury';
   returningRockets: bigint;
 }
 
 export interface RocketReturnBatch {
   returnAt: number;
-  location: 'earth' | 'moon';
+  location: 'earth' | 'moon' | 'mercury';
   amount: bigint;
 }
 
@@ -135,7 +136,12 @@ export interface GameState {
   // GPU & Compute
   gpuCount: bigint;
   installedGpuCount: bigint;   // computed: min(gpuCount, gpuCapacity)
-  totalPflops: bigint;         // computed
+  totalPflops: bigint;         // Earth compute used for gameplay allocation
+  earthPflops: bigint;         // computed
+  moonPflops: bigint;          // computed
+  mercuryPflops: bigint;       // computed
+  orbitalPflops: bigint;       // computed
+  totalPflopsDisplay: bigint;  // computed aggregate for UI
   currentModelIndex: number;   // index into BALANCE.models
   freeCompute: bigint;         // computed
   isPostGpuTransition: boolean;
@@ -155,6 +161,7 @@ export interface GameState {
   locationConsumptionPerMin: Record<LocationId, LocationRateState>;
   locationFacilities: Record<LocationId, LocationFacilityState>;
   locationFacilityRates: Record<LocationId, LocationFacilityRateState>;
+  pausedFacilities: Record<FacilityId, boolean>;
 
   // Energy
   gridPowerKW: bigint;
@@ -234,10 +241,12 @@ export interface GameState {
   logisticsOrders: Record<string, bigint>;
   logisticsSent: Record<string, bigint>;
   logisticsInTransit: Record<string, bigint>;
+  logisticsReservedRockets: Record<TransportRouteId, bigint>;
   transportBatches: TransportBatch[];
   rocketReturnBatches: RocketReturnBatch[];
   earthLaunchCarry: number;
   moonLaunchCarry: number;
+  mercuryLaunchCarry: number;
   rocketLossPct: number;
 
   // API Services
@@ -256,6 +265,8 @@ export interface GameState {
   // Space - Orbit
   satellites: bigint;
   orbitalPowerMW: bigint;
+  dysonSwarmSatellites: bigint;
+  dysonSwarmPowerMW: bigint;
   spaceUnlocked: boolean;
   launchCostBonus: number;
 
@@ -283,6 +294,9 @@ export interface GameState {
   lunarPowerDemandMW: bigint;
   lunarPowerSupplyMW: bigint;
   lunarPowerThrottle: number;
+  mercuryPowerDemandMW: bigint;
+  mercuryPowerSupplyMW: bigint;
+  mercuryPowerThrottle: number;
   totalEnergyMW: bigint;
 
   // Job tracking
@@ -292,6 +306,7 @@ export interface GameState {
 
   // Manager tracking
   managerCount: bigint;
+  nudgeBuffer: bigint;
 
   // Computed per tick (for UI display)
   incomePerMin: bigint;
@@ -368,6 +383,28 @@ function createInitialLogisticsMap(): Record<string, bigint> {
     'earthMoon:solarPanels': 0n,
     'earthMoon:robots': 0n,
     'moonMercury:robots': 0n,
+    'mercuryOrbit:gpuSatellites': 0n,
+  };
+}
+
+function createInitialReservedRocketMap(): Record<TransportRouteId, bigint> {
+  return {
+    earthOrbit: 0n,
+    earthMoon: 0n,
+    moonMercury: 0n,
+    mercuryOrbit: 0n,
+  };
+}
+
+function createInitialPausedFacilities(): Record<FacilityId, boolean> {
+  return {
+    materialMine: false,
+    solarFactory: false,
+    robotFactory: false,
+    gpuFactory: false,
+    rocketFactory: false,
+    gpuSatelliteFactory: false,
+    massDriver: false,
   };
 }
 
@@ -433,6 +470,11 @@ export function createInitialState(): GameState {
     gpuCount: 0n,
     installedGpuCount: 0n,
     totalPflops: 0n,
+    earthPflops: 0n,
+    moonPflops: 0n,
+    mercuryPflops: 0n,
+    orbitalPflops: 0n,
+    totalPflopsDisplay: 0n,
     currentModelIndex: 0,
     freeCompute: 0n,
     isPostGpuTransition: false,
@@ -452,6 +494,7 @@ export function createInitialState(): GameState {
     locationConsumptionPerMin,
     locationFacilities,
     locationFacilityRates,
+    pausedFacilities: createInitialPausedFacilities(),
 
     // Energy
     gridPowerKW: 0n,
@@ -525,14 +568,18 @@ export function createInitialState(): GameState {
     logisticsOrders: createInitialLogisticsMap(),
     logisticsSent: createInitialLogisticsMap(),
     logisticsInTransit: createInitialLogisticsMap(),
+    logisticsReservedRockets: createInitialReservedRocketMap(),
     transportBatches: [],
     rocketReturnBatches: [],
     earthLaunchCarry: 0,
     moonLaunchCarry: 0,
+    mercuryLaunchCarry: 0,
     rocketLossPct: 1,
 
     // Space
     satellites: 0n,
+    dysonSwarmSatellites: 0n,
+    dysonSwarmPowerMW: 0n,
     lunarBase: false,
     lunarRobots: 0n,
     lunarGPUs: 0n,
@@ -551,7 +598,7 @@ export function createInitialState(): GameState {
     mercuryRobots: 0n,
     mercuryMiningRate: 0,
     mercuryMassMined: 0n,
-    mercuryMassTotal: scaleBigInt(100_000_000_000n),
+    mercuryMassTotal: BALANCE.mercuryBaseMassTotal,
 
     spaceUnlocked: false,
     launchCostBonus: 1,
@@ -560,6 +607,9 @@ export function createInitialState(): GameState {
     lunarPowerDemandMW: 0n,
     lunarPowerSupplyMW: 0n,
     lunarPowerThrottle: 1,
+    mercuryPowerDemandMW: 0n,
+    mercuryPowerSupplyMW: 0n,
+    mercuryPowerThrottle: 1,
     orbitalPowerMW: 0n,
     totalEnergyMW: 0n,
 
@@ -581,6 +631,7 @@ export function createInitialState(): GameState {
     automatedJobs: [],
 
     managerCount: 0n,
+    nudgeBuffer: 0n,
 
     incomePerMin: 0n,
     expensePerMin: 0n,
@@ -652,3 +703,4 @@ export function getTotalAssignedAgents(state: GameState): bigint {
 }
 
 // NOTE: DO NOT add migrations here. The game is in active development and breaking changes to saves are currently acceptable.
+
