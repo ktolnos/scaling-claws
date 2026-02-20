@@ -1,9 +1,14 @@
 /**
  * Balancing conventions:
  * - 1 minute of real time = 1 month in game for all time-based calculations (job times, research times, salaries, etc.)
- * - 1 material = 1 tonn of raw materials (unenriched ore)
+ * - 1 material = 1 ton (1000kg) of raw materials (unenriched ore)
+ * - 1 labor = 1 person-month of labor
+ * - 1 data = 1 gigabyte of data
+ * - 1 nudge = 1 person-month of management
+ * - 1 code = 1 person-month of coding
+ * - 1 science = 1 person-month of research
  * - All prices are in dollars
- * - The game strives to have realistic numbers when possible.
+ * - The game strives to have realistic numbers when possible. Real life is balanced. If real life numbers don't work in game, try to change the econimics such that they do.
  * - bigint is used for all large numbers. All bigints are scaled by default to allow for fixed-point precision (see utils.ts for details). If a number is not scaled, it should be noted in a comment.
  * - This is not an idle game when played optimally. No wait times > 10 seconds.
  * - new mechanics should be introcued gradually to the player.
@@ -11,7 +16,7 @@
  * - No research should be useless, each research should exist to solve some bottleneck. E.g. if the player is never constrained by the data, the synthetic data research would be useless. This should be resolved by adjusting data requirements in such a way that the player is constrained by the data when the research is unlocked. This applies to all research.
  */
 
-import { toBigInt, scaleBigInt, mulB } from './utils.ts';
+import { toBigInt, scaleBigInt, mulB, fromBigInt } from './utils.ts';
 
 export const SubscriptionTiers = {
   basic: 'basic',
@@ -42,8 +47,6 @@ export type ResourceType = typeof ResourceTypes[keyof typeof ResourceTypes];
 export const JobTypes = {
   // AI jobs
   sixxerBasic: 'sixxerBasic',
-  sixxerStandard: 'sixxerStandard',
-  sixxerAdvanced: 'sixxerAdvanced',
   sixxerEnterprise: 'sixxerEnterprise',
   manager: 'manager',
   aiSWE: 'aiSWE',
@@ -70,7 +73,7 @@ export type FacilityProductionId =
 
 /** Display order for jobs in the UI. */
 export const JOB_ORDER: JobType[] = [
-  'sixxerBasic', 'sixxerStandard', 'sixxerAdvanced', 'sixxerEnterprise',
+  'sixxerBasic', 'sixxerEnterprise',
   'manager',
   'robotWorker', 'humanWorker', 'humanResearcher', 'humanSWE',
   'aiSWE', 'aiResearcher', 'aiDataSynthesizer',
@@ -190,43 +193,46 @@ export interface TrainingModelConfig {
   name: string;
   intel: number;
   pflopsHrs: bigint;
-  dataTB: bigint;
+  dataGB: bigint;
   codeReq: bigint;
   scienceReq: bigint;
 }
 
 export const BALANCE = {
-  startingFunds: 10000000000000,
+  startingFunds: 0,
   startingCpuCores: 4,
-  homePowerMW: 0.02,
   tickIntervalMs: 100,
   uiUpdateIntervalMs: 200,
   autoSaveIntervalMs: 30000,
 
   tiers: {
-    basic:         { cost: toBigInt(10),  intel: 0.5, coresPerAgent: 1, displayName: 'Basic' } as TierConfig,
-    pro:           { cost: toBigInt(30),  intel: 1.0, coresPerAgent: 1, displayName: 'Pro' } as TierConfig,
-    ultra:         { cost: toBigInt(50),  intel: 1.5, coresPerAgent: 1, displayName: 'Ultra' } as TierConfig,
-    ultraMax:      { cost: toBigInt(100), intel: 2.0, coresPerAgent: 1, displayName: 'Ultra Max' } as TierConfig,
+    basic:         { cost: toBigInt(14),  intel: 0.5, coresPerAgent: 1, displayName: 'Basic' } as TierConfig,
+    pro:           { cost: toBigInt(20),  intel: 1.0, coresPerAgent: 1, displayName: 'Pro' } as TierConfig,
+    ultra:         { cost: toBigInt(25),  intel: 1.5, coresPerAgent: 1, displayName: 'Ultra' } as TierConfig,
+    ultraMax:      { cost: toBigInt(70), intel: 2.0, coresPerAgent: 1, displayName: 'Ultra Max' } as TierConfig,
     ultraProMax:   { cost: toBigInt(200), intel: 2.5, coresPerAgent: 1, displayName: 'Ultra Pro Max' } as TierConfig,
   } as Record<SubscriptionTier, TierConfig>,
 
   jobs: {
     // AI
-    sixxerBasic:      { produces: { resource: 'funds', amount: toBigInt(6) },     timeMs: 2000, unlockAtIntel: 0.5, agentIntelReq: 0.5, workerType: 'ai', displayName: 'Sixxer Basic', obsoleteAtIntel: 9.0 } as JobConfig,
-    sixxerStandard:   { produces: { resource: 'funds', amount: toBigInt(18) },    timeMs: 3000, unlockAtIntel: 0.5, agentIntelReq: 1.0, workerType: 'ai', displayName: 'Sixxer Standard', obsoleteAtIntel: 10.0 } as JobConfig,
-    sixxerAdvanced:   { produces: { resource: 'funds', amount: toBigInt(50) },    timeMs: 4000, unlockAtIntel: 1.0, agentIntelReq: 1.5, workerType: 'ai', displayName: 'Sixxer Advanced', obsoleteAtIntel: 11.0 } as JobConfig,
-    sixxerEnterprise: { produces: { resource: 'funds', amount: toBigInt(200) },   timeMs: 5500, unlockAtIntel: 1.5, agentIntelReq: 2.0, workerType: 'ai', displayName: 'Sixxer Enterprise', obsoleteAtIntel: 14.0 } as JobConfig,
-    manager:          { produces: { resource: 'nudge', amount: toBigInt(1) },     timeMs: 1000, unlockAtIntel: 1.5, agentIntelReq: 2.5, workerType: 'ai', displayName: 'Agent Manager', stuckProbability: 0 } as JobConfig,
-    aiSWE:            { produces: { resource: 'code', amount: toBigInt(0.5) },    timeMs: 3000, unlockAtIntel: 11.0, agentIntelReq: 14.0, workerType: 'ai', displayName: 'AI Coder' } as JobConfig,
-    aiResearcher:     { produces: { resource: 'science', amount: toBigInt(0.1) }, timeMs: 5000, unlockAtIntel: 14.0, agentIntelReq: 16.0, workerType: 'ai', displayName: 'AI Researcher' } as JobConfig,
-    aiDataSynthesizer:{ produces: { resource: 'data', amount: toBigInt(1.0) },    timeMs: 4000, unlockAtIntel: 11.0, agentIntelReq: 11.0, agentResearchReq: ['syntheticData1'], workerType: 'ai', displayName: 'AI Data Synthesizer' } as JobConfig,
+    sixxerBasic:      { produces: { resource: 'funds', amount: toBigInt(6) },     timeMs: 5_000, unlockAtIntel: 0.5, agentIntelReq: 0.5, workerType: 'ai', displayName: 'Sixxer Basic', obsoleteAtIntel: 9.0 } as JobConfig,
+    sixxerEnterprise: { produces: { resource: 'funds', amount: toBigInt(300) },   timeMs: 10_000, unlockAtIntel: 1.5, agentIntelReq: 2.0, workerType: 'ai', displayName: 'Sixxer Enterprise', obsoleteAtIntel: 14.0 } as JobConfig,
+    // Unlock manager before enterprise so nudge/automation appears earlier in progression.
+    manager:          { produces: { resource: 'nudge', amount: toBigInt(1) },     timeMs: 1_000, unlockAtIntel: 1.0, agentIntelReq: 1.5, workerType: 'ai', displayName: 'Agent Manager', stuckProbability: 0 } as JobConfig,
+    aiSWE:            { produces: { resource: 'code', amount: toBigInt(0.1) },    timeMs: 60_000, unlockAtIntel: 11.0, agentIntelReq: 14.0, workerType: 'ai', displayName: 'AI Coder' } as JobConfig,
+    aiResearcher:     { produces: { resource: 'science', amount: toBigInt(0.1) }, timeMs: 60_000, unlockAtIntel: 14.0, agentIntelReq: 16.0, workerType: 'ai', displayName: 'AI Researcher' } as JobConfig,
+    aiDataSynthesizer:{ produces: { resource: 'data', amount: toBigInt(10) },    timeMs: 60_000, unlockAtIntel: 11.0, agentIntelReq: 11.0, agentResearchReq: ['syntheticData1'], workerType: 'ai', displayName: 'AI Data Synthesizer' } as JobConfig,
     robotWorker:      { produces: { resource: 'labor', amount: 0n },              timeMs: 3000, unlockAtIntel: 0,  agentIntelReq: 0, workerType: 'human', displayName: 'Robot Worker' } as JobConfig,
 
     // Human
-    humanSWE:         { produces: { resource: 'code', amount: toBigInt(0.15) },   timeMs: 3000, unlockAtIntel: 3.0,  agentIntelReq: 0, workerType: 'human', displayName: 'Human Coder', salaryPerMin: toBigInt(3000), hireCost: toBigInt(500) } as JobConfig,
-    humanResearcher:  { produces: { resource: 'science', amount: toBigInt(0.5) }, timeMs: 5000, unlockAtIntel: 11.0, agentIntelReq: 0, workerType: 'human', displayName: 'Human Researcher', salaryPerMin: toBigInt(5000), hireCost: toBigInt(1000) } as JobConfig,
-    humanWorker:      { produces: { resource: 'labor', amount: toBigInt(5) },     timeMs: 5000, unlockAtIntel: 5.0,  agentIntelReq: 0, workerType: 'human', displayName: 'Human Worker', salaryPerMin: toBigInt(2000), hireCost: toBigInt(300) } as JobConfig,
+    // 1 real-time minute = 1 in-game month. Salary constants are therefore monthly.
+    // Rounded from BLS annual medians / 12:
+    // - Software Developers: ~$133k/year -> ~$11k/month
+    // - Computer & Information Research Scientists: ~$141k/year -> ~$12k/month
+    // - Construction Laborers/Helpers: ~$46k/year -> ~$4k/month
+    humanSWE:         { produces: { resource: 'code', amount: toBigInt(0.1) },   timeMs: 6_000, unlockAtIntel: 3.0,  agentIntelReq: 0, workerType: 'human', displayName: 'Human Coder', salaryPerMin: toBigInt(11_000), hireCost: toBigInt(500) } as JobConfig,
+    humanResearcher:  { produces: { resource: 'science', amount: toBigInt(0.1) }, timeMs: 6_000, unlockAtIntel: 11.0, agentIntelReq: 0, workerType: 'human', displayName: 'Human Researcher', salaryPerMin: toBigInt(12_000), hireCost: toBigInt(1000) } as JobConfig,
+    humanWorker:      { produces: { resource: 'labor', amount: toBigInt(0.1) },     timeMs: 6_000, unlockAtIntel: 5.0,  agentIntelReq: 0, workerType: 'human', displayName: 'Human Worker', salaryPerMin: toBigInt(4_000), hireCost: toBigInt(300) } as JobConfig,
 
     unassigned: {
       produces: { resource: 'funds', amount: 0n },
@@ -242,13 +248,18 @@ export const BALANCE = {
     cost: toBigInt(500),
     coresAdded: scaleBigInt(4n),
     displayName: 'Muck-mini PC',
+    limit: 7,
   },
 
   // GPU & Compute
   selfHostedUnlockIntel: 2.5,
-  gpuCost: toBigInt(3000),
+  // Allow market price to fluctuate within +/-20% around target before mean-reversion is forced.
+  gpuPriceVariationPct: 0.2,
+  // Max market move speed (fraction of current target price per second).
+  gpuPriceMaxChangePerSecondPct: 0.04,
   pflopsPerGpu: 2.0,
-  gpuPowerMW: 0.0004,
+  // Bundle power target: ~2 kW per GPU unit (card + shared infra overhead).
+  gpuPowerMW: 0.002,
 
   models: [
     { name: 'DeepKick-405B', intel: 3.0, minGpus: scaleBigInt(32n) },
@@ -258,50 +269,68 @@ export const BALANCE = {
   ] as ModelConfig[],
 
   // Datacenters
-  datacenterThreshold: scaleBigInt(128n),
+  datacenterThreshold: scaleBigInt(256n),
+  // Datacenter prices/labor represent building + electrical/mechanical shell only.
+  // GPU hardware is purchased separately via market price.
+  // laborCost is person-months (1 labor = 1 person-month), one-time build labor.
+  // Order-of-magnitude model:
+  // - capex labor share ~15-25% for heavy construction programs
+  // - loaded construction worker-month blended around ~$15k-$20k
+  // Rounded to stable gameplay values.
   datacenters: [
-    { name: 'Small Datacenter',  cost: toBigInt(100_000),       gpuCapacity: scaleBigInt(256n),      laborCost: toBigInt(120),  limit: 20000 } as DatacenterConfig,
-    { name: 'Medium Datacenter', cost: toBigInt(2_000_000),     gpuCapacity: scaleBigInt(4_096n),    laborCost: toBigInt(300),  limit: 5000 } as DatacenterConfig,
-    { name: 'Large Datacenter',  cost: scaleBigInt(30_000_000n), gpuCapacity: scaleBigInt(65_536n),  laborCost: toBigInt(720),  limit: 1000 } as DatacenterConfig,
-    { name: 'Mega Datacenter',   cost: scaleBigInt(500_000_000n), gpuCapacity: scaleBigInt(1_000_000n), laborCost: toBigInt(1800), limit: 300 } as DatacenterConfig,
+    { name: 'Small Datacenter',  cost: toBigInt(6_000_000),     gpuCapacity: scaleBigInt(256n),      laborCost: toBigInt(12),    limit: 20000 } as DatacenterConfig,
+    { name: 'Medium Datacenter', cost: toBigInt(75_000_000),    gpuCapacity: scaleBigInt(4_096n),    laborCost: toBigInt(360),  limit: 5000 } as DatacenterConfig,
+    { name: 'Large Datacenter',  cost: toBigInt(1_000_000_000),  gpuCapacity: scaleBigInt(65_536n),   laborCost: toBigInt(7_000), limit: 1000 } as DatacenterConfig,
+    { name: 'Mega Datacenter',   cost: toBigInt(10_000_000_000), gpuCapacity: scaleBigInt(1_000_000n), laborCost: toBigInt(300_000), limit: 300 } as DatacenterConfig,
   ] as DatacenterConfig[],
 
   // Energy
   gridPowerKWCost: 500,
   gridPowerKWLimit: 20_000_000,
+  // EIA AEO 2025 overnight capex (2024$/kW) used as baseline:
+  // - Advanced combined cycle gas: ~791-875 $/kW
+  // - Advanced nuclear: ~7821 $/kW
+  // Rounded to clean gameplay values:
+  // - Gas plant set to 200 MW at ~$800/kW => ~$160M
+  // - Nuclear plant set to 1 GW at ~$8000/kW => ~$8B
+  // Labor is one-time build labor in person-months.
+  // Approximate staffing programs:
+  // - 200 MW CCGT: a few hundred workers over ~2 years -> ~3,000 person-months.
+  // - 1 GW nuclear: large multi-year program -> ~60,000 person-months.
   powerPlants: {
-    gas:     { name: 'Gas Plant',     cost: toBigInt(1_500_000),      outputMW: toBigInt(50),   laborCost: toBigInt(500),   limit: 10000 } as PowerPlantConfig,
-    nuclear: { name: 'Nuclear Plant', cost: toBigInt(1_200_000_000),  outputMW: toBigInt(1000), laborCost: toBigInt(18000), limit: 500 } as PowerPlantConfig,
-    solar:   { name: 'Solar Farm',    cost: toBigInt(800_000),        outputMW: 0n,             laborCost: toBigInt(60),    limit: 20 } as PowerPlantConfig,
+    gas:     { name: 'Gas Plant',     cost: toBigInt(160_000_000),     outputMW: toBigInt(200),  laborCost: toBigInt(3_000),  limit: 10000 } as PowerPlantConfig,
+    nuclear: { name: 'Nuclear Plant', cost: toBigInt(8_000_000_000),   outputMW: toBigInt(1000), laborCost: toBigInt(60_000), limit: 500 } as PowerPlantConfig,
   },
 
-  solarPanelCost: toBigInt(400),
-  solarPanelMW: 0.01,
-  earthSolarInstallLaborCost: toBigInt(0.1),
-  moonInstallLaborCost: toBigInt(0.1),
+  // Modern utility-scale panel baseline (rounded): ~600 W per panel, ~30 kg per panel.
+  // Example references: LONGi Hi-MO X10 class modules (~670W, ~28.5kg).
+  solarPanelMW: 0.0006,
+  // Install labor per unit (person-months per installed panel/GPU).
+  // Earth utility-scale install is highly mechanized; moon install is harder.
+  earthSolarInstallLaborCost: toBigInt(0.003),
+  moonInstallLaborCost: toBigInt(0.01),
   earthSolarInstallLimit: scaleBigInt(5_000_000n),
   moonSolarInstallLimit: scaleBigInt(1_000_000_000_000n),
   moonGpuInstallLimit: scaleBigInt(1_000_000_000_000n),
 
   // Training
   fineTunes: [
-    { name: 'DeepKick-Math',   intel: 10.0, pflopsHrs: toBigInt(50),     dataTB: toBigInt(1),    codeReq: toBigInt(200),   scienceReq: 0n },
-    { name: 'DeepKick-Code',   intel: 11.0, pflopsHrs: toBigInt(150),    dataTB: toBigInt(4),    codeReq: toBigInt(400),   scienceReq: 0n },
-    { name: 'DeepKick-Reason', intel: 12.0, pflopsHrs: toBigInt(500),    dataTB: toBigInt(16),   codeReq: toBigInt(800),   scienceReq: 0n },
-    { name: 'DeepKick-Ultra',  intel: 13.0, pflopsHrs: toBigInt(2000),   dataTB: toBigInt(64),   codeReq: toBigInt(1600),  scienceReq: 0n },
+    { name: 'DeepKick-Math',   intel: 10.0, pflopsHrs: toBigInt(50),     dataGB: toBigInt(1),    codeReq: toBigInt(200),   scienceReq: 0n },
+    { name: 'DeepKick-Code',   intel: 11.0, pflopsHrs: toBigInt(150),    dataGB: toBigInt(4),    codeReq: toBigInt(400),   scienceReq: 0n },
+    { name: 'DeepKick-Reason', intel: 12.0, pflopsHrs: toBigInt(500),    dataGB: toBigInt(16),   codeReq: toBigInt(800),   scienceReq: 0n },
+    { name: 'DeepKick-Ultra',  intel: 13.0, pflopsHrs: toBigInt(2000),   dataGB: toBigInt(64),   codeReq: toBigInt(1600),  scienceReq: 0n },
   ] as TrainingModelConfig[],
 
   ariesModels: [
-    { name: 'Aries-1', intel: 14.0, pflopsHrs: toBigInt(10_000),     dataTB: toBigInt(500),      codeReq: toBigInt(20_000),  scienceReq: toBigInt(100) },
-    { name: 'Aries-2', intel: 18.5, pflopsHrs: toBigInt(50_000),     dataTB: toBigInt(2_000),    codeReq: toBigInt(40_000),  scienceReq: toBigInt(2000) },
-    { name: 'Aries-3', intel: 25.0, pflopsHrs: toBigInt(250_000),    dataTB: toBigInt(10_000),   codeReq: toBigInt(80_000),  scienceReq: toBigInt(8000) },
-    { name: 'Aries-4', intel: 35.0, pflopsHrs: toBigInt(2_000_000),  dataTB: toBigInt(50_000),   codeReq: toBigInt(160_000), scienceReq: toBigInt(40000) },
-    { name: 'Aries-5', intel: 50.0, pflopsHrs: toBigInt(20_000_000), dataTB: toBigInt(250_000),  codeReq: toBigInt(320_000), scienceReq: toBigInt(100000) },
+    { name: 'Aries-1', intel: 14.0, pflopsHrs: toBigInt(10_000),     dataGB: toBigInt(500),      codeReq: toBigInt(20_000),  scienceReq: toBigInt(100) },
+    { name: 'Aries-2', intel: 18.5, pflopsHrs: toBigInt(50_000),     dataGB: toBigInt(2_000),    codeReq: toBigInt(40_000),  scienceReq: toBigInt(2000) },
+    { name: 'Aries-3', intel: 25.0, pflopsHrs: toBigInt(250_000),    dataGB: toBigInt(10_000),   codeReq: toBigInt(80_000),  scienceReq: toBigInt(8000) },
+    { name: 'Aries-4', intel: 35.0, pflopsHrs: toBigInt(2_000_000),  dataGB: toBigInt(50_000),   codeReq: toBigInt(160_000), scienceReq: toBigInt(40000) },
+    { name: 'Aries-5', intel: 50.0, pflopsHrs: toBigInt(20_000_000), dataGB: toBigInt(250_000),  codeReq: toBigInt(320_000), scienceReq: toBigInt(100000) },
   ] as TrainingModelConfig[],
 
   trainingUnlockIntel: 9.0,
-  dataBaseCostPerTB: toBigInt(200),
-  dataEscalationRate: 0.15,
+  dataPurchaseLimitGB: 1_000_000,
 
   // Research
   researchUnlockIntel: 11.0,
@@ -476,50 +505,54 @@ export const BALANCE = {
   ] as ResearchConfig[],
 
   // Supply chain costs
-  materialCost: toBigInt(100),
-  solarPanelImportCost: toBigInt(500),
   robotImportCost: toBigInt(1000),
   robotWorkerBuyLimit: 10_000_000,
-  rocketImportCost: toBigInt(100_000),
-  gpuImportCost: toBigInt(2000),
-  gpuSatelliteImportCost: toBigInt(5000),
 
   // Facilities (Earth baseline)
   materialMineCost: 0n,
-  materialMineLaborCost: toBigInt(10),
-  materialMineLaborReq: toBigInt(200),
+  // One-time setup labor for opening a mine site.
+  materialMineLaborCost: toBigInt(200),
+  // Operating labor per minute (= per game-month), i.e. required FTE per mine.
+  materialMineLaborReq: toBigInt(8),
   materialMineOutput: toBigInt(2000),
   materialMineLimit: 10_000_000,
 
   gpuFactoryCost: toBigInt(50_000),
-  gpuFactoryLaborCost: toBigInt(200),
+  // Operating labor per factory per minute (per month).
+  gpuFactoryLaborCost: toBigInt(25),
   gpuFactoryLimit: 50,
   gpuFactoryOutput: toBigInt(100),
   gpuFactoryMaterialReq: toBigInt(2000),
 
   solarFactoryCost: toBigInt(10_000),
-  solarFactoryLaborCost: toBigInt(50),
+  solarFactoryLaborCost: toBigInt(8),
   solarFactoryLimit: 50,
-  solarFactoryOutput: toBigInt(100),
+  // Increased to preserve prior panel-to-satellite production pacing after panel wattage downshift.
+  solarFactoryOutput: toBigInt(400),
   solarFactoryMaterialReq: toBigInt(1000),
 
   robotFactoryCost: toBigInt(20_000),
-  robotFactoryLaborCost: toBigInt(100),
+  robotFactoryLaborCost: toBigInt(20),
   robotFactoryLimit: 50,
   robotFactoryOutput: toBigInt(100),
   robotFactoryMaterialReq: toBigInt(2000),
 
   rocketFactoryCost: toBigInt(500_000),
-  rocketFactoryLaborCost: toBigInt(500),
+  // Labor and material here are monthly operating inputs (not one-time build cost),
+  // representing a large, specialized aerospace workforce.
+  rocketFactoryLaborCost: toBigInt(600),
   rocketFactoryLimit: 10,
   rocketFactoryOutput: 10,
-  rocketFactoryMaterialReq: toBigInt(100000),
+  // 60,000 ore-equivalent tons / month for 10 rockets / month ~= 6,000 tons per rocket.
+  // Interpreted as ore-equivalent bill of materials (including rare/processed materials and amortized industrial chain).
+  rocketFactoryMaterialReq: toBigInt(60_000),
 
   gpuSatelliteFactoryCost: toBigInt(500_000),
-  gpuSatelliteFactoryLaborCost: toBigInt(500),
   gpuSatelliteFactoryLimit: 20,
   gpuSatelliteFactoryOutput: 20,
-  gpuSatelliteFactoryMaterialReq: toBigInt(50000),
+  // 200,000 panels / 20 satellites = 10,000 panels per satellite.
+  // At 0.0006 MW/panel this is ~6 MW nameplate per satellite, close to satellitePowerMW=5.
+  gpuSatelliteFactoryMaterialReq: toBigInt(200_000),
   gpuSatelliteFactoryGpuReq: toBigInt(1000),
 
   // Soft stockpile caps to prevent overcommitting one production line.
@@ -552,8 +585,6 @@ export const BALANCE = {
   rocketCapacityLunar: 10 * 1000,
   rocketCapacityMercury: 20 * 1000,
 
-  earthLaunchesPerMin: 120,
-  moonLaunchesPerMin: 90,
   massDriverLaunchesPerMin: 180,
   massDriverCapacityMultiplier: 12,
 
@@ -561,10 +592,12 @@ export const BALANCE = {
   // Earth -> Moon is ~3 days, so ~6 seconds in game time.
   routeEarthOrbitTransitMs: 1_000,
   routeEarthMoonTransitMs: 6_000,
-  routeMoonMercuryTransitMs: 180_000,
+  // Typical transfers are multi-month; rounded to 6 game-months.
+  routeMoonMercuryTransitMs: 360_000,
 
   earthRocketReturnMs: 12_000,
-  moonRocketReturnMs: 220_000,
+  // Return leg is generally longer than Earth routes; rounded to 7 game-months.
+  moonRocketReturnMs: 420_000,
 
   rocketLossNoReuse: 1.0,
   rocketLossReusable1: 0.7,
@@ -573,39 +606,126 @@ export const BALANCE = {
 
   // Weights (kg)
   robotWeight: 100,
-  solarPanelWeight: 50,
-  gpuWeight: 1000,
+  solarPanelWeight: 30,
+  // Shipping mass for one GPU bundle (card + fractional host hardware).
+  gpuWeight: 200,
   gpuSatelliteWeight: 1000,
 
   // Space power/mining
   satellitePowerMW: 5.0,
-  mercuryBaseMassTotal: scaleBigInt(1_000_000_000_000_000_000_000n), // 1Z
-  mercuryMiningPerRobotPerMin: toBigInt(1200),
+  // Mercury mass from NASA/JPL: 3.30103e23 kg = 3.30103e20 metric tons.
+  // Rounded to 3.3e20 tons for gameplay readability.
+  mercuryBaseMassTotal: scaleBigInt(330_000_000_000_000_000_000n),
 
   // Robot labor by location
   robotLaborPerMinBase: toBigInt(20),
 
   // API Services
   apiUnlockIntel: 5.0,
-  apiUnlockCode: toBigInt(200),
+  apiUnlockCode: toBigInt(1),
+  apiStartingPrice: 50,
   apiPflopsPerUser: 0.01,
-  apiAdCost: toBigInt(1),
-  apiAdAwarenessBoost: 1,
-  apiPriceElasticity: 3.0,
-  intelligenceElasticity: 3,
-  apiAwarenessElasticity: 0.7,
-  apiBaseAwareness: 200,
-  apiDemandScale: 1000,
-  apiImproveCodeCost: toBigInt(100),
+  apiAdCost: toBigInt(1000),
+  apiAdAwarenessBoost: 1000,
+  apiImproveCodeCost: toBigInt(1),
   apiImproveQualityBoost: 0.1,
   apiUserSynthBase: 100n,
 };
 
 /**
- * Stuck rate: probability an agent gets stuck on a given task.
+ * Base stuck rate: probability per second that an active agent gets stuck.
  */
 export function getStuckRate(intel: number): number {
-  return 1.2 * Math.min(0.5, 0.5 * Math.pow(1 / intel, 1));
+  return 1 / (intel + 1);
+}
+
+/**
+ * API demand curve used by ComputeSystem.
+ * Kept here so economics live with balance parameters.
+ */
+export function getApiDemand(
+  awareness: number,
+  quality: number,
+  intelligence: number,
+  price: number,
+): number {
+  // Function-local economics constants (kept inline unless shared elsewhere).
+  const API_BASE_AWARENESS = 200_000;
+  const API_AWARENESS_ELASTICITY = 0.7;
+  const INTELLIGENCE_ELASTICITY = 3.0;
+  const API_PRICE_ELASTICITY = 3.0;
+  const API_DEMAND_SCALE = 3000;
+
+  const effectiveAwareness = Math.max(0, API_BASE_AWARENESS + awareness);
+  const safeQuality = Math.max(0, quality);
+  const safeIntelligence = Math.max(0.01, intelligence);
+  const safePrice = Math.max(0.1, price);
+
+  return (
+    Math.pow(effectiveAwareness, API_AWARENESS_ELASTICITY) *
+    safeQuality *
+    (Math.pow(safeIntelligence, INTELLIGENCE_ELASTICITY) /
+      Math.pow(safePrice, API_PRICE_ELASTICITY)) *
+    API_DEMAND_SCALE
+  );
+}
+
+/**
+ * Flat market pricing for purchased data (does not scale with prior purchases).
+ */
+export function getTrainingDataPricePerGB(): bigint {
+  const DATA_PRICE_PER_GB = 200;
+  return toBigInt(DATA_PRICE_PER_GB);
+}
+
+export function getTrainingDataRemainingPurchaseCapGB(purchasedGB: number): number {
+  return Math.max(0, BALANCE.dataPurchaseLimitGB - Math.max(0, Math.floor(purchasedGB)));
+}
+
+export function getTrainingDataPurchaseCost(amountGB: number): bigint {
+  if (amountGB <= 0) return 0n;
+  return mulB(toBigInt(amountGB), getTrainingDataPricePerGB());
+}
+
+/**
+ * GPU market target price as a function of currently owned Earth GPUs.
+ * Starts with hobby crypto-mining/prosumer rigs and shifts toward enterprise accelerators as fleet scales.
+ */
+export function getGpuTargetPrice(gpuCount: bigint): bigint {
+  // Price anchors by scale (USD per game "GPU unit" = card + fractional host/rack/power hardware):
+  // - Hobby baseline is informed by consumer GPU MSRPs:
+  //   NVIDIA GeForce RTX 3080 ($699, Sep 2020 launch) and RTX 5090 ($1,999, Jan 2025 launch),
+  //   then uplifted for system overhead and non-MSRP channel pricing.
+  // - Enterprise anchor is informed by NVIDIA DGX A100 launch pricing:
+  //   $199,000 for 8x A100 (~$24,875 per accelerator slot incl. server platform).
+  // - Higher tiers represent newer enterprise accelerator mixes (H100/B200-class) at larger scales.
+  const anchors: Array<{ gpus: number; usd: number }> = [
+    { gpus: 1, usd: 3_000 },            // Hobby mining/prosumer workstation blend
+    { gpus: 128, usd: 8_000 },         // End of "no dedicated datacenter" phase
+    { gpus: 256, usd: 14_000 },         // Small datacenter: mixed pro + enterprise cards
+    { gpus: 4_096, usd: 25_000 },       // Medium datacenter: A100/DGX-class economics
+    { gpus: 65_536, usd: 32_000 },      // Large datacenter: mostly enterprise accelerators
+    { gpus: 1_000_000, usd: 36_000 },   // Mega fleet: top-tier enterprise mix dominates
+  ];
+
+  const owned = Math.max(0, fromBigInt(gpuCount));
+  if (owned <= anchors[0].gpus) return toBigInt(anchors[0].usd);
+
+  for (let i = 1; i < anchors.length; i++) {
+    const left = anchors[i - 1];
+    const right = anchors[i];
+    if (owned <= right.gpus) {
+      // Interpolate in log-space so transitions are smooth across orders of magnitude.
+      const leftX = Math.log2(left.gpus);
+      const rightX = Math.log2(right.gpus);
+      const x = Math.log2(Math.max(1, owned));
+      const t = rightX > leftX ? (x - leftX) / (rightX - leftX) : 0;
+      const blendedUsd = left.usd + (right.usd - left.usd) * Math.max(0, Math.min(1, t));
+      return toBigInt(blendedUsd);
+    }
+  }
+
+  return toBigInt(anchors[anchors.length - 1].usd);
 }
 
 /** Get next tier in sequence, or null if maxed. */

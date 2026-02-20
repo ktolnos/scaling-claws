@@ -19,6 +19,7 @@ import { DatacenterInterior } from './ui/visuals/DatacenterInterior.ts';
 import { EarthSurface } from './ui/visuals/EarthSurface.ts';
 import { EarthMoonSpace } from './ui/visuals/EarthMoonSpace.ts';
 import { Ticker } from './ui/components/Ticker.ts';
+import { HintOverlay } from './ui/hints/HintOverlay.ts';
 
 // Load or create state
 const state = loadGame() ?? createInitialState();
@@ -34,6 +35,7 @@ const datacenterVisual = new DatacenterInterior(visualArea);
 const earthSurface = new EarthSurface(visualArea);
 const earthMoonSpace = new EarthMoonSpace(visualArea);
 const ticker = new Ticker(document.getElementById('ticker')!);
+new HintOverlay(document.body);
 
 // GPU transition callback
 function handleGpuTransition(): void {

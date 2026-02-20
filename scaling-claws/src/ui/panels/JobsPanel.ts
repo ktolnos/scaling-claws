@@ -9,6 +9,7 @@ import { BulkBuyGroup } from '../components/BulkBuyGroup.ts';
 import { createPanelScaffold } from '../components/PanelScaffold.ts';
 import { flashElement } from '../UIUtils.ts';
 import { moneyWithEmojiHtml, resourceLabelHtml, emojiHtml } from '../emoji.ts';
+import { setHintTarget } from '../hints/HintUtils.ts';
 import { getJobOutputAmount, getRobotLaborPerMin } from '../../game/systems/JobRules.ts';
 import {
   nudgeAgent,
@@ -18,6 +19,19 @@ import {
 } from '../../game/systems/JobSystem.ts';
 
 const MAX_PROGRESS_BARS = 4;
+const JOB_HINT_ID: Record<JobType, string> = {
+  sixxerBasic: 'job.sixxerBasic',
+  sixxerEnterprise: 'job.sixxerEnterprise',
+  manager: 'job.manager',
+  aiSWE: 'job.aiSWE',
+  aiResearcher: 'job.aiResearcher',
+  aiDataSynthesizer: 'job.aiDataSynthesizer',
+  robotWorker: 'job.robotWorker',
+  humanWorker: 'job.humanWorker',
+  humanResearcher: 'job.humanResearcher',
+  humanSWE: 'job.humanSWE',
+  unassigned: 'mechanic.jobs',
+};
 
 interface JobRowRefs {
   row: HTMLDivElement;
@@ -68,6 +82,7 @@ export class JobsPanel implements Panel {
 
     this.stuckCountEl = document.createElement('span');
     this.stuckCountEl.style.fontSize = '0.8rem';
+    setHintTarget(this.stuckCountEl, 'mechanic.stuck');
 
     this.nudgeBtn = document.createElement('button');
     this.nudgeBtn.className = 'btn-nudge';
@@ -114,6 +129,7 @@ export class JobsPanel implements Panel {
 
     const name = document.createElement('span');
     name.textContent = config.displayName;
+    setHintTarget(name, JOB_HINT_ID[jobType] ?? 'mechanic.jobs');
     name.style.fontWeight = '500';
     name.style.fontSize = '0.82rem';
     name.style.whiteSpace = 'nowrap';

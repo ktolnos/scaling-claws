@@ -73,6 +73,19 @@ npm run build    # TypeScript check + production bundle (use `source ~/.bashrc &
 npm run preview  # Preview production build
 ```
 
+### Running From PowerShell Into WSL
+If you are in Windows PowerShell and need Linux/WSL tooling (Node, npm, etc.), route commands through `wsl.exe`:
+
+```powershell
+wsl.exe bash -lc "cd /home/eop/scaling-claws/scaling-claws && npm run build"
+```
+
+Quick environment check from PowerShell:
+
+```powershell
+wsl.exe bash -lc "node -v && npm -v"
+```
+
 ## Implementation Milestones
 
 ### Milestone 0: Scaffolding ✅

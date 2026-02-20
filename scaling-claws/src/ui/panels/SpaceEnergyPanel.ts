@@ -5,8 +5,10 @@ import { formatMW, formatNumber, toBigInt, mulB, fromBigInt, scaleBigInt } from 
 import { buyGridPower, sellGridPower, buyGasPlant, buyNuclearPlant } from '../../game/systems/EnergySystem.ts';
 import { schedulePayload, installSolarPanels, installMoonGpus, launchVonNeumannProbe } from '../../game/systems/SpaceSystem.ts';
 import { BulkBuyGroup } from '../components/BulkBuyGroup.ts';
+import { CountBulkBuyControls } from '../components/CountBulkBuyControls.ts';
 import { createPanelDivider, createPanelScaffold } from '../components/PanelScaffold.ts';
 import { emojiHtml, moneyWithEmojiHtml, resourceLabelHtml } from '../emoji.ts';
+import { setHintTarget } from '../hints/HintUtils.ts';
 
 interface PlantRowRefs {
   count: HTMLSpanElement;
@@ -32,6 +34,8 @@ interface RouteLaneRefs {
 export class SpaceEnergyPanel implements Panel {
   readonly el: HTMLElement;
   private state: GameState;
+  private panelHeaderEl!: HTMLDivElement;
+  private earthEnergyTitleEl!: HTMLDivElement;
 
   // Earth energy
   private demandEl!: HTMLSpanElement;
@@ -84,6 +88,7 @@ export class SpaceEnergyPanel implements Panel {
       bodyClassName: 'panel-body panel-body-tight',
     });
     this.el = panel;
+    this.panelHeaderEl = this.el.querySelector('.panel-header') as HTMLDivElement;
     this.build();
   }
 
@@ -98,16 +103,17 @@ export class SpaceEnergyPanel implements Panel {
   }
 
   private buildEarthEnergy(parent: HTMLElement): void {
-    const title = document.createElement('div');
-    title.className = 'panel-section-title';
-    title.innerHTML = 'EARTH ENERGY' // `${locationLabelHtml('earth')} ${resourceLabelHtml('energy', 'Energy')}`;
-    parent.appendChild(title);
+    this.earthEnergyTitleEl = document.createElement('div');
+    this.earthEnergyTitleEl.className = 'panel-section-title';
+    this.earthEnergyTitleEl.innerHTML = 'EARTH ENERGY' // `${locationLabelHtml('earth')} ${resourceLabelHtml('energy', 'Energy')}`;
+    parent.appendChild(this.earthEnergyTitleEl);
 
     const powerRow = document.createElement('div');
     powerRow.className = 'panel-row';
     const powerLabel = document.createElement('span');
     powerLabel.className = 'label';
     powerLabel.innerHTML = resourceLabelHtml('energy', 'Power');
+    setHintTarget(powerLabel, 'resource.energy');
     powerRow.appendChild(powerLabel);
 
     const powerValues = document.createElement('div');
@@ -134,6 +140,7 @@ export class SpaceEnergyPanel implements Panel {
     const gridLabel = document.createElement('span');
     gridLabel.className = 'label';
     gridLabel.textContent = 'Grid';
+    setHintTarget(gridLabel, 'mechanic.gridPower');
     this.gridRow.appendChild(gridLabel);
 
     const gridControls = document.createElement('div');
@@ -155,8 +162,8 @@ export class SpaceEnergyPanel implements Panel {
     this.gridRow.appendChild(gridControls);
     parent.appendChild(this.gridRow);
 
-    this.gasRefs = this.buildPlantRow(parent, 'Gas Plants', BALANCE.powerPlants.gas.outputMW, (amt) => buyGasPlant(this.state, amt));
-    this.nuclearRefs = this.buildPlantRow(parent, 'Nuclear Plants', BALANCE.powerPlants.nuclear.outputMW, (amt) => buyNuclearPlant(this.state, amt));
+    this.gasRefs = this.buildPlantRow(parent, 'Gas Plants', BALANCE.powerPlants.gas.outputMW, (amt) => buyGasPlant(this.state, amt), 'infra.gasPlant');
+    this.nuclearRefs = this.buildPlantRow(parent, 'Nuclear Plants', BALANCE.powerPlants.nuclear.outputMW, (amt) => buyNuclearPlant(this.state, amt), 'infra.nuclearPlant');
 
     this.earthSolarRow = document.createElement('div');
     this.earthSolarRow.className = 'panel-row';
@@ -175,6 +182,7 @@ export class SpaceEnergyPanel implements Panel {
     const lbl = document.createElement('span');
     lbl.className = 'label';
     lbl.textContent = 'Install Solar Panels';
+    setHintTarget(lbl, 'infra.solarInstall');
     top.appendChild(lbl);
 
     this.earthSolarStatusEl = document.createElement('span');
@@ -200,13 +208,20 @@ export class SpaceEnergyPanel implements Panel {
     parent.appendChild(this.earthSolarRow);
   }
 
-  private buildPlantRow(parent: HTMLElement, label: string, outputMW: bigint, buy: (amount: number) => void): PlantRowRefs {
+  private buildPlantRow(
+    parent: HTMLElement,
+    label: string,
+    outputMW: bigint,
+    buy: (amount: number) => void,
+    hintId: string,
+  ): PlantRowRefs {
     const row = document.createElement('div');
     row.className = 'panel-row';
 
     const name = document.createElement('span');
     name.className = 'label';
     name.textContent = `${label} (${formatMW(outputMW).replace(' ', '')})`;
+    setHintTarget(name, hintId);
     row.appendChild(name);
 
     const right = document.createElement('div');
@@ -214,32 +229,18 @@ export class SpaceEnergyPanel implements Panel {
     right.style.flexDirection = 'column';
     right.style.alignItems = 'flex-end';
 
-    const controls = document.createElement('div');
-    controls.style.display = 'flex';
-    controls.style.alignItems = 'center';
-    controls.style.gap = '4px';
-
-    const count = document.createElement('span');
-    count.className = 'value';
-    count.style.minWidth = '30px';
-    count.style.textAlign = 'right';
-    count.textContent = 'x0';
-
     const buildLabel = document.createElement('span');
     buildLabel.style.fontSize = '0.62rem';
     buildLabel.style.color = 'var(--text-muted)';
 
-    const buyGroup = new BulkBuyGroup((amt) => buy(amt), '+');
-
-    controls.appendChild(count);
-    controls.appendChild(buyGroup.el);
-    right.appendChild(controls);
+    const controls = new CountBulkBuyControls((amt) => buy(amt), { prefix: '+' });
+    right.appendChild(controls.el);
     right.appendChild(buildLabel);
 
     row.appendChild(right);
     parent.appendChild(row);
 
-    return { count, buyGroup, buildLabel };
+    return { count: controls.countEl, buyGroup: controls.bulk, buildLabel };
   }
 
   private buildLogistics(parent: HTMLElement): void {
@@ -257,6 +258,7 @@ export class SpaceEnergyPanel implements Panel {
     orbitRow.className = 'panel-row';
     this.orbitSatEl = document.createElement('span');
     this.orbitSatEl.className = 'label';
+    setHintTarget(this.orbitSatEl, 'resource.gpuSatellites');
     this.orbitSatEl.style.fontSize = '0.76rem';
     this.orbitSatEl.style.whiteSpace = 'nowrap';
     this.orbitSatEl.style.overflow = 'hidden';
@@ -268,18 +270,18 @@ export class SpaceEnergyPanel implements Panel {
     this.logisticsSection.appendChild(orbitRow);
 
     this.buildRouteLaneRow(this.logisticsSection, 'earthOrbit', 'earth', 'orbit');
-    this.buildLogisticsRow(this.logisticsSection, resourceLabelHtml('gpuSatellites'), 'GPU Satellites', 'earthOrbit:gpuSatellites', (amt) => schedulePayload(this.state, 'earthOrbit', 'gpuSatellites', amt));
+    this.buildLogisticsRow(this.logisticsSection, resourceLabelHtml('gpuSatellites'), 'GPU Satellites', 'earthOrbit:gpuSatellites', (amt) => schedulePayload(this.state, 'earthOrbit', 'gpuSatellites', amt), true, 'resource.gpuSatellites');
 
     this.buildRouteLaneRow(this.logisticsSection, 'earthMoon', 'earth', 'moon');
-    this.buildLogisticsRow(this.logisticsSection, resourceLabelHtml('gpus'), 'GPUs', 'earthMoon:gpus', (amt) => schedulePayload(this.state, 'earthMoon', 'gpus', amt));
-    this.buildLogisticsRow(this.logisticsSection, resourceLabelHtml('solarPanels'), 'Solar Panels', 'earthMoon:solarPanels', (amt) => schedulePayload(this.state, 'earthMoon', 'solarPanels', amt));
-    this.buildLogisticsRow(this.logisticsSection, resourceLabelHtml('robots'), 'Robots', 'earthMoon:robots', (amt) => schedulePayload(this.state, 'earthMoon', 'robots', amt));
+    this.buildLogisticsRow(this.logisticsSection, resourceLabelHtml('gpus'), 'GPUs', 'earthMoon:gpus', (amt) => schedulePayload(this.state, 'earthMoon', 'gpus', amt), true, 'resource.gpus');
+    this.buildLogisticsRow(this.logisticsSection, resourceLabelHtml('solarPanels'), 'Solar Panels', 'earthMoon:solarPanels', (amt) => schedulePayload(this.state, 'earthMoon', 'solarPanels', amt), true, 'resource.solarPanels');
+    this.buildLogisticsRow(this.logisticsSection, resourceLabelHtml('robots'), 'Robots', 'earthMoon:robots', (amt) => schedulePayload(this.state, 'earthMoon', 'robots', amt), true, 'resource.robots');
 
     this.buildRouteLaneRow(this.logisticsSection, 'moonMercury', 'moon', 'mercury');
-    this.buildLogisticsRow(this.logisticsSection, resourceLabelHtml('robots'), 'Robots', 'moonMercury:robots', (amt) => schedulePayload(this.state, 'moonMercury', 'robots', amt));
+    this.buildLogisticsRow(this.logisticsSection, resourceLabelHtml('robots'), 'Robots', 'moonMercury:robots', (amt) => schedulePayload(this.state, 'moonMercury', 'robots', amt), true, 'resource.robots');
 
     this.buildRouteLaneRow(this.logisticsSection, 'mercuryOrbit', 'mercury', 'orbit');
-    this.buildLogisticsRow(this.logisticsSection, resourceLabelHtml('gpuSatellites'), 'GPU Satellites', 'mercuryOrbit:gpuSatellites', (amt) => schedulePayload(this.state, 'mercuryOrbit', 'gpuSatellites', amt), false);
+    this.buildLogisticsRow(this.logisticsSection, resourceLabelHtml('gpuSatellites'), 'GPU Satellites', 'mercuryOrbit:gpuSatellites', (amt) => schedulePayload(this.state, 'mercuryOrbit', 'gpuSatellites', amt), false, 'resource.gpuSatellites');
 
     parent.appendChild(this.logisticsSection);
   }
@@ -319,6 +321,7 @@ export class SpaceEnergyPanel implements Panel {
     key: string,
     act: (amt: number) => void,
     withBulk: boolean = true,
+    hintId?: string,
   ): void {
     const row = document.createElement('div');
     row.className = 'panel-row';
@@ -339,6 +342,7 @@ export class SpaceEnergyPanel implements Panel {
     lbl.style.textOverflow = 'ellipsis';
     lbl.title = labelTitle;
     lbl.innerHTML = labelHtml;
+    if (hintId) setHintTarget(lbl, hintId);
 
     const stat = document.createElement('span');
     stat.style.fontSize = '0.64rem';
@@ -520,6 +524,7 @@ export class SpaceEnergyPanel implements Panel {
     const powerLabel = document.createElement('span');
     powerLabel.className = 'label';
     powerLabel.innerHTML = resourceLabelHtml('energy', 'Power');
+    setHintTarget(powerLabel, 'resource.energy');
     powerRow.appendChild(powerLabel);
 
     const powerValues = document.createElement('span');
@@ -550,6 +555,7 @@ export class SpaceEnergyPanel implements Panel {
     const solarLbl = document.createElement('span');
     solarLbl.className = 'label';
     solarLbl.textContent = 'Moon Solar';
+    setHintTarget(solarLbl, 'infra.solarInstall');
     solarLbl.style.whiteSpace = 'nowrap';
     solarTop.appendChild(solarLbl);
 
@@ -599,6 +605,7 @@ export class SpaceEnergyPanel implements Panel {
     const gpuLbl = document.createElement('span');
     gpuLbl.className = 'label';
     gpuLbl.textContent = 'Moon GPUs';
+    setHintTarget(gpuLbl, 'resource.gpus');
     gpuLbl.style.whiteSpace = 'nowrap';
     gpuTitle.appendChild(gpuLbl);
     gpuTop.appendChild(gpuTitle);
@@ -700,6 +707,10 @@ export class SpaceEnergyPanel implements Panel {
       return;
     }
     this.el.style.display = '';
+
+    const spaceUnlocked = state.spaceUnlocked || state.completedResearch.includes('orbitalLogistics');
+    this.panelHeaderEl.textContent = spaceUnlocked ? 'SPACE & ENERGY' : 'ENERGY';
+    this.earthEnergyTitleEl.style.display = spaceUnlocked ? '' : 'none';
 
     this.demandEl.textContent = formatMW(state.powerDemandMW);
     this.supplyEl.textContent = formatMW(state.powerSupplyMW);

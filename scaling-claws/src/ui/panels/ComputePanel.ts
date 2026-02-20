@@ -4,16 +4,17 @@ import type { Panel } from '../PanelManager.ts';
 import { BALANCE } from '../../game/BalanceConfig.ts';
 import { formatNumber, formatMoney, fromBigInt, toBigInt, divB, scaleB, mulB } from '../../game/utils.ts';
 import { buyGpu, upgradeModel, buyDatacenter, setApiPrice, buyAds, improveApi, unlockApi, setComputeAllocations } from '../../game/systems/ComputeSystem.ts';
-import { BulkBuyGroup, getBuyTiers } from '../components/BulkBuyGroup.ts';
+import { BulkBuyGroup } from '../components/BulkBuyGroup.ts';
+import { CountBulkBuyControls } from '../components/CountBulkBuyControls.ts';
 import { createPanelDivider, createPanelScaffold } from '../components/PanelScaffold.ts';
 import { UI_EMOJI, emojiHtml, moneyWithEmojiHtml, resourceLabelHtml } from '../emoji.ts';
+import { setHintTarget } from '../hints/HintUtils.ts';
 
 export class ComputePanel implements Panel {
   readonly el: HTMLElement;
   private state: GameState;
 
   private modelNameEl!: HTMLSpanElement;
-  private gpuCountEl!: HTMLSpanElement;
   private gpuStatusEl!: HTMLSpanElement;
   private installedGpuRow!: HTMLDivElement;
   private installedGpuCountEl!: HTMLSpanElement;
@@ -38,8 +39,8 @@ export class ComputePanel implements Panel {
   private readonly onAllocPointerUp = () => this.stopAllocationDrag();
 
   private buyGpuRow!: HTMLDivElement;
-  private buyGpuBtnGroup!: HTMLDivElement;
-  private lastGpuTiers: string = '';
+  private buyGpuControls!: CountBulkBuyControls;
+  private gpuPricePart!: HTMLDivElement;
   private upgradeSection!: HTMLDivElement;
   private datacenterSection!: HTMLDivElement;
   private datacenterHintEl!: HTMLDivElement;
@@ -88,6 +89,7 @@ export class ComputePanel implements Panel {
     const modelLabel = document.createElement('span');
     modelLabel.className = 'label';
     modelLabel.textContent = 'Model:';
+    setHintTarget(modelLabel, 'resource.intel');
     this.modelNameEl = document.createElement('span');
     this.modelNameEl.className = 'value';
     this.modelNameEl.style.fontWeight = '600';
@@ -101,6 +103,7 @@ export class ComputePanel implements Panel {
     this.unassignedLabelEl = document.createElement('span');
     this.unassignedLabelEl.className = 'label';
     this.unassignedLabelEl.textContent = 'Unassigned Agents:';
+    setHintTarget(this.unassignedLabelEl, 'mechanic.agentCapacity');
     this.unassignedCountEl = document.createElement('span');
     this.unassignedCountEl.className = 'value';
     this.unassignedCountEl.style.fontWeight = '600';
@@ -207,6 +210,7 @@ export class ComputePanel implements Panel {
 
     const topPart = document.createElement('div');
     topPart.innerHTML = `${resourceLabelHtml('gpus', 'GPUs')}`;
+    setHintTarget(topPart, 'resource.gpus');
     buyLabel.appendChild(topPart);
 
     const statusPart = document.createElement('div');
@@ -216,30 +220,15 @@ export class ComputePanel implements Panel {
     statusPart.appendChild(this.gpuStatusEl);
     buyLabel.appendChild(statusPart);
 
-    const pricePart = document.createElement('div');
-    pricePart.style.color = 'var(--text-secondary)';
-    pricePart.style.fontSize = '0.72rem';
-    pricePart.textContent = `Cost: ${formatMoney(BALANCE.gpuCost)} each`;
-    buyLabel.appendChild(pricePart);
+    this.gpuPricePart = document.createElement('div');
+    this.gpuPricePart.style.color = 'var(--text-secondary)';
+    this.gpuPricePart.style.fontSize = '0.72rem';
+    buyLabel.appendChild(this.gpuPricePart);
 
     this.buyGpuRow.appendChild(buyLabel);
 
-    const gpuControls = document.createElement('div');
-    gpuControls.style.display = 'flex';
-    gpuControls.style.alignItems = 'center';
-    gpuControls.style.gap = '4px';
-
-    this.gpuCountEl = document.createElement('span');
-    this.gpuCountEl.className = 'value';
-    this.gpuCountEl.style.minWidth = '36px';
-    this.gpuCountEl.style.textAlign = 'right';
-    this.gpuCountEl.style.fontWeight = 'bold';
-    gpuControls.appendChild(this.gpuCountEl);
-
-    this.buyGpuBtnGroup = document.createElement('div');
-    this.buyGpuBtnGroup.className = 'bulk-buy-group';
-    gpuControls.appendChild(this.buyGpuBtnGroup);
-    this.buyGpuRow.appendChild(gpuControls);
+    this.buyGpuControls = new CountBulkBuyControls((amt) => buyGpu(this.state, amt), { prefix: '+' });
+    this.buyGpuRow.appendChild(this.buyGpuControls.el);
     body.appendChild(this.buyGpuRow);
 
     // Installed GPUs Row
@@ -251,6 +240,7 @@ export class ComputePanel implements Panel {
     const installedLabel = document.createElement('span');
     installedLabel.className = 'label';
     installedLabel.innerHTML = 'Installed GPUs';
+    setHintTarget(installedLabel, 'mechanic.datacenters');
     this.installedGpuRow.appendChild(installedLabel);
     
     this.installedGpuCountEl = document.createElement('span');
@@ -312,6 +302,7 @@ export class ComputePanel implements Panel {
 
         const info = document.createElement('span');
         info.className = 'label';
+        setHintTarget(info, 'mechanic.datacenters');
         left.appendChild(info);
 
         const costInfo = document.createElement('span');
@@ -321,25 +312,15 @@ export class ComputePanel implements Panel {
 
         row.appendChild(left);
 
-        const right = document.createElement('span');
-        right.style.display = 'flex';
-        right.style.gap = '4px';
-        right.style.alignItems = 'center';
-
-        const countSpan = document.createElement('span');
-        countSpan.className = 'value';
-        right.appendChild(countSpan);
-
-        const bulk = new BulkBuyGroup((amt) => {
+        const controls = new CountBulkBuyControls((amt) => {
           for (let k = 0; k < amt; k++) {
             if (!buyDatacenter(this.state, i)) break;
           }
-        }, '+');
-        right.appendChild(bulk.el);
+        }, { prefix: '+' });
 
-        row.appendChild(right);
+        row.appendChild(controls.el);
         this.datacenterSection.appendChild(row);
-        this.datacenterRows[i] = { row, info, costInfo, count: countSpan, bulk };
+        this.datacenterRows[i] = { row, info, costInfo, count: controls.countEl, bulk: controls.bulk };
     }
 
     // API Services section
@@ -353,6 +334,7 @@ export class ComputePanel implements Panel {
     const subTitle = document.createElement('div');
     subTitle.className = 'panel-section-title api-services';
     subTitle.textContent = 'API SERVICES';
+    setHintTarget(subTitle, 'mechanic.apiServices');
     this.apiSection.appendChild(subTitle);
 
     // Locked preview
@@ -417,6 +399,7 @@ export class ComputePanel implements Panel {
     const priceLabel = document.createElement('span');
     priceLabel.className = 'label';
     priceLabel.innerHTML = `${resourceLabelHtml('funds', 'Price API')}:`;
+    setHintTarget(priceLabel, 'mechanic.apiServices');
     priceRow.appendChild(priceLabel);
 
     const priceControls = document.createElement('span');
@@ -680,7 +663,8 @@ export class ComputePanel implements Panel {
     const model = BALANCE.models[state.currentModelIndex];
 
     this.modelNameEl.innerHTML = `${model.name} (${resourceLabelHtml('intel')} ${(Math.round(model.intel * 10) / 10).toString()})`;
-    this.gpuCountEl.textContent = 'x' + formatNumber(earthGpuCount);
+    this.buyGpuControls.setCount(earthGpuCount);
+    this.gpuPricePart.textContent = `Cost: ${formatMoney(state.gpuMarketPrice)} each`;
 
     const allInstallable = earthGpuCount <= state.gpuCapacity;
     const shownInstalled = allInstallable ? earthGpuCount : state.installedGpuCount;
@@ -726,26 +710,10 @@ export class ComputePanel implements Panel {
     this.updateAgentEfficiencyDisplay(state);
     this.updateUnifiedAllocationUi(state);
 
-    // GPU buy buttons — rebuild if tiers changed, then update enabled state
-    const gpuNum = Math.floor(fromBigInt(earthGpuCount));
-    const tiers = getBuyTiers(gpuNum);
-    const tiersKey = tiers.join(',');
-    if (tiersKey !== this.lastGpuTiers) {
-      this.lastGpuTiers = tiersKey;
-      this.buyGpuBtnGroup.innerHTML = '';
-      for (const amt of tiers) {
-        const btn = document.createElement('button');
-        btn.textContent = '+' + formatNumber(amt);
-        btn.dataset.amount = amt.toString();
-        btn.addEventListener('click', () => buyGpu(this.state, amt));
-        this.buyGpuBtnGroup.appendChild(btn);
-      }
-    }
-    const gpuBtns = this.buyGpuBtnGroup.querySelectorAll('button');
-    gpuBtns.forEach(btn => {
-      const amt = parseInt(btn.dataset.amount ?? '1');
-      btn.disabled = state.funds < BigInt(amt) * BALANCE.gpuCost;
-    });
+    this.buyGpuControls.bulk.update(
+      Math.floor(fromBigInt(earthGpuCount)),
+      (amt) => state.funds >= BigInt(amt) * state.gpuMarketPrice,
+    );
 
     // Model upgrade
     const nextModelIdx = state.currentModelIndex + 1;

@@ -1,4 +1,4 @@
-import { BALANCE } from './BalanceConfig.ts';
+import { BALANCE, getGpuTargetPrice } from './BalanceConfig.ts';
 import type { SubscriptionTier, JobType } from './BalanceConfig.ts';
 import { toBigInt, scaleBigInt } from './utils.ts';
 
@@ -126,6 +126,7 @@ export interface GameState {
   micMiniCount: bigint;
 
   // GPU & Compute
+  gpuMarketPrice: bigint;      // current Earth GPU market price per unit
   installedGpuCount: bigint;   // computed: min(earth GPUs, gpuCapacity)
   totalPflops: bigint;         // Earth compute used for gameplay allocation
   earthPflops: bigint;         // computed
@@ -162,8 +163,8 @@ export interface GameState {
   powerThrottle: number;       // 0..1, 1 = no throttle
 
   // Training
-  trainingData: bigint;           // TB of training data owned
-  trainingDataPurchases: number;  // for price escalation
+  trainingData: bigint;           // GB of training data owned
+  trainingDataPurchases: number;  // total GB purchased from market (used for purchase cap)
   trainingAllocationPct: number;  // 0-100, step 5
   trainingAllocatedPflops: bigint; // computed
   currentFineTuneIndex: number;   // -1 = none active, index into BALANCE.fineTunes
@@ -393,6 +394,7 @@ export function createInitialState(): GameState {
     micMiniCount: 0n,
 
     // GPU & Compute
+    gpuMarketPrice: getGpuTargetPrice(locationResources.earth.gpus),
     installedGpuCount: 0n,
     totalPflops: 0n,
     earthPflops: 0n,
@@ -485,7 +487,7 @@ export function createInitialState(): GameState {
     // API Services
     apiUnlocked: false,
     apiUserCount: 0n,
-    apiPrice: 8,
+    apiPrice: BALANCE.apiStartingPrice,
     apiDemand: 0n,
     apiAwareness: 0,
     apiReservedPflops: 0n,
@@ -571,4 +573,3 @@ export function getTotalAssignedAgents(state: GameState): bigint {
 }
 
 // NOTE: DO NOT add migrations here. The game is in active development and breaking changes to saves are currently acceptable.
-

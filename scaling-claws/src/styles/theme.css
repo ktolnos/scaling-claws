@@ -70,6 +70,8 @@ button {
   color: var(--text-primary);
   padding: var(--spacing-xs) var(--spacing-sm);
   transition: background 0.15s, border-color 0.15s, opacity 0.15s;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 button:hover:not(:disabled) {

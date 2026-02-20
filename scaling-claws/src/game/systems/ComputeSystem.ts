@@ -1,6 +1,6 @@
 import type { GameState } from '../GameState.ts';
 import { getTotalAssignedAgents } from '../GameState.ts';
-import { BALANCE, getBestModel, JOB_ORDER } from '../BalanceConfig.ts';
+import { BALANCE, getApiDemand, getBestModel, getGpuTargetPrice, JOB_ORDER } from '../BalanceConfig.ts';
 import type { SubscriptionTier } from '../BalanceConfig.ts';
 import { toBigInt, divB, mulB, scaleB, fromBigInt, scaleBigInt } from '../utils.ts';
 import { reconcileEarthGpuInstallation } from './GpuState.ts';
@@ -10,6 +10,9 @@ function getEarthGpuCount(state: GameState): bigint {
 }
 
 export function tickCompute(state: GameState, dtMs: number): void {
+  // GPU market is global and should evolve in both subscription and GPU eras.
+  tickGpuMarketPrice(state, dtMs);
+
   if (state.isPostGpuTransition) {
     tickGpuEra(state, dtMs);
   } else {
@@ -133,16 +136,13 @@ function tickGpuEra(state: GameState, dtMs: number): void {
 
   // API Services
   if (state.apiUnlocked) {
-    // Demand calculation (Economics based)
-    const effectiveAwareness = BALANCE.apiBaseAwareness + state.apiAwareness;
-    
-    const demand = Math.pow(effectiveAwareness, BALANCE.apiAwarenessElasticity) * 
-      state.apiQuality *
-      (Math.pow(state.intelligence, BALANCE.intelligenceElasticity) / 
-       Math.pow(state.apiPrice, BALANCE.apiPriceElasticity)) * 
-      BALANCE.apiDemandScale;
-    
-    state.apiDemand = toBigInt(demand);
+    // Demand calculation is centralized in BalanceConfig economics helpers.
+    state.apiDemand = toBigInt(getApiDemand(
+      state.apiAwareness,
+      state.apiQuality,
+      state.intelligence,
+      state.apiPrice,
+    ));
 
     // Available capacity for users
     const capacityUsers = divB(state.apiReservedPflops, toBigInt(BALANCE.apiPflopsPerUser));
@@ -190,6 +190,38 @@ function tickGpuEra(state: GameState, dtMs: number): void {
   }
 }
 
+function tickGpuMarketPrice(state: GameState, dtMs: number): void {
+  const target = getGpuTargetPrice(state.locationResources.earth.gpus);
+  if (state.gpuMarketPrice <= 0n) {
+    state.gpuMarketPrice = target;
+    return;
+  }
+
+  const lowerBound = scaleB(target, 1 - BALANCE.gpuPriceVariationPct);
+  const upperBound = scaleB(target, 1 + BALANCE.gpuPriceVariationPct);
+  const stepPct = BALANCE.gpuPriceMaxChangePerSecondPct * (dtMs / 1000);
+  const maxStep = scaleB(target, stepPct);
+
+  let direction: number;
+  if (state.gpuMarketPrice < lowerBound) {
+    direction = Math.random();
+  } else if (state.gpuMarketPrice > upperBound) {
+    direction = -Math.random();
+  } else {
+    direction = Math.random() * 2 - 1;
+  }
+
+  const delta = scaleB(maxStep, direction);
+  const next = state.gpuMarketPrice + delta;
+  if (next < lowerBound) {
+    state.gpuMarketPrice = lowerBound;
+  } else if (next > upperBound) {
+    state.gpuMarketPrice = upperBound;
+  } else {
+    state.gpuMarketPrice = next;
+  }
+}
+
 function allocateCores(state: GameState): void {
   const totalCores = state.cpuCoresTotal; // assumed scaled
   const coresPerAgent = toBigInt(BALANCE.tiers[state.subscriptionTier].coresPerAgent);
@@ -205,7 +237,9 @@ function allocateGpuSlots(state: GameState, agentsAllocatedPflops: bigint): void
 }
 
 function allocateActiveSlots(state: GameState, maxActiveAgents: bigint): bigint {
-  let remainingSlots = maxActiveAgents;
+  const oneAgent = scaleBigInt(1n);
+  const maxSlots = maxActiveAgents <= 0n ? 0n : (maxActiveAgents / oneAgent) * oneAgent;
+  let remainingSlots = maxSlots;
   for (const jobType of JOB_ORDER) {
     const pool = state.agentPools[jobType];
     if (!pool) continue;
@@ -229,7 +263,7 @@ function allocateActiveSlots(state: GameState, maxActiveAgents: bigint): bigint 
     remainingSlots = 0n;
   }
 
-  const allocatedAgents = maxActiveAgents - remainingSlots;
+  const allocatedAgents = maxSlots - remainingSlots;
   state.activeAgentCount = allocatedAgents;
   return allocatedAgents;
 }
@@ -269,8 +303,12 @@ export function hireAgent(state: GameState): boolean {
 }
 
 export function upgradeTier(state: GameState, tier: SubscriptionTier): boolean {
+  const currentConfig = BALANCE.tiers[state.subscriptionTier];
   const nextConfig = BALANCE.tiers[tier];
-  const upgradeCost = mulB(nextConfig.cost, state.totalAgents);
+  const deltaCostPerAgent = nextConfig.cost - currentConfig.cost;
+  if (deltaCostPerAgent <= 0n) return false;
+
+  const upgradeCost = mulB(deltaCostPerAgent, state.totalAgents);
 
   if (state.funds < upgradeCost) {
     return false;
@@ -283,7 +321,7 @@ export function upgradeTier(state: GameState, tier: SubscriptionTier): boolean {
 }
 
 export function buyMicMini(state: GameState): boolean {
-  if (state.micMiniCount >= scaleBigInt(7n)) return false;
+  if (state.micMiniCount >= scaleBigInt(BigInt(BALANCE.micMini.limit))) return false;
   if (state.funds < BALANCE.micMini.cost) return false;
 
   state.funds -= BALANCE.micMini.cost;
@@ -297,7 +335,7 @@ export function goSelfHosted(state: GameState): boolean {
   const minGpus = BALANCE.models[0].minGpus;
   const agentCount = state.totalAgents;
   const earthGpuCount = minGpus > agentCount ? minGpus : agentCount;
-  const totalCost = mulB(earthGpuCount, BALANCE.gpuCost);
+  const totalCost = mulB(earthGpuCount, state.gpuMarketPrice);
 
   if (state.funds < totalCost) return false;
 
@@ -321,7 +359,7 @@ export function goSelfHosted(state: GameState): boolean {
 
 export function buyGpu(state: GameState, amount: number): boolean {
   const amountB = toBigInt(amount);
-  const cost = mulB(amountB, BALANCE.gpuCost);
+  const cost = mulB(amountB, state.gpuMarketPrice);
   if (state.funds < cost) return false;
 
   state.funds -= cost;

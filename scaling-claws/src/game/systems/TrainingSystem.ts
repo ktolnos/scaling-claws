@@ -1,6 +1,6 @@
 import type { GameState } from '../GameState.ts';
-import { BALANCE } from '../BalanceConfig.ts';
-import { toBigInt, mulB, divB, scaleB } from '../utils.ts';
+import { BALANCE, getTrainingDataPurchaseCost, getTrainingDataRemainingPurchaseCapGB } from '../BalanceConfig.ts';
+import { toBigInt, divB, scaleB, mulB } from '../utils.ts';
 
 export function tickTraining(state: GameState, dtMs: number): void {
   if (!state.isPostGpuTransition) return;
@@ -46,17 +46,22 @@ export function tickTraining(state: GameState, dtMs: number): void {
   }
 }
 
-export function buyTrainingData(state: GameState, amountTB: number): boolean {
-  const priceEscalation = Math.pow(1 + BALANCE.dataEscalationRate, state.trainingDataPurchases);
-  const pricePerTB = scaleB(BALANCE.dataBaseCostPerTB, priceEscalation);
-  const amountTBB = toBigInt(amountTB);
-  
-  const cost = mulB(amountTBB, pricePerTB);
+export function buyTrainingData(state: GameState, amountGB: number): boolean {
+  const requestedGB = Math.max(0, Math.floor(amountGB));
+  if (requestedGB <= 0) return false;
+
+  const remainingCapGB = getTrainingDataRemainingPurchaseCapGB(state.trainingDataPurchases);
+  if (remainingCapGB <= 0) return false;
+
+  const purchasableGB = Math.min(requestedGB, remainingCapGB);
+  const amountGBB = toBigInt(purchasableGB);
+
+  const cost = getTrainingDataPurchaseCost(purchasableGB);
   if (state.funds < cost) return false;
 
   state.funds -= cost;
-  state.trainingData += amountTBB;
-  state.trainingDataPurchases++;
+  state.trainingData += amountGBB;
+  state.trainingDataPurchases += purchasableGB;
   return true;
 }
 
@@ -67,7 +72,7 @@ export function startFineTune(state: GameState, index: number): boolean {
   if (state.ariesModelIndex >= 0) return false;
 
   const ft = BALANCE.fineTunes[index];
-  if (state.trainingData < ft.dataTB) return false;
+  if (state.trainingData < ft.dataGB) return false;
   if (ft.codeReq > 0n && state.code < ft.codeReq) return false;
   if (ft.scienceReq > 0n && state.science < ft.scienceReq) return false;
 
@@ -94,7 +99,7 @@ export function startAriesTraining(state: GameState, index: number): boolean {
   }
 
   const am = BALANCE.ariesModels[index];
-  if (state.trainingData < am.dataTB) return false;
+  if (state.trainingData < am.dataGB) return false;
   if (am.codeReq > 0n && state.code < am.codeReq) return false;
   if (am.scienceReq > 0n && state.science < am.scienceReq) return false;
 

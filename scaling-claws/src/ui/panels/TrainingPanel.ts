@@ -1,8 +1,13 @@
 import type { GameState } from '../../game/GameState.ts';
 import type { Panel } from '../PanelManager.ts';
-import { BALANCE } from '../../game/BalanceConfig.ts';
+import {
+  BALANCE,
+  getTrainingDataPricePerGB,
+  getTrainingDataPurchaseCost,
+  getTrainingDataRemainingPurchaseCapGB,
+} from '../../game/BalanceConfig.ts';
 import type { ResearchId } from '../../game/BalanceConfig.ts';
-import { formatNumber, fromBigInt, toBigInt, mulB, scaleB } from '../../game/utils.ts';
+import { formatNumber } from '../../game/utils.ts';
 import {
   buyTrainingData, startFineTune, startAriesTraining,
   setTrainingAllocation,
@@ -313,8 +318,8 @@ export class TrainingPanel implements Panel {
         this.nextRefs.info.style.color = 'var(--accent-green)';
         this.nextRefs.info.style.fontWeight = 'bold';
         
-        const dataBlocking = state.trainingData < ft.dataTB;
-        const dataStr = `<span style="${dataBlocking ? 'color: var(--accent-red);' : ''}">${formatNumber(ft.dataTB)} ${emojiHtml('data')} TB data</span>`;
+        const dataBlocking = state.trainingData < ft.dataGB;
+        const dataStr = `<span style="${dataBlocking ? 'color: var(--accent-red);' : ''}">${formatNumber(ft.dataGB)} ${emojiHtml('data')} GB data</span>`;
         let reqHtml = `${formatNumber(ft.pflopsHrs)} ${emojiHtml('flops')} PFLOPS-hrs + ${dataStr}`;
         if (ft.codeReq > 0) {
           const codeBlocking = state.code < ft.codeReq;
@@ -330,7 +335,7 @@ export class TrainingPanel implements Panel {
         this.nextTrainingType = 'ft';
         this.nextTrainingIdx = nextFT;
 
-        const canStart = state.trainingData >= ft.dataTB && (ft.codeReq === 0n || state.code >= ft.codeReq) && (ft.scienceReq === 0n || state.science >= ft.scienceReq);
+        const canStart = state.trainingData >= ft.dataGB && (ft.codeReq === 0n || state.code >= ft.codeReq) && (ft.scienceReq === 0n || state.science >= ft.scienceReq);
         this.nextRefs.btn.disabled = !canStart;
       } else {
         const nextAries = this.getNextAries(state);
@@ -341,8 +346,8 @@ export class TrainingPanel implements Panel {
           this.nextRefs.info.style.color = 'var(--accent-purple)';
           this.nextRefs.info.style.fontWeight = 'bold';
           
-          const dataBlocking = state.trainingData < am.dataTB;
-          const dataStr = `<span style="${dataBlocking ? 'color: var(--accent-red);' : ''}">${formatNumber(am.dataTB)} ${emojiHtml('data')} TB data</span>`;
+          const dataBlocking = state.trainingData < am.dataGB;
+          const dataStr = `<span style="${dataBlocking ? 'color: var(--accent-red);' : ''}">${formatNumber(am.dataGB)} ${emojiHtml('data')} GB data</span>`;
           let reqHtml = `${formatNumber(am.pflopsHrs)} ${emojiHtml('flops')} PFLOPS-hrs + ${dataStr}`;
           if (am.codeReq > 0) {
             const codeBlocking = state.code < am.codeReq;
@@ -358,7 +363,7 @@ export class TrainingPanel implements Panel {
           this.nextTrainingType = 'aries';
           this.nextTrainingIdx = nextAries;
 
-          const canStart = state.trainingData >= am.dataTB && (am.codeReq === 0n || state.code >= am.codeReq) && (am.scienceReq === 0n || state.science >= am.scienceReq);
+          const canStart = state.trainingData >= am.dataGB && (am.codeReq === 0n || state.code >= am.codeReq) && (am.scienceReq === 0n || state.science >= am.scienceReq);
           this.nextRefs.btn.disabled = !canStart;
         } else {
           this.nextRefs.container.style.display = 'none';
@@ -369,18 +374,24 @@ export class TrainingPanel implements Panel {
   }
 
   private updateData(state: GameState): void {
-    const priceEscalation = Math.pow(1 + BALANCE.dataEscalationRate, state.trainingDataPurchases);
-    const pricePerTB = scaleB(BALANCE.dataBaseCostPerTB, priceEscalation);
-    let dataText = `${resourceLabelHtml('data')}: ${formatNumber(state.trainingData)} TB`;
+    const pricePerGB = getTrainingDataPricePerGB();
+    const purchasedGB = Math.max(0, Math.floor(state.trainingDataPurchases));
+    const remainingCapGB = getTrainingDataRemainingPurchaseCapGB(purchasedGB);
+
+    let dataText = `${resourceLabelHtml('data')}: ${formatNumber(state.trainingData)} GB`;
     if (state.synthDataRate > 0) {
       dataText += ` (+${formatNumber(state.synthDataRate)}/m)`;
     }
-    dataText += ` (Cost: ${moneyWithEmojiHtml(pricePerTB, 'funds')}/TB)`;
+    dataText += ` | Purchased ${formatNumber(purchasedGB)}/${formatNumber(BALANCE.dataPurchaseLimitGB)} GB`;
+    dataText += ` (Cost: ${moneyWithEmojiHtml(pricePerGB, 'funds')}/GB)`;
+    if (remainingCapGB <= 0) dataText += ' [Market cap reached]';
     this.dataRefs.info.innerHTML = dataText;
 
-    this.dataRefs.bulkBuy.update(Math.floor(fromBigInt(state.trainingData)), (amount) => {
-      return state.funds >= mulB(toBigInt(amount), pricePerTB);
-    });
+    this.dataRefs.bulkBuy.update(
+      purchasedGB,
+      (amount) => amount <= remainingCapGB && state.funds >= getTrainingDataPurchaseCost(amount),
+      BALANCE.dataPurchaseLimitGB,
+    );
   }
 
   private updateAllocation(state: GameState): void {

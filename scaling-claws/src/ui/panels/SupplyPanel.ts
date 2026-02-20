@@ -7,6 +7,7 @@ import { estimateTransportRockets, getTransportRouteSource } from '../../game/sy
 import { BulkBuyGroup } from '../components/BulkBuyGroup.ts';
 import { createPanelDivider, createPanelScaffold } from '../components/PanelScaffold.ts';
 import { emojiHtml, locationLabelHtml, resourceLabelHtml } from '../emoji.ts';
+import { setHintTarget } from '../hints/HintUtils.ts';
 
 interface ResourceCellRefs {
   value: HTMLSpanElement;
@@ -47,6 +48,26 @@ const FACILITY_ORDER: FacilityDef[] = [
   { id: 'gpuSatelliteFactory', shortLabel: 'Sat Fab', longLabel: 'GPU Satellite Factory' },
   { id: 'massDriver', shortLabel: 'Mass Driver', longLabel: 'Mass Driver' },
 ];
+
+const RESOURCE_HINT_ID: Record<SupplyResourceId, string> = {
+  labor: 'resource.labor',
+  material: 'resource.material',
+  solarPanels: 'resource.solarPanels',
+  robots: 'resource.robots',
+  gpus: 'resource.gpus',
+  rockets: 'resource.rockets',
+  gpuSatellites: 'resource.gpuSatellites',
+};
+
+const FACILITY_HINT_ID: Record<FacilityId, string> = {
+  materialMine: 'resource.material',
+  solarFactory: 'resource.solarPanels',
+  robotFactory: 'resource.robots',
+  gpuFactory: 'resource.gpus',
+  rocketFactory: 'resource.rockets',
+  gpuSatelliteFactory: 'resource.gpuSatellites',
+  massDriver: 'mechanic.spaceLogistics',
+};
 
 export class SupplyPanel implements Panel {
   readonly el: HTMLElement;
@@ -303,6 +324,7 @@ export class SupplyPanel implements Panel {
       label.style.textOverflow = 'ellipsis';
       label.innerHTML = resourceLabelHtml(resource.id, compact ? resource.shortLabel : resource.longLabel);
       label.title = resource.longLabel;
+      setHintTarget(label, RESOURCE_HINT_ID[resource.id]);
       row.appendChild(label);
 
       for (const location of this.visibleLocations) {
@@ -396,6 +418,7 @@ export class SupplyPanel implements Panel {
       label.style.flex = '1 1 auto';
       label.innerHTML = compact ? facility.shortLabel : facility.longLabel;
       label.title = facility.longLabel;
+      setHintTarget(label, FACILITY_HINT_ID[facility.id]);
       const labelTop = document.createElement('div');
       labelTop.style.display = 'flex';
       labelTop.style.alignItems = 'center';

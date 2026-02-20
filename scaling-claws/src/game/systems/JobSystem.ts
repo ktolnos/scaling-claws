@@ -15,6 +15,12 @@ const FLAVOR_TEXTS_MIC_MINI = [
   '"Your third Mic-mini. Your desk is becoming a server rack."',
 ];
 
+function floorWholeAgents(value: bigint): bigint {
+  const oneAgent = scaleBigInt(1n);
+  if (value <= 0n) return 0n;
+  return (value / oneAgent) * oneAgent;
+}
+
 /** Unstick stuck agents in bulk. */
 function nudgeAgents(state: GameState, count: bigint): void {
   let remaining = count;
@@ -22,18 +28,37 @@ function nudgeAgents(state: GameState, count: bigint): void {
     if (remaining <= 0n) break;
     if (!pool || pool.stuckCount <= 0n) continue;
 
-    const toUnstick = remaining < pool.stuckCount ? remaining : pool.stuckCount;
-    pool.stuckCount -= toUnstick;
+    const stuckBefore = pool.stuckCount;
+    const toUnstick = remaining < stuckBefore ? remaining : stuckBefore;
+    pool.stuckCount = stuckBefore - toUnstick;
     remaining -= toUnstick;
 
-    // Visual feedback for samples
-    let samplesRemaining = Number(toUnstick);
+    // Visual feedback for samples:
+    // unstick sampled agents proportionally, not always-first.
+    const toUnstickRaw = Math.floor(fromBigInt(toUnstick));
+    if (toUnstickRaw <= 0) continue;
+
+    const stuckBeforeRaw = Math.max(1, Math.floor(fromBigInt(stuckBefore)));
+    const stuckSampleIndices: number[] = [];
     for (let i = 0; i < 4; i++) {
-      if (samplesRemaining <= 0) break;
-      if (pool.samples.stuck[i]) {
-        pool.samples.stuck[i] = false;
-        samplesRemaining--;
-      }
+      if (pool.samples.stuck[i]) stuckSampleIndices.push(i);
+    }
+    if (stuckSampleIndices.length <= 0) continue;
+
+    const expectedSampleUnsticks = (toUnstickRaw * stuckSampleIndices.length) / stuckBeforeRaw;
+    let sampleUnsticks = Math.floor(expectedSampleUnsticks + Math.random());
+    if (sampleUnsticks > stuckSampleIndices.length) sampleUnsticks = stuckSampleIndices.length;
+    if (sampleUnsticks <= 0) continue;
+
+    // Tiny set (max 4), so Fisher-Yates is cheap and keeps visual state unbiased.
+    for (let i = stuckSampleIndices.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      const tmp = stuckSampleIndices[i];
+      stuckSampleIndices[i] = stuckSampleIndices[j];
+      stuckSampleIndices[j] = tmp;
+    }
+    for (let i = 0; i < sampleUnsticks; i++) {
+      pool.samples.stuck[stuckSampleIndices[i]] = false;
     }
   }
 }
@@ -106,7 +131,7 @@ export function tickJobs(state: GameState, dtMs: number): void {
   }
   state.unlockedJobs = unlocked;
 
-  const stuckRate = getStuckRate(intel);
+  const stuckRatePerSecond = getStuckRate(intel);
 
   // Count managers
   state.managerCount = state.agentPools['manager'].totalCount;
@@ -132,77 +157,109 @@ export function tickJobs(state: GameState, dtMs: number): void {
 
     // 1. Process AI Agents
     if (aiPool && aiPool.totalCount > 0n) {
+      // Agent counts are discrete. Quantize any legacy fractional state from old saves.
+      aiPool.idleCount = floorWholeAgents(aiPool.idleCount);
+      aiPool.stuckCount = floorWholeAgents(aiPool.stuckCount);
+      if (aiPool.idleCount > aiPool.totalCount) aiPool.idleCount = aiPool.totalCount;
+      if (aiPool.stuckCount > aiPool.totalCount) aiPool.stuckCount = aiPool.totalCount;
+
       const outputAmount = getJobOutputAmount(state, jobType, jobConfig.produces.amount);
       const taskTime = jobConfig.timeMs;
       // Progress per tick for ONE agent, scaled
       const progressPerTickScaled = scaleB(toBigInt(state.agentEfficiency * intel * dtMs), 1.0 / taskTime);
 
-      const activeAgents = aiPool.totalCount - aiPool.idleCount;
+      const activeAgents = aiPool.totalCount > aiPool.idleCount ? aiPool.totalCount - aiPool.idleCount : 0n;
       const sampleCountScaled = aiPool.totalCount < scaleBigInt(4n) ? aiPool.totalCount : scaleBigInt(4n);
       const sampleCount = Math.floor(fromBigInt(sampleCountScaled));
-      const nonSampleActive = activeAgents - sampleCountScaled < 0n ? 0n : activeAgents - sampleCountScaled;
+      const activeSampleCountScaled = activeAgents < sampleCountScaled ? activeAgents : sampleCountScaled;
+      const activeSampleCount = Math.floor(fromBigInt(activeSampleCountScaled));
+      const nonSampleActive = activeAgents - activeSampleCountScaled < 0n ? 0n : activeAgents - activeSampleCountScaled;
 
       // Snapshot pre-update sample stuck to derive non-sample stuck
       let prevSampleStuck = 0n;
-      for (let i = 0; i < sampleCount; i++) {
+      for (let i = 0; i < activeSampleCount; i++) {
         if (aiPool.samples.stuck[i]) prevSampleStuck++;
       }
       let restStuck = aiPool.stuckCount - scaleBigInt(prevSampleStuck);
       if (restStuck < 0n) restStuck = 0n;
       if (restStuck > nonSampleActive) restStuck = nonSampleActive;
 
-      // Advance sample agents, roll stuck on task completion
-      const effectiveStuckRate = stuckRate * (jobConfig.stuckProbability ?? 1.0);
+      // Convert per-second hazard into per-tick probability:
+      // p_tick = 1 - (1 - p_sec)^(dt_seconds)
+      const effectiveStuckRatePerSecond = Math.max(
+        0,
+        Math.min(1, stuckRatePerSecond * state.agentEfficiency * (jobConfig.stuckProbability ?? 1.0)),
+      );
+      const stuckRollPerTick = 1 - Math.pow(1 - effectiveStuckRatePerSecond, dtMs / 1000);
+
+      // Advance sampled active agents. Reward credits for sampled agents are event-based
+      // (only when their sampled task actually crosses completion).
       let sampleStuck = 0n;
+      let sampleCompletionsRaw = 0n;
       for (let i = 0; i < 4; i++) {
-        if (toBigInt(i) >= aiPool.totalCount) {
+        if (i >= sampleCount) {
+          aiPool.samples.progress[i] = 0;
+          aiPool.samples.stuck[i] = false;
+          continue;
+        }
+        const isSampleActive = i < activeSampleCount;
+        if (!isSampleActive) {
           aiPool.samples.progress[i] = 0;
           aiPool.samples.stuck[i] = false;
           continue;
         }
         if (!aiPool.samples.stuck[i]) {
           aiPool.samples.progress[i] += fromBigInt(progressPerTickScaled); 
-          if (aiPool.samples.progress[i] >= 1) {
-            aiPool.samples.progress[i] -= Math.floor(aiPool.samples.progress[i]);
-            if (Math.random() < effectiveStuckRate) aiPool.samples.stuck[i] = true;
+          const wholeTasks = Math.floor(aiPool.samples.progress[i]);
+          if (wholeTasks > 0) {
+            aiPool.samples.progress[i] -= wholeTasks;
+            sampleCompletionsRaw += BigInt(wholeTasks);
           }
+          if (Math.random() < stuckRollPerTick) aiPool.samples.stuck[i] = true;
         }
         if (aiPool.samples.stuck[i]) sampleStuck += scaleBigInt(1n);
       }
 
-      // Aggregate progress for all working agents
-      const workingAgents = activeAgents - sampleStuck - restStuck;
-      if (workingAgents > 0n) {
-        aiPool.aggregateProgress += mulB(progressPerTickScaled, workingAgents);
-        const completions = aiPool.aggregateProgress / scaleBigInt(1n);
-        if (completions > 0n) {
-          aiPool.aggregateProgress -= completions * scaleBigInt(1n);
-          completedThisTick += completions;
-          state.completedTasks += completions;
-          applyProduction(state, jobConfig.produces.resource, outputAmount, completions);
+      const sampleWorking = activeSampleCountScaled > sampleStuck ? activeSampleCountScaled - sampleStuck : 0n;
+      const nonSampleWorking = nonSampleActive > restStuck ? nonSampleActive - restStuck : 0n;
 
-          // Milestone flavor texts
-          if (state.completedTasks === 1n && !state.shownFlavorTexts.includes(FLAVOR_TEXTS_EARLY[0])) {
-            state.pendingFlavorTexts.push(FLAVOR_TEXTS_EARLY[0]);
-          }
+      // Aggregate progress only for non-sampled workers.
+      if (nonSampleWorking > 0n) {
+        aiPool.aggregateProgress += mulB(progressPerTickScaled, nonSampleWorking);
+      }
 
-          // Roll stuck for non-sample agents
-          if (nonSampleActive > 0n) {
-             const nonSampleWorking = nonSampleActive - restStuck;
-             if (nonSampleWorking > 0n) {
-                const share = Number(nonSampleWorking) / Number(workingAgents);
-                const newlyStuck = scaleBigInt(BigInt(Math.floor(Number(completions) * effectiveStuckRate * share + Math.random())));
-                restStuck += newlyStuck;
-                if (restStuck > nonSampleActive) restStuck = nonSampleActive;
-             }
-          }
+      const nonSampleCompletionsRaw = aiPool.aggregateProgress / scaleBigInt(1n);
+      if (nonSampleCompletionsRaw > 0n) {
+        aiPool.aggregateProgress -= nonSampleCompletionsRaw * scaleBigInt(1n);
+      }
 
-          if ((sampleStuck + restStuck) > 0n && state.completedTasks < 5n && !state.shownFlavorTexts.includes(FLAVOR_TEXTS_EARLY[1])) {
-            state.pendingFlavorTexts.push(FLAVOR_TEXTS_EARLY[1]);
-          }
+      const completions = sampleCompletionsRaw + nonSampleCompletionsRaw;
+      if (completions > 0n) {
+        completedThisTick += completions;
+        state.completedTasks += completions;
+        applyProduction(state, jobConfig.produces.resource, outputAmount, completions);
+
+        // Milestone flavor texts
+        if (state.completedTasks === 1n && !state.shownFlavorTexts.includes(FLAVOR_TEXTS_EARLY[0])) {
+          state.pendingFlavorTexts.push(FLAVOR_TEXTS_EARLY[0]);
         }
+      }
 
-        // Rates for UI
+      // Roll stuck for non-sample agents based on elapsed time (independent of completions).
+      if (nonSampleWorking > 0n && stuckRollPerTick > 0) {
+        const expectedNewlyStuck = fromBigInt(nonSampleWorking) * stuckRollPerTick;
+        const newlyStuck = scaleBigInt(BigInt(Math.floor(expectedNewlyStuck + Math.random())));
+        restStuck += newlyStuck;
+        if (restStuck > nonSampleActive) restStuck = nonSampleActive;
+      }
+
+      if ((sampleStuck + restStuck) > 0n && state.completedTasks < 5n && !state.shownFlavorTexts.includes(FLAVOR_TEXTS_EARLY[1])) {
+        state.pendingFlavorTexts.push(FLAVOR_TEXTS_EARLY[1]);
+      }
+
+      // Rates for UI
+      const workingAgents = sampleWorking + nonSampleWorking;
+      if (workingAgents > 0n) {
         let effectiveRate = divB(mulB(outputAmount, scaleBigInt(60000n)), toBigInt(taskTime));
         effectiveRate = scaleB(effectiveRate, state.agentEfficiency * intel);
         effectiveRate = mulB(effectiveRate, workingAgents);
@@ -264,19 +321,24 @@ export function tickJobs(state: GameState, dtMs: number): void {
   const managerPool = state.agentPools['manager'];
   const activeManagers = managerPool.totalCount - managerPool.idleCount;
   const managerCfg = BALANCE.jobs['manager'];
+  const oneNudge = scaleBigInt(1n);
   let managerNudgesPerMin = divB(mulB(managerCfg.produces.amount, scaleBigInt(60000n)), toBigInt(managerCfg.timeMs));
   managerNudgesPerMin = scaleB(managerNudgesPerMin, state.agentEfficiency * intel);
   managerNudgesPerMin = mulB(managerNudgesPerMin, activeManagers > 0n ? activeManagers : 0n);
-  const nudgeBufferCap = (managerNudgesPerMin * 5n) / 60n; // ~5s carryover
+  const nudgeBufferCapRaw = (managerNudgesPerMin * 5n) / 60n; // ~5s carryover
+  const nudgeBufferCap = (nudgeBufferCapRaw / oneNudge) * oneNudge;
   if (state.nudgeBuffer > nudgeBufferCap) {
     state.nudgeBuffer = nudgeBufferCap;
   }
 
   // Spend buffered nudges after all stuck rolls have been processed.
   if (state.stuckCount > 0n && state.nudgeBuffer > 0n) {
-    const toSpend = state.nudgeBuffer < state.stuckCount ? state.nudgeBuffer : state.stuckCount;
-    nudgeAgents(state, toSpend);
-    state.nudgeBuffer -= toSpend;
+    const toSpendRaw = state.nudgeBuffer < state.stuckCount ? state.nudgeBuffer : state.stuckCount;
+    const toSpend = (toSpendRaw / oneNudge) * oneNudge;
+    if (toSpend > 0n) {
+      nudgeAgents(state, toSpend);
+      state.nudgeBuffer -= toSpend;
+    }
 
     let stuckAfterNudges = 0n;
     for (const pool of Object.values(state.agentPools)) stuckAfterNudges += pool.stuckCount;
@@ -372,7 +434,7 @@ function updateBreakdown(state: GameState, config: any, jobType: string, rate: b
 
 export function nudgeAgent(state: GameState): boolean {
   const before = state.stuckCount;
-  nudgeAgents(state, 1n);
+  nudgeAgents(state, scaleBigInt(1n));
   
   // Refresh stuck count for return value
   let after = 0n;

@@ -2,6 +2,7 @@ import type { GameState } from '../game/GameState.ts';
 import { formatFlops, formatNumber, formatMW } from '../game/utils.ts';
 import { deleteSave } from '../game/SaveManager.ts';
 import { emojiHtml, locationLabelHtml, moneyWithEmojiHtml, resourceLabelHtml } from './emoji.ts';
+import { setHintTarget } from './hints/HintUtils.ts';
 
 export class TopBar {
   private container: HTMLElement;
@@ -28,7 +29,7 @@ export class TopBar {
     breakdownPanel.className = 'hidden';
     this.container.appendChild(breakdownPanel);
 
-    const fundsItem = this.createResourceItem('Funds', 'funds');
+    const fundsItem = this.createResourceItem('Funds', 'funds', 'resource.funds');
     fundsItem.dataset.resource = 'funds';
     this.fundsValueEl = fundsItem.querySelector('.value')!;
     this.fundsIncomeEl = fundsItem.querySelector('[data-role="income"]')!;
@@ -37,32 +38,32 @@ export class TopBar {
 
     this.container.appendChild(this.createSeparator());
 
-    const intelItem = this.createItem('Intel', 'intel');
+    const intelItem = this.createItem('Intel', 'intel', 'resource.intel');
     this.intelValueEl = intelItem.querySelector('.value')!;
     intelItem.querySelector('.rate')!.remove();
     this.container.appendChild(intelItem);
 
-    this.flopsItem = this.createItem('FLOPS', 'flops');
+    this.flopsItem = this.createItem('FLOPS', 'flops', 'resource.flops');
     this.flopsItem.dataset.resource = 'compute';
     this.flopsItem.classList.add('hidden');
     this.container.appendChild(this.flopsItem);
 
-    this.codeItem = this.createResourceItem('Code', 'code');
+    this.codeItem = this.createResourceItem('Code', 'code', 'resource.code');
     this.codeItem.dataset.resource = 'code';
     this.codeItem.classList.add('hidden');
     this.container.appendChild(this.codeItem);
 
-    this.scienceItem = this.createResourceItem('Science', 'science');
+    this.scienceItem = this.createResourceItem('Science', 'science', 'resource.science');
     this.scienceItem.dataset.resource = 'science';
     this.scienceItem.classList.add('hidden');
     this.container.appendChild(this.scienceItem);
 
-    this.laborItem = this.createResourceItem('Labor', 'labor');
+    this.laborItem = this.createResourceItem('Labor', 'labor', 'resource.labor');
     this.laborItem.dataset.resource = 'labor';
     this.laborItem.classList.add('hidden');
     this.container.appendChild(this.laborItem);
 
-    this.energyItem = this.createItem('Energy', 'energy');
+    this.energyItem = this.createItem('Energy', 'energy', 'resource.energy');
     this.energyItem.classList.add('hidden');
     this.container.appendChild(this.energyItem);
 
@@ -91,13 +92,18 @@ export class TopBar {
     };
   }
 
-  private createItem(label: string, emojiKey?: Parameters<typeof emojiHtml>[0]): HTMLDivElement {
+  private createItem(
+    label: string,
+    emojiKey?: Parameters<typeof emojiHtml>[0],
+    hintId?: string,
+  ): HTMLDivElement {
     const item = document.createElement('div');
     item.className = 'top-bar-item';
 
     const labelEl = document.createElement('span');
     labelEl.className = 'label';
     labelEl.innerHTML = emojiKey ? `${emojiHtml(emojiKey)} ${label}:` : `${label}:`;
+    if (hintId) setHintTarget(labelEl, hintId);
     item.appendChild(labelEl);
 
     const valueEl = document.createElement('span');
@@ -112,13 +118,18 @@ export class TopBar {
     return item;
   }
 
-  private createResourceItem(label: string, emojiKey?: Parameters<typeof emojiHtml>[0]): HTMLDivElement {
+  private createResourceItem(
+    label: string,
+    emojiKey?: Parameters<typeof emojiHtml>[0],
+    hintId?: string,
+  ): HTMLDivElement {
     const item = document.createElement('div');
     item.className = 'top-bar-item';
 
     const labelEl = document.createElement('span');
     labelEl.className = 'label';
     labelEl.innerHTML = emojiKey ? `${emojiHtml(emojiKey)} ${label}:` : `${label}:`;
+    if (hintId) setHintTarget(labelEl, hintId);
     item.appendChild(labelEl);
 
     const valueEl = document.createElement('span');
