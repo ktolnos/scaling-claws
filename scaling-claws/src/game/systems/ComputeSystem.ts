@@ -4,9 +4,14 @@ import { BALANCE, getApiDemand, getBestModel, getGpuTargetPrice, JOB_ORDER } fro
 import type { SubscriptionTier } from '../BalanceConfig.ts';
 import { toBigInt, divB, mulB, scaleB, fromBigInt, scaleBigInt } from '../utils.ts';
 import { reconcileEarthGpuInstallation } from './GpuState.ts';
+import { nextGameRandom } from '../Random.ts';
 
 function getEarthGpuCount(state: GameState): bigint {
   return state.locationResources.earth.gpus;
+}
+
+function getInstalledGpuCount(state: GameState): bigint {
+  return state.installedGpuCount;
 }
 
 export function tickCompute(state: GameState, dtMs: number): void {
@@ -88,7 +93,7 @@ function tickGpuEra(state: GameState, dtMs: number): void {
 
   // Auto-upgrade model
   if (state.completedFineTunes.length > 0) {
-    const bestModel = getBestModel(getEarthGpuCount(state));
+    const bestModel = getBestModel(getInstalledGpuCount(state));
     const bestIdx = BALANCE.models.indexOf(bestModel);
     if (bestIdx > state.currentModelIndex) {
       state.currentModelIndex = bestIdx;
@@ -204,11 +209,11 @@ function tickGpuMarketPrice(state: GameState, dtMs: number): void {
 
   let direction: number;
   if (state.gpuMarketPrice < lowerBound) {
-    direction = Math.random();
+    direction = nextGameRandom();
   } else if (state.gpuMarketPrice > upperBound) {
-    direction = -Math.random();
+    direction = -nextGameRandom();
   } else {
-    direction = Math.random() * 2 - 1;
+    direction = nextGameRandom() * 2 - 1;
   }
 
   const delta = scaleB(maxStep, direction);
@@ -395,7 +400,7 @@ export function upgradeModel(state: GameState, modelIndex: number): boolean {
   if (modelIndex >= BALANCE.models.length) return false;
 
   const model = BALANCE.models[modelIndex];
-  if (getEarthGpuCount(state) < model.minGpus) return false;
+  if (getInstalledGpuCount(state) < model.minGpus) return false;
 
   state.currentModelIndex = modelIndex;
   return true;

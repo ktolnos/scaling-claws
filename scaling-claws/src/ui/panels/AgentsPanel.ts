@@ -3,7 +3,7 @@ import { getTotalAssignedAgents } from '../../game/GameState.ts';
 import type { Panel } from '../PanelManager.ts';
 import { BALANCE, getNextTier } from '../../game/BalanceConfig.ts';
 import { formatNumber, mulB, fromBigInt, toBigInt, divB } from '../../game/utils.ts';
-import { buyMicMini, goSelfHosted, upgradeTier, hireAgent } from '../../game/systems/ComputeSystem.ts';
+import { dispatchGameAction } from '../../game/ActionDispatcher.ts';
 import { flashElement } from '../UIUtils.ts';
 import { createPanelDivider, createPanelScaffold } from '../components/PanelScaffold.ts';
 import { BulkBuyGroup } from '../components/BulkBuyGroup.ts';
@@ -97,7 +97,7 @@ export class AgentsPanel implements Panel {
     this.upgradeBtn.style.marginTop = '8px';
     this.upgradeBtn.addEventListener('click', () => {
       const next = getNextTier(this.state.subscriptionTier);
-      if (next) upgradeTier(this.state, next);
+      if (next) dispatchGameAction(this.state, { type: 'upgradeTier', tier: next });
     });
 
     tierSection.appendChild(this.upgradeBtn);
@@ -124,11 +124,8 @@ export class AgentsPanel implements Panel {
     controls.style.alignItems = 'center';
 
     this.agentHireControls = new CountBulkBuyControls((amount) => {
-      let hired = 0;
-      for (let i = 0; i < amount; i++) {
-        if (!hireAgent(this.state)) break;
-        hired++;
-      }
+      const actionResult = dispatchGameAction(this.state, { type: 'hireAgent', amount });
+      const hired = typeof actionResult.info.performed === 'number' ? actionResult.info.performed : 0;
       if (hired < amount) {
         if (this.state.isPostGpuTransition) {
           document.dispatchEvent(new CustomEvent('flash-gpu-capacity'));
@@ -221,9 +218,7 @@ export class AgentsPanel implements Panel {
     this.micMiniBuyMetaEl.style.color = 'var(--text-muted)';
 
     this.micMiniControls = new CountBulkBuyControls((amount) => {
-      for (let i = 0; i < amount; i++) {
-        if (!buyMicMini(this.state)) break;
-      }
+      dispatchGameAction(this.state, { type: 'buyMicMini', amount });
     }, { prefix: '+' });
     this.micMiniBuyGroup = this.micMiniControls.bulk;
 
@@ -280,7 +275,8 @@ export class AgentsPanel implements Panel {
     this.selfHostedBtn.className = 'btn-primary';
     this.selfHostedBtn.textContent = 'Go Self-Hosted';
     this.selfHostedBtn.addEventListener('click', () => {
-      if (goSelfHosted(this.state) && this.onTransition) {
+      const actionResult = dispatchGameAction(this.state, { type: 'goSelfHosted' });
+      if (actionResult.ok && this.onTransition) {
         this.onTransition();
       }
     });

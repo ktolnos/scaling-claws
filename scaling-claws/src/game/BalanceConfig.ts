@@ -209,7 +209,7 @@ export const BALANCE = {
     basic:         { cost: toBigInt(14),  intel: 0.5, coresPerAgent: 1, displayName: 'Basic' } as TierConfig,
     pro:           { cost: toBigInt(20),  intel: 1.0, coresPerAgent: 1, displayName: 'Pro' } as TierConfig,
     ultra:         { cost: toBigInt(25),  intel: 1.5, coresPerAgent: 1, displayName: 'Ultra' } as TierConfig,
-    ultraMax:      { cost: toBigInt(70), intel: 2.0, coresPerAgent: 1, displayName: 'Ultra Max' } as TierConfig,
+    ultraMax:      { cost: toBigInt(60), intel: 2.0, coresPerAgent: 1, displayName: 'Ultra Max' } as TierConfig,
     ultraProMax:   { cost: toBigInt(200), intel: 2.5, coresPerAgent: 1, displayName: 'Ultra Pro Max' } as TierConfig,
   } as Record<SubscriptionTier, TierConfig>,
 
@@ -269,7 +269,7 @@ export const BALANCE = {
   ] as ModelConfig[],
 
   // Datacenters
-  datacenterThreshold: scaleBigInt(256n),
+  datacenterThreshold: scaleBigInt(200n),
   // Datacenter prices/labor represent building + electrical/mechanical shell only.
   // GPU hardware is purchased separately via market price.
   // laborCost is person-months (1 labor = 1 person-month), one-time build labor.
@@ -315,18 +315,18 @@ export const BALANCE = {
 
   // Training
   fineTunes: [
-    { name: 'DeepKick-Math',   intel: 10.0, pflopsHrs: toBigInt(50),     dataGB: toBigInt(1),    codeReq: toBigInt(200),   scienceReq: 0n },
-    { name: 'DeepKick-Code',   intel: 11.0, pflopsHrs: toBigInt(150),    dataGB: toBigInt(4),    codeReq: toBigInt(400),   scienceReq: 0n },
-    { name: 'DeepKick-Reason', intel: 12.0, pflopsHrs: toBigInt(500),    dataGB: toBigInt(16),   codeReq: toBigInt(800),   scienceReq: 0n },
-    { name: 'DeepKick-Ultra',  intel: 13.0, pflopsHrs: toBigInt(2000),   dataGB: toBigInt(64),   codeReq: toBigInt(1600),  scienceReq: 0n },
+    { name: 'DeepKick-Math',   intel: 10.0, pflopsHrs: toBigInt(50),     dataGB: toBigInt(1),    codeReq: toBigInt(20),   scienceReq: 0n },
+    { name: 'DeepKick-Code',   intel: 11.0, pflopsHrs: toBigInt(150),    dataGB: toBigInt(30),    codeReq: toBigInt(40),   scienceReq: 0n },
+    { name: 'DeepKick-Reason', intel: 12.0, pflopsHrs: toBigInt(500),    dataGB: toBigInt(1000),   codeReq: toBigInt(80),   scienceReq: 0n },
+    { name: 'DeepKick-Ultra',  intel: 13.0, pflopsHrs: toBigInt(2000),   dataGB: toBigInt(10000),   codeReq: toBigInt(1600),  scienceReq: 0n },
   ] as TrainingModelConfig[],
 
   ariesModels: [
-    { name: 'Aries-1', intel: 14.0, pflopsHrs: toBigInt(10_000),     dataGB: toBigInt(500),      codeReq: toBigInt(20_000),  scienceReq: toBigInt(100) },
-    { name: 'Aries-2', intel: 18.5, pflopsHrs: toBigInt(50_000),     dataGB: toBigInt(2_000),    codeReq: toBigInt(40_000),  scienceReq: toBigInt(2000) },
-    { name: 'Aries-3', intel: 25.0, pflopsHrs: toBigInt(250_000),    dataGB: toBigInt(10_000),   codeReq: toBigInt(80_000),  scienceReq: toBigInt(8000) },
-    { name: 'Aries-4', intel: 35.0, pflopsHrs: toBigInt(2_000_000),  dataGB: toBigInt(50_000),   codeReq: toBigInt(160_000), scienceReq: toBigInt(40000) },
-    { name: 'Aries-5', intel: 50.0, pflopsHrs: toBigInt(20_000_000), dataGB: toBigInt(250_000),  codeReq: toBigInt(320_000), scienceReq: toBigInt(100000) },
+    { name: 'Aries-1', intel: 14.0, pflopsHrs: toBigInt(10_000),     dataGB: toBigInt(5_000),      codeReq: toBigInt(20_000),  scienceReq: toBigInt(100) },
+    { name: 'Aries-2', intel: 18.5, pflopsHrs: toBigInt(50_000),     dataGB: toBigInt(20_000),    codeReq: toBigInt(40_000),  scienceReq: toBigInt(2000) },
+    { name: 'Aries-3', intel: 25.0, pflopsHrs: toBigInt(250_000),    dataGB: toBigInt(100_000),   codeReq: toBigInt(80_000),  scienceReq: toBigInt(8000) },
+    { name: 'Aries-4', intel: 35.0, pflopsHrs: toBigInt(2_000_000),  dataGB: toBigInt(500_000),   codeReq: toBigInt(160_000), scienceReq: toBigInt(40000) },
+    { name: 'Aries-5', intel: 50.0, pflopsHrs: toBigInt(20_000_000), dataGB: toBigInt(2_500_000),  codeReq: toBigInt(320_000), scienceReq: toBigInt(100000) },
   ] as TrainingModelConfig[],
 
   trainingUnlockIntel: 9.0,
@@ -449,9 +449,6 @@ export const BALANCE = {
       description: 'All late-game jobs produce 50% more',
       productionBoosts: {
         jobs: {
-          humanWorker: 1.5,
-          humanResearcher: 1.5,
-          humanSWE: 1.5,
           aiSWE: 1.5,
           aiResearcher: 1.5,
           aiDataSynthesizer: 1.5,
@@ -468,9 +465,6 @@ export const BALANCE = {
       description: 'All late-game jobs produce 100% more',
       productionBoosts: {
         jobs: {
-          humanWorker: 2,
-          humanResearcher: 2,
-          humanSWE: 2,
           aiSWE: 2,
           aiResearcher: 2,
           aiDataSynthesizer: 2,

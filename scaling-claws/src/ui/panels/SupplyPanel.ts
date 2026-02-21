@@ -2,7 +2,8 @@ import type { GameState, FacilityId, LocationId, SupplyResourceId } from '../../
 import type { Panel } from '../PanelManager.ts';
 import { BALANCE } from '../../game/BalanceConfig.ts';
 import { formatNumber, fromBigInt, toBigInt } from '../../game/utils.ts';
-import { buildFacility, canBuildFacility, isFacilityUnlocked as isFacilityUnlockedForLocation } from '../../game/systems/SupplySystem.ts';
+import { canBuildFacility, isFacilityUnlocked as isFacilityUnlockedForLocation } from '../../game/systems/SupplySystem.ts';
+import { dispatchGameAction } from '../../game/ActionDispatcher.ts';
 import { estimateTransportRockets, getTransportRouteSource } from '../../game/systems/SpaceRules.ts';
 import { BulkBuyGroup } from '../components/BulkBuyGroup.ts';
 import { createPanelDivider, createPanelScaffold } from '../components/PanelScaffold.ts';
@@ -509,7 +510,12 @@ export class SupplyPanel implements Panel {
           cell.appendChild(countLine);
 
           const buyGroup = new BulkBuyGroup((amt) => {
-            buildFacility(this.state, location, facility.id, amt);
+            dispatchGameAction(this.state, {
+              type: 'buildFacility',
+              location,
+              facility: facility.id,
+              amount: amt,
+            });
           }, '+');
           buyGroup.el.style.transform = 'scale(0.84)';
           buyGroup.el.style.transformOrigin = 'right center';

@@ -2,8 +2,7 @@ import type { GameState } from '../../game/GameState.ts';
 import type { Panel } from '../PanelManager.ts';
 import { BALANCE } from '../../game/BalanceConfig.ts';
 import { formatMW, formatNumber, toBigInt, mulB, fromBigInt, scaleBigInt } from '../../game/utils.ts';
-import { buyGridPower, sellGridPower, buyGasPlant, buyNuclearPlant } from '../../game/systems/EnergySystem.ts';
-import { schedulePayload, installSolarPanels, installMoonGpus, launchVonNeumannProbe } from '../../game/systems/SpaceSystem.ts';
+import { dispatchGameAction } from '../../game/ActionDispatcher.ts';
 import { BulkBuyGroup } from '../components/BulkBuyGroup.ts';
 import { CountBulkBuyControls } from '../components/CountBulkBuyControls.ts';
 import { createPanelDivider, createPanelScaffold } from '../components/PanelScaffold.ts';
@@ -148,8 +147,12 @@ export class SpaceEnergyPanel implements Panel {
     gridControls.style.alignItems = 'center';
     gridControls.style.gap = '4px';
 
-    this.gridSellGroup = new BulkBuyGroup((amt) => sellGridPower(this.state, amt), '-');
-    this.gridBuyGroup = new BulkBuyGroup((amt) => buyGridPower(this.state, amt), '+');
+    this.gridSellGroup = new BulkBuyGroup((amt) => {
+      dispatchGameAction(this.state, { type: 'sellGridPower', amountKW: amt });
+    }, '-');
+    this.gridBuyGroup = new BulkBuyGroup((amt) => {
+      dispatchGameAction(this.state, { type: 'buyGridPower', amountKW: amt });
+    }, '+');
 
     this.gridEl = document.createElement('span');
     this.gridEl.className = 'value';
@@ -162,8 +165,12 @@ export class SpaceEnergyPanel implements Panel {
     this.gridRow.appendChild(gridControls);
     parent.appendChild(this.gridRow);
 
-    this.gasRefs = this.buildPlantRow(parent, 'Gas Plants', BALANCE.powerPlants.gas.outputMW, (amt) => buyGasPlant(this.state, amt), 'infra.gasPlant');
-    this.nuclearRefs = this.buildPlantRow(parent, 'Nuclear Plants', BALANCE.powerPlants.nuclear.outputMW, (amt) => buyNuclearPlant(this.state, amt), 'infra.nuclearPlant');
+    this.gasRefs = this.buildPlantRow(parent, 'Gas Plants', BALANCE.powerPlants.gas.outputMW, (amt) => {
+      dispatchGameAction(this.state, { type: 'buyGasPlant', amount: amt });
+    }, 'infra.gasPlant');
+    this.nuclearRefs = this.buildPlantRow(parent, 'Nuclear Plants', BALANCE.powerPlants.nuclear.outputMW, (amt) => {
+      dispatchGameAction(this.state, { type: 'buyNuclearPlant', amount: amt });
+    }, 'infra.nuclearPlant');
 
     this.earthSolarRow = document.createElement('div');
     this.earthSolarRow.className = 'panel-row';
@@ -202,7 +209,9 @@ export class SpaceEnergyPanel implements Panel {
 
     this.earthSolarRow.appendChild(left);
 
-    this.earthSolarBulk = new BulkBuyGroup((amt) => installSolarPanels(this.state, 'earth', amt), '+');
+    this.earthSolarBulk = new BulkBuyGroup((amt) => {
+      dispatchGameAction(this.state, { type: 'installSolarPanels', location: 'earth', amount: amt });
+    }, '+');
     this.earthSolarRow.appendChild(this.earthSolarBulk.el);
 
     parent.appendChild(this.earthSolarRow);
@@ -270,18 +279,30 @@ export class SpaceEnergyPanel implements Panel {
     this.logisticsSection.appendChild(orbitRow);
 
     this.buildRouteLaneRow(this.logisticsSection, 'earthOrbit', 'earth', 'orbit');
-    this.buildLogisticsRow(this.logisticsSection, resourceLabelHtml('gpuSatellites'), 'GPU Satellites', 'earthOrbit:gpuSatellites', (amt) => schedulePayload(this.state, 'earthOrbit', 'gpuSatellites', amt), true, 'resource.gpuSatellites');
+    this.buildLogisticsRow(this.logisticsSection, resourceLabelHtml('gpuSatellites'), 'GPU Satellites', 'earthOrbit:gpuSatellites', (amt) => {
+      dispatchGameAction(this.state, { type: 'schedulePayload', route: 'earthOrbit', payload: 'gpuSatellites', amount: amt });
+    }, true, 'resource.gpuSatellites');
 
     this.buildRouteLaneRow(this.logisticsSection, 'earthMoon', 'earth', 'moon');
-    this.buildLogisticsRow(this.logisticsSection, resourceLabelHtml('gpus'), 'GPUs', 'earthMoon:gpus', (amt) => schedulePayload(this.state, 'earthMoon', 'gpus', amt), true, 'resource.gpus');
-    this.buildLogisticsRow(this.logisticsSection, resourceLabelHtml('solarPanels'), 'Solar Panels', 'earthMoon:solarPanels', (amt) => schedulePayload(this.state, 'earthMoon', 'solarPanels', amt), true, 'resource.solarPanels');
-    this.buildLogisticsRow(this.logisticsSection, resourceLabelHtml('robots'), 'Robots', 'earthMoon:robots', (amt) => schedulePayload(this.state, 'earthMoon', 'robots', amt), true, 'resource.robots');
+    this.buildLogisticsRow(this.logisticsSection, resourceLabelHtml('gpus'), 'GPUs', 'earthMoon:gpus', (amt) => {
+      dispatchGameAction(this.state, { type: 'schedulePayload', route: 'earthMoon', payload: 'gpus', amount: amt });
+    }, true, 'resource.gpus');
+    this.buildLogisticsRow(this.logisticsSection, resourceLabelHtml('solarPanels'), 'Solar Panels', 'earthMoon:solarPanels', (amt) => {
+      dispatchGameAction(this.state, { type: 'schedulePayload', route: 'earthMoon', payload: 'solarPanels', amount: amt });
+    }, true, 'resource.solarPanels');
+    this.buildLogisticsRow(this.logisticsSection, resourceLabelHtml('robots'), 'Robots', 'earthMoon:robots', (amt) => {
+      dispatchGameAction(this.state, { type: 'schedulePayload', route: 'earthMoon', payload: 'robots', amount: amt });
+    }, true, 'resource.robots');
 
     this.buildRouteLaneRow(this.logisticsSection, 'moonMercury', 'moon', 'mercury');
-    this.buildLogisticsRow(this.logisticsSection, resourceLabelHtml('robots'), 'Robots', 'moonMercury:robots', (amt) => schedulePayload(this.state, 'moonMercury', 'robots', amt), true, 'resource.robots');
+    this.buildLogisticsRow(this.logisticsSection, resourceLabelHtml('robots'), 'Robots', 'moonMercury:robots', (amt) => {
+      dispatchGameAction(this.state, { type: 'schedulePayload', route: 'moonMercury', payload: 'robots', amount: amt });
+    }, true, 'resource.robots');
 
     this.buildRouteLaneRow(this.logisticsSection, 'mercuryOrbit', 'mercury', 'orbit');
-    this.buildLogisticsRow(this.logisticsSection, resourceLabelHtml('gpuSatellites'), 'GPU Satellites', 'mercuryOrbit:gpuSatellites', (amt) => schedulePayload(this.state, 'mercuryOrbit', 'gpuSatellites', amt), false, 'resource.gpuSatellites');
+    this.buildLogisticsRow(this.logisticsSection, resourceLabelHtml('gpuSatellites'), 'GPU Satellites', 'mercuryOrbit:gpuSatellites', (amt) => {
+      dispatchGameAction(this.state, { type: 'schedulePayload', route: 'mercuryOrbit', payload: 'gpuSatellites', amount: amt });
+    }, false, 'resource.gpuSatellites');
 
     parent.appendChild(this.logisticsSection);
   }
@@ -579,7 +600,9 @@ export class SpaceEnergyPanel implements Panel {
     solarMeta.appendChild(this.moonSolarCostEl);
     solarBottom.appendChild(solarMeta);
 
-    this.moonSolarBulk = new BulkBuyGroup((amt) => installSolarPanels(this.state, 'moon', amt), '+');
+    this.moonSolarBulk = new BulkBuyGroup((amt) => {
+      dispatchGameAction(this.state, { type: 'installSolarPanels', location: 'moon', amount: amt });
+    }, '+');
     solarBottom.appendChild(this.moonSolarBulk.el);
 
     solarBlock.appendChild(solarTop);
@@ -630,7 +653,9 @@ export class SpaceEnergyPanel implements Panel {
     gpuMeta.appendChild(this.moonGpuCostEl);
     gpuBottom.appendChild(gpuMeta);
 
-    this.moonGpuBulk = new BulkBuyGroup((amt) => installMoonGpus(this.state, amt), '+');
+    this.moonGpuBulk = new BulkBuyGroup((amt) => {
+      dispatchGameAction(this.state, { type: 'installMoonGpus', amount: amt });
+    }, '+');
     gpuBottom.appendChild(this.moonGpuBulk.el);
 
     gpuBlock.appendChild(gpuTop);
@@ -686,7 +711,9 @@ export class SpaceEnergyPanel implements Panel {
 
     this.probeBtn = document.createElement('button');
     this.probeBtn.textContent = 'Launch Von Neumann Probe';
-    this.probeBtn.addEventListener('click', () => launchVonNeumannProbe(this.state));
+    this.probeBtn.addEventListener('click', () => {
+      dispatchGameAction(this.state, { type: 'launchVonNeumannProbe' });
+    });
     this.probeBtn.style.marginTop = '2px';
     this.mercurySection.appendChild(this.probeBtn);
 

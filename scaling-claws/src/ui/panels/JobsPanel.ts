@@ -11,12 +11,7 @@ import { flashElement } from '../UIUtils.ts';
 import { moneyWithEmojiHtml, resourceLabelHtml, emojiHtml } from '../emoji.ts';
 import { setHintTarget } from '../hints/HintUtils.ts';
 import { getJobOutputAmount, getRobotLaborPerMin } from '../../game/systems/JobRules.ts';
-import {
-  nudgeAgent,
-  assignAgentsToJob, removeAgentsFromJob,
-  hireHumanWorkers, fireHumanWorkers,
-  buyRobotWorkers, fireRobotWorkers,
-} from '../../game/systems/JobSystem.ts';
+import { dispatchGameAction } from '../../game/ActionDispatcher.ts';
 
 const MAX_PROGRESS_BARS = 4;
 const JOB_HINT_ID: Record<JobType, string> = {
@@ -88,7 +83,7 @@ export class JobsPanel implements Panel {
     this.nudgeBtn.className = 'btn-nudge';
     this.nudgeBtn.textContent = 'Nudge';
     this.nudgeBtn.addEventListener('click', () => {
-      nudgeAgent(this.state);
+      dispatchGameAction(this.state, { type: 'nudgeAgent' });
     });
 
     nudgeRow.appendChild(this.stuckCountEl);
@@ -194,11 +189,11 @@ export class JobsPanel implements Panel {
     const removeGroup = new BulkBuyGroup(
       (amount) => {
         if (isRobotWorker) {
-          fireRobotWorkers(this.state, amount);
+          dispatchGameAction(this.state, { type: 'fireRobotWorkers', amount });
         } else if (isHuman) {
-          fireHumanWorkers(this.state, jobType, amount);
+          dispatchGameAction(this.state, { type: 'fireHumanWorkers', jobType, amount });
         } else {
-          removeAgentsFromJob(this.state, jobType, amount);
+          dispatchGameAction(this.state, { type: 'removeAgentsFromJob', jobType, amount });
         }
       },
       '-',
@@ -219,11 +214,12 @@ export class JobsPanel implements Panel {
     const addGroup = new BulkBuyGroup(
       (amount) => {
         if (isRobotWorker) {
-          buyRobotWorkers(this.state, amount);
+          dispatchGameAction(this.state, { type: 'buyRobotWorkers', amount });
         } else if (isHuman) {
-          hireHumanWorkers(this.state, jobType, amount);
+          dispatchGameAction(this.state, { type: 'hireHumanWorkers', jobType, amount });
         } else {
-          const assigned = assignAgentsToJob(this.state, jobType, amount);
+          const actionResult = dispatchGameAction(this.state, { type: 'assignAgentsToJob', jobType, amount });
+          const assigned = typeof actionResult.info.performed === 'number' ? actionResult.info.performed : 0;
           if (assigned === 0) {
             document.dispatchEvent(new CustomEvent('flash-unassigned'));
           }

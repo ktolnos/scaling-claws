@@ -11,6 +11,9 @@ import { tickSpace } from './systems/SpaceSystem.ts';
 export class GameLoop {
   private state: GameState;
   private intervalId: number | null = null;
+  private paused = false;
+  private speedMultiplier = 1;
+  private tickListeners = new Set<(state: GameState, dtMs: number) => void>();
 
   constructor(state: GameState) {
     this.state = state;
@@ -24,6 +27,20 @@ export class GameLoop {
   }
 
   private tick(): void {
+    if (this.paused) return;
+
+    const speed = Math.max(1, Math.floor(this.speedMultiplier));
+    for (let i = 0; i < speed; i++) {
+      this.tickOnce();
+      if (this.tickListeners.size > 0) {
+        for (const listener of this.tickListeners) {
+          listener(this.state, BALANCE.tickIntervalMs);
+        }
+      }
+    }
+  }
+
+  private tickOnce(): void {
     const dt = BALANCE.tickIntervalMs;
     this.state.time += dt;
     this.state.tickCount++;
@@ -56,6 +73,33 @@ export class GameLoop {
 
   getState(): GameState {
     return this.state;
+  }
+
+  setState(state: GameState): void {
+    this.state = state;
+  }
+
+  setPaused(paused: boolean): void {
+    this.paused = paused;
+  }
+
+  isPaused(): boolean {
+    return this.paused;
+  }
+
+  setSpeedMultiplier(multiplier: number): void {
+    this.speedMultiplier = Math.max(1, Math.floor(multiplier));
+  }
+
+  getSpeedMultiplier(): number {
+    return this.speedMultiplier;
+  }
+
+  addTickListener(listener: (state: GameState, dtMs: number) => void): () => void {
+    this.tickListeners.add(listener);
+    return () => {
+      this.tickListeners.delete(listener);
+    };
   }
 
   stop(): void {

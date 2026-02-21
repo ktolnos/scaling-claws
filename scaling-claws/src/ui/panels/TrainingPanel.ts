@@ -8,12 +8,9 @@ import {
 } from '../../game/BalanceConfig.ts';
 import type { ResearchId } from '../../game/BalanceConfig.ts';
 import { formatNumber } from '../../game/utils.ts';
+import { dispatchGameAction } from '../../game/ActionDispatcher.ts';
 import {
-  buyTrainingData, startFineTune, startAriesTraining,
-  setTrainingAllocation,
-} from '../../game/systems/TrainingSystem.ts';
-import {
-  getAvailableResearch, purchaseResearch, canPurchaseResearch,
+  getAvailableResearch, canPurchaseResearch,
 } from '../../game/systems/ResearchSystem.ts';
 import { BulkBuyGroup } from '../components/BulkBuyGroup.ts';
 import { createPanelDivider, createPanelScaffold } from '../components/PanelScaffold.ts';
@@ -168,9 +165,9 @@ export class TrainingPanel implements Panel {
     btn.style.marginTop = '4px';
     btn.addEventListener('click', () => {
       if (this.nextTrainingType === 'ft') {
-        startFineTune(this.state, this.nextTrainingIdx);
+        dispatchGameAction(this.state, { type: 'startFineTune', index: this.nextTrainingIdx });
       } else if (this.nextTrainingType === 'aries') {
-        startAriesTraining(this.state, this.nextTrainingIdx);
+        dispatchGameAction(this.state, { type: 'startAriesTraining', index: this.nextTrainingIdx });
       }
     });
     container.appendChild(btn);
@@ -191,7 +188,9 @@ export class TrainingPanel implements Panel {
     info.className = 'label';
     row.appendChild(info);
 
-    const bulkBuy = new BulkBuyGroup((amount) => buyTrainingData(this.state, amount));
+    const bulkBuy = new BulkBuyGroup((amount) => {
+      dispatchGameAction(this.state, { type: 'buyTrainingData', amountGB: amount });
+    });
     row.appendChild(bulkBuy.el);
 
     section.appendChild(row);
@@ -225,7 +224,15 @@ export class TrainingPanel implements Panel {
     plusBtn.textContent = '+10%';
     plusBtn.style.fontSize = '0.75rem';
     plusBtn.addEventListener('click', () => {
-        const success = setTrainingAllocation(this.state, this.state.trainingAllocationPct + 10);
+        const nextTrainingPct = Math.min(100, this.state.trainingAllocationPct + 10);
+        const remainingPct = Math.max(0, 100 - nextTrainingPct);
+        const nextInferencePct = Math.min(this.state.apiInferenceAllocationPct, remainingPct);
+        const actionResult = dispatchGameAction(this.state, {
+          type: 'setComputeAllocations',
+          trainingPct: nextTrainingPct,
+          inferencePct: nextInferencePct,
+        });
+        const success = actionResult.ok;
         if (!success) {
           plusBtn.classList.remove('flash-red');
           void plusBtn.offsetWidth;
@@ -397,10 +404,9 @@ export class TrainingPanel implements Panel {
   private updateAllocation(state: GameState): void {
     const runActive = state.currentFineTuneIndex >= 0 || state.ariesModelIndex >= 0;
     const stalledByAllocation = runActive && state.trainingAllocationPct === 0;
-    const maxTrainingPct = Math.max(0, 100 - state.apiInferenceAllocationPct);
 
     this.allocRefs.section.style.display = stalledByAllocation ? '' : 'none';
-    this.allocRefs.plusBtn.disabled = state.trainingAllocationPct >= maxTrainingPct;
+    this.allocRefs.plusBtn.disabled = state.trainingAllocationPct >= 100;
 
     if (stalledByAllocation) {
       this.allocRefs.hint.style.display = '';
@@ -463,7 +469,8 @@ export class TrainingPanel implements Panel {
       refs.btn.innerHTML = `${formatNumber(r.cost)} ${emojiHtml('science')} Science`;
       const rowBtn = refs.btn;
       refs.btn.onclick = () => {
-        const ok = purchaseResearch(this.state, r.id);
+        const actionResult = dispatchGameAction(this.state, { type: 'purchaseResearch', id: r.id });
+        const ok = actionResult.ok;
         if (!ok) {
           rowBtn.classList.remove('flash-red');
           void rowBtn.offsetWidth;

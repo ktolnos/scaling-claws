@@ -3,7 +3,7 @@ import { getTotalAssignedAgents } from '../../game/GameState.ts';
 import type { Panel } from '../PanelManager.ts';
 import { BALANCE } from '../../game/BalanceConfig.ts';
 import { formatNumber, formatMoney, fromBigInt, toBigInt, divB, scaleB, mulB } from '../../game/utils.ts';
-import { buyGpu, upgradeModel, buyDatacenter, setApiPrice, buyAds, improveApi, unlockApi, setComputeAllocations } from '../../game/systems/ComputeSystem.ts';
+import { dispatchGameAction } from '../../game/ActionDispatcher.ts';
 import { BulkBuyGroup } from '../components/BulkBuyGroup.ts';
 import { CountBulkBuyControls } from '../components/CountBulkBuyControls.ts';
 import { createPanelDivider, createPanelScaffold } from '../components/PanelScaffold.ts';
@@ -16,6 +16,7 @@ export class ComputePanel implements Panel {
 
   private modelNameEl!: HTMLSpanElement;
   private gpuStatusEl!: HTMLSpanElement;
+  private gpuStockBarFill!: HTMLDivElement;
   private installedGpuRow!: HTMLDivElement;
   private installedGpuCountEl!: HTMLSpanElement;
   private unassignedCountEl!: HTMLSpanElement;
@@ -216,8 +217,20 @@ export class ComputePanel implements Panel {
     const statusPart = document.createElement('div');
     statusPart.style.color = 'var(--text-secondary)';
     statusPart.style.fontSize = '0.72rem';
+    statusPart.style.display = 'flex';
+    statusPart.style.flexDirection = 'column';
+    statusPart.style.gap = '2px';
     this.gpuStatusEl = document.createElement('span');
     statusPart.appendChild(this.gpuStatusEl);
+
+    const gpuStockBar = document.createElement('div');
+    gpuStockBar.className = 'progress-bar';
+    gpuStockBar.style.height = '10px';
+    this.gpuStockBarFill = document.createElement('div');
+    this.gpuStockBarFill.className = 'progress-bar-fill';
+    this.gpuStockBarFill.style.background = 'var(--accent-blue)';
+    gpuStockBar.appendChild(this.gpuStockBarFill);
+    statusPart.appendChild(gpuStockBar);
     buyLabel.appendChild(statusPart);
 
     this.gpuPricePart = document.createElement('div');
@@ -227,7 +240,9 @@ export class ComputePanel implements Panel {
 
     this.buyGpuRow.appendChild(buyLabel);
 
-    this.buyGpuControls = new CountBulkBuyControls((amt) => buyGpu(this.state, amt), { prefix: '+' });
+    this.buyGpuControls = new CountBulkBuyControls((amt) => {
+      dispatchGameAction(this.state, { type: 'buyGpu', amount: amt });
+    }, { prefix: '+' });
     this.buyGpuRow.appendChild(this.buyGpuControls.el);
     body.appendChild(this.buyGpuRow);
 
@@ -270,7 +285,7 @@ export class ComputePanel implements Panel {
     this.upgradeBtn.addEventListener('click', () => {
       const nextIdx = this.state.currentModelIndex + 1;
       if (nextIdx < BALANCE.models.length) {
-        upgradeModel(this.state, nextIdx);
+        dispatchGameAction(this.state, { type: 'upgradeModel', modelIndex: nextIdx });
       }
     });
     uRow.appendChild(this.upgradeBtn);
@@ -313,9 +328,7 @@ export class ComputePanel implements Panel {
         row.appendChild(left);
 
         const controls = new CountBulkBuyControls((amt) => {
-          for (let k = 0; k < amt; k++) {
-            if (!buyDatacenter(this.state, i)) break;
-          }
+          dispatchGameAction(this.state, { type: 'buyDatacenter', tier: i, amount: amt });
         }, { prefix: '+' });
 
         row.appendChild(controls.el);
@@ -356,7 +369,9 @@ export class ComputePanel implements Panel {
     this.apiUnlockBtnReq = document.createElement('span');
     this.apiUnlockBtn.appendChild(this.apiUnlockBtnReq);
     
-    this.apiUnlockBtn.addEventListener('click', () => unlockApi(this.state));
+    this.apiUnlockBtn.addEventListener('click', () => {
+      dispatchGameAction(this.state, { type: 'unlockApi' });
+    });
     this.apiSection.appendChild(this.apiUnlockBtn);
 
     // Unlocked content container
@@ -408,7 +423,7 @@ export class ComputePanel implements Panel {
     priceControls.style.alignItems = 'center';
 
     this.priceDecreaseGroup = new BulkBuyGroup((amt) => {
-      setApiPrice(this.state, this.state.apiPrice - amt);
+      dispatchGameAction(this.state, { type: 'setApiPrice', price: this.state.apiPrice - amt });
     }, `-${UI_EMOJI.money}`);
     priceControls.appendChild(this.priceDecreaseGroup.el);
 
@@ -419,7 +434,7 @@ export class ComputePanel implements Panel {
     priceControls.appendChild(this.apiPriceVal);
 
     this.priceIncreaseGroup = new BulkBuyGroup((amt) => {
-      setApiPrice(this.state, this.state.apiPrice + amt);
+      dispatchGameAction(this.state, { type: 'setApiPrice', price: this.state.apiPrice + amt });
     }, `+${UI_EMOJI.money}`);
     priceControls.appendChild(this.priceIncreaseGroup.el);
 
@@ -444,7 +459,9 @@ export class ComputePanel implements Panel {
     improveLabel.innerHTML = `Optimization <span style="color:var(--text-secondary);font-size:0.8em">(${formatNumber(BALANCE.apiImproveCodeCost)} ${emojiHtml('code')} Code)</span>:`;
     improveControls.appendChild(improveLabel);
 
-    this.apiImproveBtnGroup = new BulkBuyGroup((amt) => improveApi(this.state, amt));
+    this.apiImproveBtnGroup = new BulkBuyGroup((amt) => {
+      dispatchGameAction(this.state, { type: 'improveApi', amount: amt });
+    });
     improveControls.appendChild(this.apiImproveBtnGroup.el);
 
     this.apiImproveRow.appendChild(improveControls);
@@ -469,7 +486,9 @@ export class ComputePanel implements Panel {
     marketingLabel.innerHTML = `Marketing <span style="color:var(--text-secondary);font-size:0.8em">${moneyWithEmojiHtml(BALANCE.apiAdCost, 'funds')}</span>:`;
     adControls.appendChild(marketingLabel);
 
-    this.apiAdBtnGroup = new BulkBuyGroup((amt) => buyAds(this.state, amt));
+    this.apiAdBtnGroup = new BulkBuyGroup((amt) => {
+      dispatchGameAction(this.state, { type: 'buyAds', amount: amt });
+    });
     adControls.appendChild(this.apiAdBtnGroup.el);
 
     adRow.appendChild(adControls);
@@ -532,8 +551,30 @@ export class ComputePanel implements Panel {
     this.agentEfficiencyEl.innerHTML = `Agents Efficiency: <span style="color:${efficiencyColor}">${efficiencyPct}%</span>${breakdown}`;
   }
 
+  private getLoadRatio(used: bigint, capacity: bigint): number {
+    if (capacity <= 0n) {
+      return used > 0n ? Number.POSITIVE_INFINITY : 0;
+    }
+    return fromBigInt(used) / fromBigInt(capacity);
+  }
+
+  private getLoadColor(ratio: number, normalColor = 'var(--accent-blue)'): string {
+    if (ratio > 2) return 'var(--accent-red)';
+    if (ratio > 1) return 'var(--accent-gold)';
+    return normalColor;
+  }
+
+  private getLoadPctLabel(ratio: number): string {
+    if (!Number.isFinite(ratio)) return 'inf%';
+    return `${Math.round(ratio * 100)}%`;
+  }
+
   private setUnifiedAllocations(trainingPct: number, inferencePct: number): void {
-    setComputeAllocations(this.state, trainingPct, inferencePct);
+    dispatchGameAction(this.state, {
+      type: 'setComputeAllocations',
+      trainingPct,
+      inferencePct,
+    });
   }
 
   private updateUnifiedAllocationUi(state: GameState): void {
@@ -669,17 +710,19 @@ export class ComputePanel implements Panel {
     const allInstallable = earthGpuCount <= state.gpuCapacity;
     const shownInstalled = allInstallable ? earthGpuCount : state.installedGpuCount;
     const installedPct = earthGpuCount > 0n ? Number(shownInstalled * 100n / earthGpuCount) : 100;
-    const stockLow = state.gpuCapacity > 0n && (earthGpuCount * 2n < state.gpuCapacity);
-    const capacityReached = earthGpuCount >= state.gpuCapacity;
+    const stockLoadRatio = this.getLoadRatio(earthGpuCount, state.gpuCapacity);
+    const stockColor = this.getLoadColor(stockLoadRatio);
+    const stockPctColor = stockLoadRatio > 1 ? stockColor : 'var(--text-secondary)';
+    const stockPct = this.getLoadPctLabel(stockLoadRatio);
     const installedPctLow = installedPct < 50;
-    const stockColor = stockLow ? 'var(--accent-blue)' : '';
-    const capacityColor = capacityReached ? 'var(--accent-red)' : '';
     const installedPctColor = installedPctLow ? 'var(--accent-red)' : '';
+    this.gpuStockBarFill.style.width = `${Math.min(100, Math.max(0, stockLoadRatio * 100))}%`;
+    this.gpuStockBarFill.style.background = stockColor;
     this.gpuStatusEl.innerHTML =
-      `Stock <span style="color:${stockColor}">${formatNumber(earthGpuCount)}</span> | ` +
+      `Stock ${formatNumber(earthGpuCount)} / Capacity ${formatNumber(state.gpuCapacity)} ` +
+      `(<span style="color:${stockPctColor}">${stockPct}</span>) | ` +
       `Installed ${formatNumber(shownInstalled)} (` +
-      `<span style="color:${installedPctColor}">${installedPct}%</span>) | ` +
-      `Capacity <span style="color:${capacityColor}">${formatNumber(state.gpuCapacity)}</span>`;
+      `<span style="color:${installedPctColor}">${installedPct}%</span>)`;
 
     // Replaced by compact status line under GPUs row.
     this.installedGpuRow.style.display = 'none';
@@ -725,10 +768,10 @@ export class ComputePanel implements Panel {
             '</strong> (' + resourceLabelHtml('intel') + ' ' + (Math.round(nextModel.intel * 10) / 10).toString() + ')';
       }
       if (this.upgradeBtn && this.upgradeBtnReq) {
-          // nextModel.minGpus is already scaled in BalanceConfig
-          const gpuMet = earthGpuCount >= nextModel.minGpus;
+          // Model upgrades are gated by installed GPUs (not stock).
+          const gpuMet = state.installedGpuCount >= nextModel.minGpus;
           const gpuColor = gpuMet ? '' : 'var(--accent-red)';
-      this.upgradeBtnReq.innerHTML = `(Requires ${formatNumber(nextModel.minGpus)} ${emojiHtml('gpus')} GPUs)`;
+      this.upgradeBtnReq.innerHTML = `(Requires ${formatNumber(nextModel.minGpus)} installed ${emojiHtml('gpus')} GPUs)`;
           this.upgradeBtnReq.style.color = gpuColor;
           this.upgradeBtn.disabled = !gpuMet;
       }
@@ -841,15 +884,15 @@ export class ComputePanel implements Panel {
 
     // Demand Bar
     const capacity = divB(state.apiReservedPflops, toBigInt(BALANCE.apiPflopsPerUser));
-    this.apiDemandText.innerHTML = `Demand: ${formatNumber(state.apiDemand)} / ${resourceLabelHtml('users', 'Capacity')}: ${formatNumber(capacity)} Users`;
-    
-    const utilization = capacity > 0n ? Number(state.apiUserCount * 100n / capacity) : 0;
-    this.apiDemandBarFill.style.width = Math.min(100, utilization) + '%';
-    if (state.apiDemand > capacity) {
-        this.apiDemandBarFill.style.background = 'var(--accent-red)'; // Capacity constrained
-    } else {
-        this.apiDemandBarFill.style.background = 'var(--accent-blue)';
-    }
+    const demandLoadRatio = this.getLoadRatio(state.apiDemand, capacity);
+    const demandColor = this.getLoadColor(demandLoadRatio);
+    const demandPctColor = demandLoadRatio > 1 ? demandColor : 'var(--text-secondary)';
+    this.apiDemandText.innerHTML =
+      `Demand: ${formatNumber(state.apiDemand)} / ${resourceLabelHtml('users', 'Capacity')}: ${formatNumber(capacity)} Users ` +
+      `(<span style="color:${demandPctColor}">${this.getLoadPctLabel(demandLoadRatio)}</span>)`;
+
+    this.apiDemandBarFill.style.width = `${Math.min(100, Math.max(0, demandLoadRatio * 100))}%`;
+    this.apiDemandBarFill.style.background = demandColor;
 
     // Price
     this.apiPriceVal.innerHTML = moneyWithEmojiHtml(state.apiPrice, 'funds');

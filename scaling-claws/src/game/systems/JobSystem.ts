@@ -4,6 +4,7 @@ import { BALANCE, JOB_ORDER, getStuckRate } from '../BalanceConfig.ts';
 import type { JobType } from '../BalanceConfig.ts';
 import { toBigInt, fromBigInt, mulB, divB, scaleB, scaleBigInt } from '../utils.ts';
 import { getJobOutputAmount } from './JobRules.ts';
+import { nextGameRandom } from '../Random.ts';
 
 const FLAVOR_TEXTS_EARLY = [
   '"Your first Sixxer task: \'Rewrite my cat\'s Instagram bio.\' $6 is $6."',
@@ -46,13 +47,13 @@ function nudgeAgents(state: GameState, count: bigint): void {
     if (stuckSampleIndices.length <= 0) continue;
 
     const expectedSampleUnsticks = (toUnstickRaw * stuckSampleIndices.length) / stuckBeforeRaw;
-    let sampleUnsticks = Math.floor(expectedSampleUnsticks + Math.random());
+    let sampleUnsticks = Math.floor(expectedSampleUnsticks + nextGameRandom());
     if (sampleUnsticks > stuckSampleIndices.length) sampleUnsticks = stuckSampleIndices.length;
     if (sampleUnsticks <= 0) continue;
 
     // Tiny set (max 4), so Fisher-Yates is cheap and keeps visual state unbiased.
     for (let i = stuckSampleIndices.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
+      const j = Math.floor(nextGameRandom() * (i + 1));
       const tmp = stuckSampleIndices[i];
       stuckSampleIndices[i] = stuckSampleIndices[j];
       stuckSampleIndices[j] = tmp;
@@ -215,7 +216,7 @@ export function tickJobs(state: GameState, dtMs: number): void {
             aiPool.samples.progress[i] -= wholeTasks;
             sampleCompletionsRaw += BigInt(wholeTasks);
           }
-          if (Math.random() < stuckRollPerTick) aiPool.samples.stuck[i] = true;
+          if (nextGameRandom() < stuckRollPerTick) aiPool.samples.stuck[i] = true;
         }
         if (aiPool.samples.stuck[i]) sampleStuck += scaleBigInt(1n);
       }
@@ -248,7 +249,7 @@ export function tickJobs(state: GameState, dtMs: number): void {
       // Roll stuck for non-sample agents based on elapsed time (independent of completions).
       if (nonSampleWorking > 0n && stuckRollPerTick > 0) {
         const expectedNewlyStuck = fromBigInt(nonSampleWorking) * stuckRollPerTick;
-        const newlyStuck = scaleBigInt(BigInt(Math.floor(expectedNewlyStuck + Math.random())));
+        const newlyStuck = scaleBigInt(BigInt(Math.floor(expectedNewlyStuck + nextGameRandom())));
         restStuck += newlyStuck;
         if (restStuck > nonSampleActive) restStuck = nonSampleActive;
       }
