@@ -709,6 +709,10 @@ body.compute-allocation-dragging * {
   font-weight: 500;
 }
 
+.job-row .job-reward-total-prod-zero {
+  color: var(--text-primary);
+}
+
 .job-row .job-reward-total-sep {
   color: var(--text-muted);
 }
@@ -716,6 +720,10 @@ body.compute-allocation-dragging * {
 .job-row .job-reward-total-salary {
   color: var(--accent-red);
   font-weight: 500;
+}
+
+.job-row .job-reward-total-salary-zero {
+  color: var(--text-primary);
 }
 
 .job-row .job-reward-total {

@@ -1,5 +1,5 @@
 import type { GameState, LocationId, TransportPayloadId, TransportRouteId } from '../GameState.ts';
-import { BALANCE } from '../BalanceConfig.ts';
+import { BALANCE, getGpuSatellitePowerMWPerUnit } from '../BalanceConfig.ts';
 import { toBigInt, mulB, fromBigInt } from '../utils.ts';
 import { reconcileEarthGpuInstallation } from './GpuState.ts';
 import {
@@ -111,10 +111,25 @@ function getSourceRocketFleetCount(state: GameState, source: LocationId): number
   return Math.max(0, total);
 }
 
+function getMassDriverLaunchBoostPerMin(state: GameState, route: TransportRouteId): number {
+  if (state.pausedFacilities.massDriver) return 0;
+
+  if (route === 'moonMercury') {
+    return fromBigInt(state.locationFacilities.moon.massDriver) * BALANCE.massDriverLaunchesPerMin;
+  }
+
+  if (route === 'mercuryOrbit') {
+    return fromBigInt(state.locationFacilities.mercury.massDriver) * BALANCE.massDriverLaunchesPerMin;
+  }
+
+  return 0;
+}
+
 function getRouteLaunchesPerMin(state: GameState, route: TransportRouteId): number {
   const source = getTransportRouteSource(route);
   const rockets = getSourceRocketFleetCount(state, source);
-  return Math.max(10, rockets * 2);
+  const baseLaunches = Math.max(10, rockets * 2);
+  return baseLaunches + getMassDriverLaunchBoostPerMin(state, route);
 }
 
 function scheduleRocketReturns(state: GameState, route: TransportRouteId, rocketsUsed: number, now: number): void {
@@ -359,8 +374,9 @@ export function tickSpace(state: GameState, dtMs: number): void {
   launchRoute(state, 'mercuryOrbit', dtMs, now);
 
   // Orbital power
-  state.orbitalPowerMW = mulB(state.satellites, toBigInt(BALANCE.satellitePowerMW));
-  state.dysonSwarmPowerMW = mulB(state.dysonSwarmSatellites, toBigInt(BALANCE.satellitePowerMW));
+  const satellitePowerMW = toBigInt(getGpuSatellitePowerMWPerUnit());
+  state.orbitalPowerMW = mulB(state.satellites, satellitePowerMW);
+  state.dysonSwarmPowerMW = mulB(state.dysonSwarmSatellites, satellitePowerMW);
   state.totalEnergyMW = state.powerSupplyMW + state.lunarPowerSupplyMW + state.mercuryPowerSupplyMW + state.orbitalPowerMW + state.dysonSwarmPowerMW;
 
   // Mercury depletion progress from mined material

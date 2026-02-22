@@ -1,5 +1,4 @@
 import type { GameState } from '../../game/GameState.ts';
-import { getTotalAssignedAgents } from '../../game/GameState.ts';
 import type { Panel } from '../PanelManager.ts';
 import { BALANCE, getNextTier } from '../../game/BalanceConfig.ts';
 import { formatNumber, mulB, fromBigInt, toBigInt, divB } from '../../game/utils.ts';
@@ -318,14 +317,7 @@ export class AgentsPanel implements Panel {
 
     // -- Agent Controls --
     this.agentHireControls.setCount(state.totalAgents);
-    const assignedCount = getTotalAssignedAgents(state);
-    let unassignedCount = state.agentPools['unassigned'].totalCount;
-
-    if (state.isPostGpuTransition) {
-      // In GPU era, unassigned agents are limited by compute slots
-      const diff = state.activeAgentCount - assignedCount;
-      unassignedCount = diff > 0n ? diff : 0n;
-    }
+    const unassignedCount = state.agentPools['unassigned'].totalCount;
 
     this.unassignedCountEl.textContent = formatNumber(unassignedCount);
     if (unassignedCount > 0n) {
@@ -336,6 +328,7 @@ export class AgentsPanel implements Panel {
     
     const coresPerAgent = toBigInt(currentTier.coresPerAgent);
     const maxAgentsByCpu = Math.floor(fromBigInt(divB(state.cpuCoresTotal, coresPerAgent)));
+    const maxAgentsByPflops = divB(state.totalPflops, toBigInt(BALANCE.pflopsPerGpu));
     this.agentHireControls.bulk.update(
       Math.floor(fromBigInt(state.totalAgents)),
       (amount) => {
@@ -345,7 +338,7 @@ export class AgentsPanel implements Panel {
         if (state.funds < totalCost) return false;
 
         if (state.isPostGpuTransition) {
-          return state.totalAgents + amountB <= state.installedGpuCount;
+          return state.totalAgents + amountB <= maxAgentsByPflops;
         }
 
         const requiredCores = mulB(state.totalAgents + amountB, coresPerAgent);

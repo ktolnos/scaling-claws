@@ -65,7 +65,24 @@ export function formatNumber(n: number | bigint): string {
 
 
   if (val < 0) return '-' + formatNumber(-val);
-  if (val < 1000) return (Math.round(val * 10) / 10).toString();
+  if (val < 1000) {
+    const rounded = Math.round(val * 10) / 10;
+    if (rounded !== 0) return rounded.toString();
+    if (val === 0) return '0';
+
+    // Preserve tiny non-zero values that would otherwise round to 0.0.
+    for (let decimals = 2; decimals <= 12; decimals++) {
+      const factor = 10 ** decimals;
+      const precise = Math.round(val * factor) / factor;
+      if (precise !== 0) {
+        return precise
+          .toFixed(decimals)
+          .replace(/(\.\d*?[1-9])0+$/, '$1')
+          .replace(/\.0+$/, '');
+      }
+    }
+    return val.toExponential(2);
+  }
 
   let tier = 0;
   let scaled = val;

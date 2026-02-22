@@ -1,10 +1,10 @@
 import type { GameState } from '../../game/GameState.ts';
 import { getTotalAssignedAgents } from '../../game/GameState.ts';
 import type { Panel } from '../PanelManager.ts';
-import { BALANCE } from '../../game/BalanceConfig.ts';
+import { BALANCE, getApiPflopsPerUser } from '../../game/BalanceConfig.ts';
 import { formatNumber, formatMoney, fromBigInt, toBigInt, divB, scaleB, mulB } from '../../game/utils.ts';
 import { dispatchGameAction } from '../../game/ActionDispatcher.ts';
-import { BulkBuyGroup } from '../components/BulkBuyGroup.ts';
+import { BulkBuyGroup, getVisibleBuyTiers } from '../components/BulkBuyGroup.ts';
 import { CountBulkBuyControls } from '../components/CountBulkBuyControls.ts';
 import { createPanelDivider, createPanelScaffold } from '../components/PanelScaffold.ts';
 import { UI_EMOJI, emojiHtml, moneyWithEmojiHtml, resourceLabelHtml } from '../emoji.ts';
@@ -17,8 +17,6 @@ export class ComputePanel implements Panel {
   private modelNameEl!: HTMLSpanElement;
   private gpuStatusEl!: HTMLSpanElement;
   private gpuStockBarFill!: HTMLDivElement;
-  private installedGpuRow!: HTMLDivElement;
-  private installedGpuCountEl!: HTMLSpanElement;
   private unassignedCountEl!: HTMLSpanElement;
   private unassignedLabelEl!: HTMLSpanElement;
   private agentEfficiencyEl!: HTMLDivElement;
@@ -41,7 +39,7 @@ export class ComputePanel implements Panel {
 
   private buyGpuRow!: HTMLDivElement;
   private buyGpuControls!: CountBulkBuyControls;
-  private gpuPricePart!: HTMLDivElement;
+  private gpuPricePart!: HTMLSpanElement;
   private upgradeSection!: HTMLDivElement;
   private datacenterSection!: HTMLDivElement;
   private datacenterHintEl!: HTMLDivElement;
@@ -135,6 +133,7 @@ export class ComputePanel implements Panel {
     // Unified compute allocation slider
     this.computeAllocationWrap = document.createElement('div');
     this.computeAllocationWrap.className = 'compute-allocation-wrap hidden';
+    this.computeAllocationWrap.style.width = '100%';
 
     const allocLabelsRow = document.createElement('div');
     allocLabelsRow.className = 'compute-allocation-labels';
@@ -170,6 +169,7 @@ export class ComputePanel implements Panel {
 
     this.allocSliderTrack = document.createElement('div');
     this.allocSliderTrack.className = 'compute-allocation-slider';
+    this.allocSliderTrack.style.width = '100%';
 
     this.allocSegAgents = document.createElement('div');
     this.allocSegAgents.className = 'compute-allocation-segment compute-allocation-segment-agents';
@@ -207,33 +207,15 @@ export class ComputePanel implements Panel {
     buyLabel.className = 'label';
     buyLabel.style.display = 'flex';
     buyLabel.style.flexDirection = 'column';
+    buyLabel.style.alignItems = 'flex-start';
     buyLabel.style.gap = '2px';
 
-    const topPart = document.createElement('div');
+    const topPart = document.createElement('span');
     topPart.innerHTML = `${resourceLabelHtml('gpus', 'GPUs')}`;
     setHintTarget(topPart, 'resource.gpus');
     buyLabel.appendChild(topPart);
 
-    const statusPart = document.createElement('div');
-    statusPart.style.color = 'var(--text-secondary)';
-    statusPart.style.fontSize = '0.72rem';
-    statusPart.style.display = 'flex';
-    statusPart.style.flexDirection = 'column';
-    statusPart.style.gap = '2px';
-    this.gpuStatusEl = document.createElement('span');
-    statusPart.appendChild(this.gpuStatusEl);
-
-    const gpuStockBar = document.createElement('div');
-    gpuStockBar.className = 'progress-bar';
-    gpuStockBar.style.height = '10px';
-    this.gpuStockBarFill = document.createElement('div');
-    this.gpuStockBarFill.className = 'progress-bar-fill';
-    this.gpuStockBarFill.style.background = 'var(--accent-blue)';
-    gpuStockBar.appendChild(this.gpuStockBarFill);
-    statusPart.appendChild(gpuStockBar);
-    buyLabel.appendChild(statusPart);
-
-    this.gpuPricePart = document.createElement('div');
+    this.gpuPricePart = document.createElement('span');
     this.gpuPricePart.style.color = 'var(--text-secondary)';
     this.gpuPricePart.style.fontSize = '0.72rem';
     buyLabel.appendChild(this.gpuPricePart);
@@ -246,22 +228,24 @@ export class ComputePanel implements Panel {
     this.buyGpuRow.appendChild(this.buyGpuControls.el);
     body.appendChild(this.buyGpuRow);
 
-    // Installed GPUs Row
-    this.installedGpuRow = document.createElement('div');
-    this.installedGpuRow.className = 'panel-row';
-    this.installedGpuRow.style.fontSize = '0.85rem';
-    this.installedGpuRow.style.color = 'var(--text-secondary)';
-    
-    const installedLabel = document.createElement('span');
-    installedLabel.className = 'label';
-    installedLabel.innerHTML = 'Installed GPUs';
-    setHintTarget(installedLabel, 'mechanic.datacenters');
-    this.installedGpuRow.appendChild(installedLabel);
-    
-    this.installedGpuCountEl = document.createElement('span');
-    this.installedGpuCountEl.className = 'value';
-    this.installedGpuRow.appendChild(this.installedGpuCountEl);
-    body.appendChild(this.installedGpuRow);
+    const gpuStatusRow = document.createElement('div');
+    gpuStatusRow.style.width = '100%';
+    gpuStatusRow.style.fontSize = '0.72rem';
+    gpuStatusRow.style.color = 'var(--text-secondary)';
+    gpuStatusRow.style.marginTop = '-2px';
+    this.gpuStatusEl = document.createElement('span');
+    gpuStatusRow.appendChild(this.gpuStatusEl);
+    body.appendChild(gpuStatusRow);
+
+    const gpuStockBar = document.createElement('div');
+    gpuStockBar.className = 'progress-bar';
+    gpuStockBar.style.width = '100%';
+    gpuStockBar.style.height = '10px';
+    this.gpuStockBarFill = document.createElement('div');
+    this.gpuStockBarFill.className = 'progress-bar-fill';
+    this.gpuStockBarFill.style.background = 'var(--accent-blue)';
+    gpuStockBar.appendChild(this.gpuStockBarFill);
+    body.appendChild(gpuStockBar);
 
     // Model upgrade section
     this.upgradeSection = document.createElement('div');
@@ -441,7 +425,7 @@ export class ComputePanel implements Panel {
     priceRow.appendChild(priceControls);
     this.apiUnlockedContainer.appendChild(priceRow);
 
-    // Improve API
+    // Optimize API
     this.apiImproveRow = document.createElement('div');
     this.apiImproveRow.className = 'panel-row';
     this.apiImproveRow.style.fontSize = '0.82rem';
@@ -516,9 +500,7 @@ export class ComputePanel implements Panel {
     const assignedAgents = getTotalAssignedAgents(state);
     if (assignedAgents <= 0n) return 0;
 
-    // Match the displayed unassigned logic in GPU era:
-    // unassigned = max(activeAgentCount - assignedAgents, 0)
-    // We want the highest allocation percent where this becomes 0.
+    // Minimum agent allocation needed so assigned agents can run without compute bottleneck.
     const pflopsPerAgent = toBigInt(BALANCE.pflopsPerGpu);
     for (let pct = 100; pct >= 0; pct--) {
       const allocatedPflops = mulB(state.totalPflops, toBigInt(pct)) / 100n;
@@ -661,23 +643,28 @@ export class ComputePanel implements Panel {
     const inferenceUnlocked = this.state.apiUnlocked;
     const agentsPct = this.getAgentsAllocationPct(this.state);
     const inferencePct = inferenceUnlocked ? this.state.apiInferenceAllocationPct : 0;
-    const trainingPct = trainingUnlocked ? this.state.trainingAllocationPct : 0;
 
     if (trainingUnlocked && inferenceUnlocked) {
+      const minInferencePct = 1;
+      let leftBoundary = Math.max(0, Math.min(100 - minInferencePct, agentsPct));
+      let rightBoundary = Math.max(minInferencePct, Math.min(100, agentsPct + inferencePct));
+
       if (this.activeAllocHandle === 'left') {
-        const rightBoundary = Math.max(0, Math.min(100, agentsPct + inferencePct));
-        const newAgents = Math.max(0, Math.min(rightBoundary, pointerPct));
-        const newInference = rightBoundary - newAgents;
-        const newTraining = trainingPct;
-        this.setUnifiedAllocations(newTraining, newInference);
-        this.updateUnifiedAllocationUi(this.state);
-        return;
+        leftBoundary = Math.max(0, Math.min(100 - minInferencePct, pointerPct));
+        if (leftBoundary >= rightBoundary - minInferencePct) {
+          rightBoundary = Math.min(100, leftBoundary + minInferencePct);
+          leftBoundary = rightBoundary - minInferencePct;
+        }
+      } else {
+        rightBoundary = Math.max(minInferencePct, Math.min(100, pointerPct));
+        if (rightBoundary <= leftBoundary + minInferencePct) {
+          leftBoundary = Math.max(0, rightBoundary - minInferencePct);
+          rightBoundary = leftBoundary + minInferencePct;
+        }
       }
 
-      const leftBoundary = Math.max(0, Math.min(100, agentsPct));
-      const newRight = Math.max(leftBoundary, Math.min(100, pointerPct));
-      const newInference = newRight - leftBoundary;
-      const newTraining = 100 - newRight;
+      const newInference = rightBoundary - leftBoundary;
+      const newTraining = 100 - rightBoundary;
       this.setUnifiedAllocations(newTraining, newInference);
       this.updateUnifiedAllocationUi(this.state);
       return;
@@ -724,30 +711,13 @@ export class ComputePanel implements Panel {
       `Installed ${formatNumber(shownInstalled)} (` +
       `<span style="color:${installedPctColor}">${installedPct}%</span>)`;
 
-    // Replaced by compact status line under GPUs row.
-    this.installedGpuRow.style.display = 'none';
-    
-    if (state.isPostGpuTransition) {
-      this.unassignedLabelEl.textContent = 'Unassigned Agents:';
-      const assignedCount = getTotalAssignedAgents(state);
-      const diff = state.activeAgentCount - assignedCount;
-      const unassignedCount = diff > 0n ? diff : 0n;
-      
-      this.unassignedCountEl.textContent = formatNumber(unassignedCount);
-      if (unassignedCount > 0n) {
-        this.unassignedCountEl.style.color = 'var(--accent-green)';
-      } else {
-        this.unassignedCountEl.style.color = '';
-      }
+    this.unassignedLabelEl.textContent = 'Unassigned Agents:';
+    const unassignedCount = state.agentPools['unassigned'].totalCount;
+    this.unassignedCountEl.textContent = formatNumber(unassignedCount);
+    if (unassignedCount > 0n) {
+      this.unassignedCountEl.style.color = 'var(--accent-green)';
     } else {
-      this.unassignedLabelEl.textContent = 'Unassigned Agents:';
-      const unassignedCount = state.agentPools['unassigned'].totalCount;
-      this.unassignedCountEl.textContent = formatNumber(unassignedCount);
-      if (unassignedCount > 0n) {
-        this.unassignedCountEl.style.color = 'var(--accent-green)';
-      } else {
-        this.unassignedCountEl.style.color = '';
-      }
+      this.unassignedCountEl.style.color = '';
     }
 
     this.updateAgentEfficiencyDisplay(state);
@@ -756,6 +726,7 @@ export class ComputePanel implements Panel {
     this.buyGpuControls.bulk.update(
       Math.floor(fromBigInt(earthGpuCount)),
       (amt) => state.funds >= BigInt(amt) * state.gpuMarketPrice,
+      BALANCE.gpuBuyLimit,
     );
 
     // Model upgrade
@@ -801,8 +772,16 @@ export class ComputePanel implements Panel {
         if (i === 0 || state.datacenters[i] > 0n || state.datacenters[Math.max(0, i - 1)] > 0n) {
             refs.row.style.display = 'flex';
             const earthLabor = state.locationResources.earth.labor;
-            const laborMet = earthLabor >= dc.laborCost;
-            const moneyMet = state.funds >= dc.cost;
+            const owned = Math.floor(fromBigInt(state.datacenters[i]));
+            const limit = dc.limit ?? 0;
+            const maxQuantity = limit > 0 ? limit : null;
+            const visibleTiers = getVisibleBuyTiers(owned, maxQuantity);
+            const smallestTier = visibleTiers[0] ?? 0;
+            const tierScale = toBigInt(smallestTier);
+            const moneyNeed = smallestTier > 0 ? mulB(tierScale, dc.cost) : 0n;
+            const laborNeed = smallestTier > 0 ? mulB(tierScale, dc.laborCost) : 0n;
+            const laborMet = earthLabor >= laborNeed;
+            const moneyMet = state.funds >= moneyNeed;
 
             refs.info.innerHTML = `${dc.name} (${formatNumber(dc.gpuCapacity)} ${emojiHtml('gpus')})`;
             refs.count.textContent = 'x' + formatNumber(state.datacenters[i]);
@@ -814,13 +793,12 @@ export class ComputePanel implements Panel {
               ` + ` +
               `<span style="color:${laborColor}">${formatNumber(dc.laborCost)} ${emojiHtml('labor')} labor</span>`;
             
-            const limit = dc.limit ?? 0;
-            refs.bulk.update(Math.floor(fromBigInt(state.datacenters[i])), (amt) => {
+            refs.bulk.update(owned, (amt) => {
               const amtB = toBigInt(amt);
               const moneyOk = state.funds >= mulB(amtB, dc.cost);
               const laborOk = earthLabor >= mulB(amtB, dc.laborCost);
               return moneyOk && laborOk;
-            }, limit > 0 ? limit : null);
+            }, maxQuantity);
         } else {
             refs.row.style.display = 'none';
         }
@@ -883,7 +861,8 @@ export class ComputePanel implements Panel {
       `@ ${moneyWithEmojiHtml(state.apiPrice, 'funds')}/min = ${moneyWithEmojiHtml(state.apiIncomePerMin, 'funds')}/min`;
 
     // Demand Bar
-    const capacity = divB(state.apiReservedPflops, toBigInt(BALANCE.apiPflopsPerUser));
+    const pflopsPerUser = getApiPflopsPerUser(state.apiQuality);
+    const capacity = divB(state.apiReservedPflops, toBigInt(pflopsPerUser));
     const demandLoadRatio = this.getLoadRatio(state.apiDemand, capacity);
     const demandColor = this.getLoadColor(demandLoadRatio);
     const demandPctColor = demandLoadRatio > 1 ? demandColor : 'var(--text-secondary)';
@@ -904,7 +883,13 @@ export class ComputePanel implements Panel {
     this.apiAdBtnGroup.update(state.apiAwareness, (amt) => state.funds >= BigInt(amt) * BALANCE.apiAdCost);
 
     // Improvements
-    this.apiImproveInfo.innerHTML = `Quality: ${(Math.round(state.apiQuality * 10) / 10).toString()}x`;
-    this.apiImproveBtnGroup.update(state.apiImprovementLevel, (amt) => state.code >= BigInt(amt) * BALANCE.apiImproveCodeCost);
+    this.apiImproveInfo.innerHTML =
+      `Inference Cost: ${formatNumber(pflopsPerUser)} PFLOPS/user` +
+      `<br><span style="color:var(--text-muted);font-size:0.8em">${(Math.round(state.apiQuality * 10) / 10).toString()}x efficiency</span>`;
+    this.apiImproveBtnGroup.update(
+      state.apiImprovementLevel,
+      (amt) => state.code >= BigInt(amt) * BALANCE.apiImproveCodeCost,
+      BALANCE.apiImprovePurchaseLimit - 1,
+    );
   }
 }

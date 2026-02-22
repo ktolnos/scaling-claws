@@ -1,17 +1,21 @@
 import type { GameLoop } from '../game/GameLoop.ts';
 import {
   BALANCE,
+  getHumanWorkforceRemaining,
+  getHumanSalaryPerMin,
   getNextTier,
   getTrainingDataPurchaseCost,
   getTrainingDataRemainingPurchaseCapGB,
 } from '../game/BalanceConfig.ts';
 import { createInitialState, getTotalAssignedAgents } from '../game/GameState.ts';
 import type { GameState } from '../game/GameState.ts';
+import type { HumanJobType } from '../game/BalanceConfig.ts';
 import type { GameAction } from '../game/ActionDispatcher.ts';
 import { addActionObserver, dispatchGameActionWithSource } from '../game/ActionDispatcher.ts';
-import { mulB } from '../game/utils.ts';
+import { mulB, scaleBigInt } from '../game/utils.ts';
 import { getGameRandomSeed, setGameRandomSeed } from '../game/Random.ts';
 import { cloneGameState } from './StateClone.ts';
+import { deserializeGameState, serializeGameState } from '../game/SaveManager.ts';
 
 interface RecordedAction {
   atOffsetMs: number;
@@ -23,6 +27,11 @@ interface PersistedReplayV1 {
   recordingStartTimeMs: number;
   recordingStartRandomSeed: number;
   recordedActions: RecordedAction[];
+}
+
+interface PersistedDevOverlayV1 {
+  version: 1;
+  paused: boolean;
 }
 
 interface Snapshot {
@@ -37,6 +46,7 @@ interface DevOverlayOptions {
 }
 
 const DEV_REPLAY_STORAGE_KEY = 'scaling-claws.dev-replay.v1';
+const DEV_OVERLAY_STORAGE_KEY = 'scaling-claws.dev-overlay.v1';
 
 const GAME_ACTION_TYPES = new Set([
   'hireAgent',
@@ -92,11 +102,14 @@ export class DevOverlay {
   private body!: HTMLDivElement;
   private statusEl!: HTMLDivElement;
   private pauseBtn!: HTMLButtonElement;
+  private copyStateBtn!: HTMLButtonElement;
+  private pasteStateBtn!: HTMLButtonElement;
   private randomBtn!: HTMLButtonElement;
   private replayBtn!: HTMLButtonElement;
   private replayPauseBtn!: HTMLButtonElement;
   private replayStopBtn!: HTMLButtonElement;
   private speedButtons = new Map<number, HTMLButtonElement>();
+  private clipboardStatus: string = '';
 
   private minimized = false;
   private randomPlaying = false;
@@ -127,6 +140,7 @@ export class DevOverlay {
     this.recordingStartTimeMs = this.loop.getState().time;
     this.recordingStartRandomSeed = getGameRandomSeed();
     this.loadPersistedReplay();
+    this.loadPersistedOverlayState();
 
     this.buildUi();
     this.attachObservers();
@@ -167,7 +181,7 @@ export class DevOverlay {
     rowTop.className = 'dev-overlay-row';
 
     this.pauseBtn = this.makeButton('Pause', () => {
-      this.loop.setPaused(!this.loop.isPaused());
+      this.setLoopPaused(!this.loop.isPaused());
       this.refreshUi();
     });
     rowTop.appendChild(this.pauseBtn);
@@ -201,6 +215,18 @@ export class DevOverlay {
     rowTop.appendChild(this.replayStopBtn);
 
     this.body.appendChild(rowTop);
+
+    const rowState = document.createElement('div');
+    rowState.className = 'dev-overlay-row';
+    this.copyStateBtn = this.makeButton('Copy State', () => {
+      void this.copyStateToClipboard();
+    });
+    rowState.appendChild(this.copyStateBtn);
+    this.pasteStateBtn = this.makeButton('Paste State', () => {
+      void this.pasteStateFromClipboard();
+    });
+    rowState.appendChild(this.pasteStateBtn);
+    this.body.appendChild(rowState);
 
     const rowRollback = document.createElement('div');
     rowRollback.className = 'dev-overlay-row';
@@ -310,7 +336,7 @@ export class DevOverlay {
     this.loop.setState(restored);
     setGameRandomSeed(chosen.randomSeed);
     this.onStateReplaced(restored);
-    this.loop.setPaused(true);
+    this.setLoopPaused(true);
     this.randomPlaying = false;
     this.stopReplay();
     this.randomElapsedMs = 0;
@@ -330,7 +356,7 @@ export class DevOverlay {
     const newState = createInitialState();
     this.loop.setState(newState);
     this.onStateReplaced(newState);
-    this.loop.setPaused(false);
+    this.setLoopPaused(false);
     this.randomPlaying = false;
     this.replaying = this.recordedActions.length > 0;
     this.replayPaused = false;
@@ -340,7 +366,7 @@ export class DevOverlay {
     this.resetSnapshots(newState);
     if (!this.replaying) {
       // No recorded actions means replay is immediately finished.
-      this.loop.setPaused(true);
+      this.setLoopPaused(true);
       this.refreshUi();
       return;
     }
@@ -368,7 +394,7 @@ export class DevOverlay {
 
   private finishReplay(): void {
     this.stopReplay(false);
-    this.loop.setPaused(true);
+    this.setLoopPaused(true);
   }
 
   private stopReplay(pauseGame = false): void {
@@ -377,8 +403,13 @@ export class DevOverlay {
     this.replayIndex = 0;
     this.replayElapsedMs = 0;
     if (pauseGame) {
-      this.loop.setPaused(true);
+      this.setLoopPaused(true);
     }
+  }
+
+  private setLoopPaused(paused: boolean): void {
+    this.loop.setPaused(paused);
+    this.persistOverlayState();
   }
 
   private runRandomTick(dtMs: number): void {
@@ -621,14 +652,30 @@ export class DevOverlay {
       actions.push({ type: 'removeAgentsFromJob', jobType: pick, amount: 1 });
     }
 
+    let totalPaidHumans = 0n;
+    for (const jobType of state.unlockedJobs) {
+      const job = BALANCE.jobs[jobType];
+      if (job.workerType === 'human' && job.salaryPerMin) {
+        totalPaidHumans += state.humanPools[jobType].totalCount;
+      }
+    }
+
     const hireableHumanJobs = state.unlockedJobs.filter((jobType) => {
       if (jobType === 'robotWorker') return false;
       const job = BALANCE.jobs[jobType];
       if (job.workerType !== 'human') return false;
       const hireCost = job.hireCost ?? 0n;
       if (state.funds < hireCost) return false;
-      const salaryPerMin = job.salaryPerMin ?? 0n;
-      const projectedHumanSalary = state.humanSalaryPerMin + salaryPerMin;
+      const currentPool = state.humanPools[jobType];
+      if (getHumanWorkforceRemaining(totalPaidHumans) <= 0n) return false;
+
+      const currentJobSalary = getHumanSalaryPerMin(jobType as HumanJobType, currentPool.totalCount, totalPaidHumans);
+      const projectedJobSalary = getHumanSalaryPerMin(
+        jobType as HumanJobType,
+        currentPool.totalCount + scaleBigInt(1n),
+        totalPaidHumans + scaleBigInt(1n),
+      );
+      const projectedHumanSalary = state.humanSalaryPerMin - currentJobSalary + projectedJobSalary;
       // Keep hiring conservative in random mode:
       // 1) salary must stay covered by income,
       // 2) keep at least 1 minute of projected salary runway in cash after the hire.
@@ -649,6 +696,67 @@ export class DevOverlay {
 
   private dispatchProgrammatic(action: GameAction) {
     return dispatchGameActionWithSource(this.loop.getState(), action, 'programmatic');
+  }
+
+  private async copyStateToClipboard(): Promise<void> {
+    try {
+      if (!navigator.clipboard || typeof navigator.clipboard.writeText !== 'function') {
+        this.clipboardStatus = 'Clipboard write unavailable';
+        return;
+      }
+      const serialized = serializeGameState(this.loop.getState());
+      await navigator.clipboard.writeText(serialized);
+      this.clipboardStatus = 'State copied';
+    } catch {
+      this.clipboardStatus = 'Copy failed';
+    } finally {
+      this.refreshUi();
+    }
+  }
+
+  private async pasteStateFromClipboard(): Promise<void> {
+    try {
+      if (!navigator.clipboard || typeof navigator.clipboard.readText !== 'function') {
+        this.clipboardStatus = 'Clipboard read unavailable';
+        return;
+      }
+
+      const text = (await navigator.clipboard.readText()).trim();
+      if (!text) {
+        this.clipboardStatus = 'Clipboard is empty';
+        return;
+      }
+
+      const parsed = deserializeGameState(text) as unknown;
+      if (!this.isLikelyGameState(parsed)) {
+        this.clipboardStatus = 'Clipboard does not contain a valid state';
+        return;
+      }
+
+      const newState = parsed as GameState;
+      this.loop.setState(newState);
+      this.onStateReplaced(newState);
+      this.setLoopPaused(true);
+      this.randomPlaying = false;
+      this.stopReplay();
+      this.randomElapsedMs = 0;
+      this.resetSnapshots(newState);
+      this.clipboardStatus = 'State loaded';
+    } catch {
+      this.clipboardStatus = 'Paste failed';
+    } finally {
+      this.refreshUi();
+    }
+  }
+
+  private isLikelyGameState(value: unknown): value is GameState {
+    if (!isObject(value)) return false;
+    if (typeof value.time !== 'number') return false;
+    if (!isObject(value.locationResources)) return false;
+    if (!isObject(value.locationFacilities)) return false;
+    if (!isObject(value.agentPools)) return false;
+    if (typeof value.apiUnlocked !== 'boolean') return false;
+    return true;
   }
 
   private loadPersistedReplay(): void {
@@ -684,6 +792,34 @@ export class DevOverlay {
     }
   }
 
+  private loadPersistedOverlayState(): void {
+    try {
+      const raw = localStorage.getItem(DEV_OVERLAY_STORAGE_KEY);
+      if (!raw) return;
+
+      const parsed = JSON.parse(raw) as unknown;
+      if (!isObject(parsed) || parsed.version !== 1) return;
+
+      const paused = parsed.paused;
+      if (typeof paused !== 'boolean') return;
+      this.loop.setPaused(paused);
+    } catch {
+      // Ignore malformed payloads and continue with default overlay state.
+    }
+  }
+
+  private persistOverlayState(): void {
+    const payload: PersistedDevOverlayV1 = {
+      version: 1,
+      paused: this.loop.isPaused(),
+    };
+    try {
+      localStorage.setItem(DEV_OVERLAY_STORAGE_KEY, JSON.stringify(payload));
+    } catch {
+      // Ignore storage write failures (quota/privacy mode).
+    }
+  }
+
   private persistReplay(): void {
     const payload: PersistedReplayV1 = {
       version: 1,
@@ -715,7 +851,8 @@ export class DevOverlay {
     const replayState = this.replaying
       ? `Replay ${this.replayPaused ? 'paused ' : ''}${this.replayIndex}/${this.recordedActions.length}`
       : 'Replay idle';
+    const clipboardState = this.clipboardStatus ? ` | ${this.clipboardStatus}` : '';
     this.statusEl.textContent =
-      `t=${Math.floor(state.time / 1000)}s | speed=${currentSpeed}x | actions=${this.recordedActions.length} | snapshots=${this.snapshots.length} | ${replayState}`;
+      `t=${Math.floor(state.time / 1000)}s | speed=${currentSpeed}x | actions=${this.recordedActions.length} | snapshots=${this.snapshots.length} | ${replayState}${clipboardState}`;
   }
 }

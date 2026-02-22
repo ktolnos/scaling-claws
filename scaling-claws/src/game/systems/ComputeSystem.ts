@@ -1,6 +1,6 @@
 import type { GameState } from '../GameState.ts';
 import { getTotalAssignedAgents } from '../GameState.ts';
-import { BALANCE, getApiDemand, getBestModel, getGpuTargetPrice, JOB_ORDER } from '../BalanceConfig.ts';
+import { BALANCE, getApiDemand, getApiPflopsPerUser, getBestModel, getGpuTargetPrice, getGpuSatellitePflopsPerUnit, JOB_ORDER } from '../BalanceConfig.ts';
 import type { SubscriptionTier } from '../BalanceConfig.ts';
 import { toBigInt, divB, mulB, scaleB, fromBigInt, scaleBigInt } from '../utils.ts';
 import { reconcileEarthGpuInstallation } from './GpuState.ts';
@@ -12,6 +12,32 @@ function getEarthGpuCount(state: GameState): bigint {
 
 function getInstalledGpuCount(state: GameState): bigint {
   return state.installedGpuCount;
+}
+
+function getMaxAgentsByPflops(state: GameState): bigint {
+  return divB(state.totalPflops, toBigInt(BALANCE.pflopsPerGpu));
+}
+
+function syncAgentsToPflopsCapacity(state: GameState): void {
+  if (!state.isPostGpuTransition) return;
+
+  const targetAgents = getMaxAgentsByPflops(state);
+  if (state.totalAgents >= targetAgents) return;
+
+  const unassignedPool = state.agentPools['unassigned'];
+  const toAdd = targetAgents - state.totalAgents;
+  const oldCount = unassignedPool.totalCount;
+  unassignedPool.totalCount += toAdd;
+  state.totalAgents = targetAgents;
+
+  for (
+    let i = Math.floor(fromBigInt(oldCount));
+    i < Math.min(Math.floor(fromBigInt(unassignedPool.totalCount)), 4);
+    i++
+  ) {
+    unassignedPool.samples.progress[i] = 0;
+    unassignedPool.samples.stuck[i] = false;
+  }
 }
 
 export function tickCompute(state: GameState, dtMs: number): void {
@@ -59,16 +85,11 @@ function tickGpuEra(state: GameState, dtMs: number): void {
   // Keep GPU stock/capacity/install state coherent before compute math.
   reconcileEarthGpuInstallation(state);
   
-  // totalPflops = GPUs * pflopsPerGpu * bonus * throttle
-  // gpuCount is scaled, pflopsPerGpu is number? 
-  // Let's check BALANCE again. pflopsPerGpu is 2.0 (number).
-  let pflops = scaleB(state.installedGpuCount, BALANCE.pflopsPerGpu);
-  pflops = scaleB(pflops, state.gpuFlopsBonus);
-  pflops = scaleB(pflops, state.powerThrottle);
-  state.totalPflops = pflops;
-
-  // Location compute totals for TopBar aggregation (Earth + Moon + Mercury + Orbit)
-  state.earthPflops = pflops;
+  // Earth compute
+  let earthPflops = scaleB(state.installedGpuCount, BALANCE.pflopsPerGpu);
+  earthPflops = scaleB(earthPflops, state.gpuFlopsBonus);
+  earthPflops = scaleB(earthPflops, state.powerThrottle);
+  state.earthPflops = earthPflops;
 
   const moonInstalled = state.locationResources.moon.installedGpus;
   let moonPflops = scaleB(moonInstalled, BALANCE.pflopsPerGpu);
@@ -82,8 +103,16 @@ function tickGpuEra(state: GameState, dtMs: number): void {
   mercuryPflops = scaleB(mercuryPflops, state.mercuryPowerThrottle ?? 1);
   state.mercuryPflops = mercuryPflops;
 
-  state.orbitalPflops = 0n;
+  // Orbital compute from embedded GPU payload in launched satellites.
+  const orbitalSatellites = state.satellites + state.dysonSwarmSatellites;
+  let orbitalPflops = mulB(orbitalSatellites, getGpuSatellitePflopsPerUnit());
+  orbitalPflops = scaleB(orbitalPflops, state.gpuFlopsBonus);
+  state.orbitalPflops = orbitalPflops;
+
+  // Gameplay allocations use Earth + orbital compute.
+  state.totalPflops = state.earthPflops + state.orbitalPflops;
   state.totalPflopsDisplay = state.earthPflops + state.moonPflops + state.mercuryPflops + state.orbitalPflops;
+  syncAgentsToPflopsCapacity(state);
 
   // Only set intelligence from model if no training has been done yet
   if (state.completedFineTunes.length === 0 && state.ariesModelIndex === -1 && state.currentFineTuneIndex === -1) {
@@ -144,13 +173,12 @@ function tickGpuEra(state: GameState, dtMs: number): void {
     // Demand calculation is centralized in BalanceConfig economics helpers.
     state.apiDemand = toBigInt(getApiDemand(
       state.apiAwareness,
-      state.apiQuality,
       state.intelligence,
       state.apiPrice,
     ));
 
     // Available capacity for users
-    const capacityUsers = divB(state.apiReservedPflops, toBigInt(BALANCE.apiPflopsPerUser));
+    const capacityUsers = divB(state.apiReservedPflops, toBigInt(getApiPflopsPerUser(state.apiQuality)));
 
     // Active users limited by demand and capacity
     state.apiUserCount = state.apiDemand < capacityUsers ? state.apiDemand : capacityUsers;
@@ -283,7 +311,7 @@ export function hireAgent(state: GameState): boolean {
       return false;
     }
   } else {
-    if (state.totalAgents >= state.installedGpuCount) {
+    if (state.totalAgents >= getMaxAgentsByPflops(state)) {
       return false;
     }
   }
@@ -346,8 +374,8 @@ export function goSelfHosted(state: GameState): boolean {
 
   state.funds -= totalCost;
   state.locationResources.earth.gpus = earthGpuCount;
-  reconcileEarthGpuInstallation(state);
   state.isPostGpuTransition = true;
+  reconcileEarthGpuInstallation(state);
 
   // Free starting energy: cover the datacenter threshold
   const powerReqMW = mulB(BALANCE.datacenterThreshold, toBigInt(BALANCE.gpuPowerMW)); 
@@ -370,21 +398,6 @@ export function buyGpu(state: GameState, amount: number): boolean {
   state.funds -= cost;
   state.locationResources.earth.gpus += amountB;
   reconcileEarthGpuInstallation(state);
-
-  // Auto-add agents for new GPUs
-  const agentsToAdd = getEarthGpuCount(state) - state.totalAgents;
-  if (agentsToAdd > 0n) {
-    const unassignedPool = state.agentPools['unassigned'];
-    const oldCount = unassignedPool.totalCount;
-
-    unassignedPool.totalCount += agentsToAdd;
-    state.totalAgents += agentsToAdd;
-
-    for (let i = Math.floor(fromBigInt(oldCount)); i < Math.min(Math.floor(fromBigInt(oldCount + agentsToAdd)), 4); i++) {
-      unassignedPool.samples.progress[i] = 0;
-      unassignedPool.samples.stuck[i] = false;
-    }
-  }
 
   if (getEarthGpuCount(state) <= amountB) {
     state.pendingFlavorTexts.push(
@@ -456,13 +469,17 @@ export function setComputeAllocations(state: GameState, trainingPct: number, inf
 }
 
 export function improveApi(state: GameState, amount: number = 1): boolean {
+  const purchased = state.apiImprovementLevel + 1;
+  const remaining = BALANCE.apiImprovePurchaseLimit - purchased;
+  if (remaining <= 0 || amount > remaining) return false;
+
   const amountB = toBigInt(amount);
   const totalCost = mulB(amountB, BALANCE.apiImproveCodeCost);
   if (state.code < totalCost) return false;
 
   state.code -= totalCost;
   state.apiImprovementLevel += amount;
-  state.apiQuality += amount * BALANCE.apiImproveQualityBoost;
+  state.apiQuality += amount * BALANCE.apiImproveEfficiencyBoost;
   
   return true;
 }

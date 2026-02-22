@@ -27,95 +27,68 @@
 - Buy API unlock (`Launch API Service`) to shift from job-income scaling to demand scaling.
 - Set the first API price.
 - Buy first API marketing (`Ads`) to test awareness-driven demand growth.
-- Buy first API quality improvement (`Improve API`) to make increase demand.
+- Buy first API optimization (`Improve API`) to decrease FLOPs per query.
 - Retune API price after observing demand vs inference capacity.
 - Keep interleaving API tuning with GPU purchases.
-- Buy research `apiOps1` (proposed) to boost API quality gains when code spend feels weak.
-- Buy one more API quality improvement and observe faster quality slope.
-- Buy research `inferenceCompression1` (proposed) to lower inference PFLOPS per user when capacity caps demand.
 - Retune API price upward after improved effective capacity.
 - Hire the first `Human Worker`.
 - Increase `Human Worker` count until labor stock grows net positive.
 - Keep buying GPUs toward the next model wall.
 - Upgrade to `DeepKick-1.2T`.
-- Unlock training panel.
-- Buy first training-data purchase.
-- Set first non-zero training allocation.
-- Start `DeepKick-Math` fine-tune to start converting spare compute into permanent capability.
-- Keep API scaling while `DeepKick-Math` runs.
-- Complete `DeepKick-Math`.
-- Start `DeepKick-Code` fine-tune because code pressure is rising from API and upcoming research.
-- Continue API/GPU scaling during `DeepKick-Code`.
-- Complete `DeepKick-Code`.
-- Reach intelligence 11 and unlock research.
-- Hire first `Human Researcher` so science starts before the first big tech gates.
-- Buy research `synthData1` to convert API usage into passive training data flow.
-- Increase API allocation slightly and observe synthetic data intake.
-- Buy research `materialProcessing` to unlock owned material supply before factory demand spikes.
-- Build first Earth `materialMine`.
-- Buy research `chipManufacturing` to unlock player-produced GPUs before market GPU cost dominates.
-- Build first Earth `gpuFactory`.
-- Buy research `solarTechnology` to unlock both panel production and installation before power costs snowball.
-- Build first Earth `solarFactory`.
-- Install first Earth solar panel.
-- Buy research `robotics1` to add scalable labor that does not carry salary drag.
-- Buy first robot import.
-- Build first Earth `robotFactory`.
-- Continue labor growth until mine/factory uptime is stable.
-- Buy research `algoEfficiency1` to shorten every future training run when training queue starts lengthening.
-- Start `DeepKick-Reason` fine-tune while Earth industry boots.
-- Buy research `syntheticData1` to unlock `AI Data Synthesizer` when purchased data starts hurting margins.
-- Assign first AI agent to `AI Data Synthesizer`.
-- Complete `DeepKick-Reason`.
-- Buy research `gpuArch1` to increase compute output per installed GPU before next capex cycle.
-- Buy GPUs and verify stronger PFLOPS growth per dollar.
-- Continue API growth until Earth installed-GPU cap is reached.
-- Hit Earth installed-GPU capacity cap.
+- Run out of space for GPUs.
 - Build labor stock for datacenter construction.
 - Buy first `Small Datacenter` to restore install headroom.
-- Buy first `Grid Power` tranche when throttle appears.
-- Resume GPU purchases.
+- Energy panel unlocks. If you had above 200 GPUs, they start to throttle.
+- Buy first `Grid Power`.
 - Reach 256 installed GPUs.
 - Upgrade to `DeepKick-2.8T`.
-- Buy first `Medium Datacenter`.
-- Buy first `Gas Plant`.
-- Buy first `Large Datacenter`.
+- Unlock training panel.
+- Buy first training-data purchase. 
+- Continue to buy GPUs and Datacenters and grid power.
+- Start `DeepKick-Math` fine-tune. This is hard-capped by code so if you didn't hire coders earlier, you'll have to do it now.
+- Start `DeepKick-Code`. It requires way more code, so you have to hire a lot of coders.
+- Unlock research.
+- Hire first `Human Researcher` so science starts before the first big tech gates.
+- Next up is `DeepKick-Reason`. It requires a lot of data. 
+- Buy research `apiData1` to convert API usage into passive training data flow.
+- A few other relatively cheap research projects are available that increase GPU efficiency and reduce training time. Buy them.
+- Run out of grid energy. Start buying gas power. Powerplants require a lot of workers.
+- Buy research `solarTechnology` to unlock the Earth supply chain before factory demand spikes.
+- Build first Earth `materialMine` (already unlocked once supply chain is visible).
+- Build first Earth `solarFactory`.
+- Install first Earth solar panel.
+- Start `Ares-1` (roughly all constraints are equally high).
+- it automates coder job. Ares-2 has insane code requirements.
+- Buy research `chipManufacturing` to unlock player-produced GPUs before market GPU cost dominates.
+- Build first Earth `gpuFactory`.
+- Buy research `robotics1` to unlock robot workers and improve robot labor output.
+- Buy first robot import.
+- Buy research `robotFactoryEngineering1` to unlock Earth robot factories.
+- Build first Earth `robotFactory`.
+- Buy research `algoEfficiency1` to shorten every future training run.
+- Buy research `gpuArch1` to increase compute output per installed GPU before next capex cycle.
 - Buy first `Nuclear Plant`.
-- Buy first `Mega Datacenter`.
-- Treat these as bridge buys: Earth infra extends runway but is not the final scaling path.
-- Buy research `datacenterModularity1` (proposed) to reduce datacenter labor drag when construction cadence stalls.
-- Buy the next datacenter tier sooner and confirm labor relief.
 - Buy research `solarEfficiency1` to improve panel economics when grid/gas marginal cost is still painful.
-- Install another batch of Earth solar to test improved power offset.
+- Hire more human workers to mine more and build more solar factories.
+- Start `Aries-1.5` training run (proposed) to avoid a dead stretch before AI-research scaling.
+
+- Buy research `syntheticData1` to unlock `AI Data Synthesizer` when purchased data starts hurting margins.
+- Assign first AI agent to `AI Data Synthesizer`.
+
 - Buy research `rocketry` to open off-world throughput when Earth infra hits diminishing returns.
 - Build first Earth `rocketFactory`.
 - Buy research `orbitalLogistics` to unlock first persistent space energy/compute lane.
 - Build first Earth `gpuSatelliteFactory`.
 - Schedule first Earth -> Orbit payload (`gpuSatellites`).
 - Buy research `reusableRockets1` to cut launch attrition when payload flow starts eating rocket stock.
-- Schedule another orbit shipment and observe lower replacement pressure.
-- Buy research `launchAutomation1` (proposed) to raise launch cadence when queues accumulate.
-- Queue multiple payloads and verify faster drain.
-- Start `DeepKick-ToolUse` fine-tune (proposed) to smooth the gap before Aries and improve code-heavy operations.
-- Complete `DeepKick-ToolUse`.
+
 - Buy research `robotics2` to raise robot labor output when human-worker scaling gets expensive.
 - Expand robots and confirm labor bottleneck loosens.
-- Buy research `synthData2` to increase API-derived data generation when training-data demand rises.
-- Slightly increase inference allocation and verify better data slope.
-- Buy research `syntheticData2` to increase `AI Data Synthesizer` yield when purchased data is still a tax.
-- Move one more AI worker to data synthesis.
-- Buy research `algoEfficiency2` to keep multi-run training cadence tight.
-- Buy research `gpuArch2` to raise PFLOPS ceiling before lunar jump.
-- Buy research `inferenceCompression2` (proposed) to keep API margins healthy despite larger training reservations.
-- Retune API price and allocations after compression gain.
-- Start `DeepKick-Ultra` fine-tune as the final DeepKick-stage multiplier pass.
 - Buy research `payloadToMoon` to break Earth datacenter/power coupling.
 - Schedule first Earth -> Moon payload (`robots`).
 - Schedule first Earth -> Moon payload (`solarPanels`).
 - Schedule first Earth -> Moon payload (`gpus`).
 - Install first Moon GPU to establish the first off-Earth compute lane.
-- Complete `DeepKick-Ultra`.
-- Start `Aries-0` training run (proposed bridge model) so training remains active during Moon bootstrap.
 - Buy research `moonMineEngineering` to create local Moon materials and reduce Earth shipment dependency.
 - Build first Moon `materialMine`.
 - Buy research `moonSolarManufacturing` to let Moon power expand from local supply.
@@ -123,21 +96,17 @@
 - Install first Moon solar panels.
 - Buy research `moonChipManufacturing` to localize Moon GPU growth.
 - Build first Moon `gpuFactory`.
-- Complete `Aries-0`.
 - Buy research `moonRocketry` so Moon can source its own rocket throughput.
 - Build first Moon `rocketFactory`.
 - Buy research `moonSatelliteManufacturing` so Moon can directly feed orbital compute-energy buildout.
 - Build first Moon `gpuSatelliteFactory`.
 - Buy research `moonMassDrivers` to convert logistics from attrition-limited to throughput-limited.
 - Build first Moon `massDriver`.
+- Buy research `robotFactoryEngineering2` to unlock Moon and Mercury robot factories.
 - Buy research `lunarAutonomy1` (proposed) to reduce Moon install labor pressure as expansion accelerates.
 - Install another Moon GPU/solar batch and verify lower labor friction.
-- Start `Aries-1` training.
-- Complete `Aries-1`.
-- Assign first AI agent to `AI Coder` to shift code from payroll-limited to compute-limited.
-- Buy research `synthData3` so API traffic can continue feeding data at larger scale.
+- Buy research `synthData3`
 - Increase inference allocation and confirm stronger data flow.
-- Start `Aries-1.5` training run (proposed) to avoid a dead stretch before AI-research scaling.
 - Buy research `syntheticData3` so AI data jobs keep up with larger model data requirements.
 - Add another AI data worker and keep training fed.
 - Complete `Aries-1.5`.
@@ -169,7 +138,6 @@
 - Buy research `orbitalAssembly1` (proposed) to accelerate orbital satellite deployment when launch supply is ready.
 - Push an orbital build burst.
 - Start `Aries-3` training.
-- Complete `Aries-3`.
 - Buy research `reusableRockets3` to minimize rocket replacement tax in endgame logistics loops.
 - Buy research `facilityThroughput2` to compound all industrial output once infrastructure footprint is huge.
 - Immediately expand mixed Earth/Moon/Mercury facilities to exploit the multiplier.
@@ -177,11 +145,14 @@
 - Rebalance AI job assignments and verify higher output per agent.
 - Buy research `researchOps1` (proposed) to increase AI researcher conversion when science is the top bottleneck again.
 - Start `Aries-4` training.
-- Complete `Aries-4`.
-- Buy research `algoEfficiency4` to keep final training cycle from becoming a long idle window.
+=- Buy research `algoEfficiency4` to keep final training cycle from becoming a long idle window.
 - Buy research `researchOps2` (proposed) to push late-game science throughput into final unlock territory.
 - Start `Aries-5` training.
-- Complete `Aries-5`.
 - Keep scaling all three locations while banking science for the final gate.
 - Buy research `vonNeumannProbes` to convert full-stack industrial/science power into the win condition.
 - Launch the first Von Neumann probe.
+
+
+`Aries-1` -> Coder
+`Aries-2` -> Researcher
+`Aries-3` -> Robotics

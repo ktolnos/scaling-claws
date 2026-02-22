@@ -54,6 +54,13 @@ let supplyPanelAdded = false;
 let energyPanelAdded = false;
 let computePanelActive = false;
 
+function hasSupplyPanelUnlock(state: GameState): boolean {
+  return (
+    state.completedResearch.includes('solarTechnology') ||
+    state.completedResearch.includes('chipManufacturing')
+  );
+}
+
 function configurePanels(state: GameState): void {
   panelContainer.innerHTML = '';
   panelManager = new PanelManager(panelContainer);
@@ -75,12 +82,12 @@ function configurePanels(state: GameState): void {
     panelManager.register('training', new TrainingPanel(state));
   }
 
-  if (state.completedResearch.includes('materialProcessing')) {
+  if (hasSupplyPanelUnlock(state)) {
     panelManager.register('supply', new SupplyPanel(state));
   }
 
   trainingPanelAdded = state.intelligence >= BALANCE.trainingUnlockIntel;
-  supplyPanelAdded = state.completedResearch.includes('materialProcessing');
+  supplyPanelAdded = hasSupplyPanelUnlock(state);
   energyPanelAdded = state.isPostGpuTransition &&
     (state.completedResearch.includes('orbitalLogistics') || state.datacenters.some(c => c > 0n));
 }
@@ -104,7 +111,7 @@ setInterval(() => {
   }
 
   // Check for mid-game supply chain unlock
-  if (!supplyPanelAdded && s.completedResearch.includes('materialProcessing')) {
+  if (!supplyPanelAdded && hasSupplyPanelUnlock(s)) {
     panelManager.register('supply', new SupplyPanel(s));
     supplyPanelAdded = true;
   }

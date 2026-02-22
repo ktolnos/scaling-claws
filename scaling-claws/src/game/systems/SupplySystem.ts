@@ -54,7 +54,7 @@ export function isFacilityUnlocked(state: GameState, location: LocationId, facil
   if (location === 'earth') {
     if (facility === 'materialMine') return true;
     if (facility === 'solarFactory') return state.completedResearch.includes('solarTechnology');
-    if (facility === 'robotFactory') return state.completedResearch.includes('robotics1');
+    if (facility === 'robotFactory') return state.completedResearch.includes('robotFactoryEngineering1');
     if (facility === 'gpuFactory') return state.completedResearch.includes('chipManufacturing');
     if (facility === 'rocketFactory') return state.completedResearch.includes('rocketry');
     if (facility === 'gpuSatelliteFactory') return state.completedResearch.includes('orbitalLogistics');
@@ -69,11 +69,12 @@ export function isFacilityUnlocked(state: GameState, location: LocationId, facil
     if (facility === 'gpuSatelliteFactory') return state.completedResearch.includes('moonSatelliteManufacturing');
     if (facility === 'rocketFactory') return state.completedResearch.includes('moonRocketry');
     if (facility === 'massDriver') return state.completedResearch.includes('moonMassDrivers');
-    if (facility === 'robotFactory') return state.completedResearch.includes('robotics1');
+    if (facility === 'robotFactory') return state.completedResearch.includes('robotFactoryEngineering2');
     return false;
   }
 
   if (!state.completedResearch.includes('payloadToMercury')) return false;
+  if (facility === 'robotFactory') return state.completedResearch.includes('robotFactoryEngineering2');
   return true;
 }
 

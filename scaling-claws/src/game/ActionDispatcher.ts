@@ -1,5 +1,5 @@
 import type { GameState, FacilityId, LocationId, TransportPayloadId, TransportRouteId } from './GameState.ts';
-import { BALANCE } from './BalanceConfig.ts';
+import { BALANCE, getHumanWorkforceRemaining } from './BalanceConfig.ts';
 import type { JobType, ResearchId, SubscriptionTier } from './BalanceConfig.ts';
 import {
   hireAgent,
@@ -39,7 +39,7 @@ import {
   launchVonNeumannProbe,
 } from './systems/SpaceSystem.ts';
 import { canBuildFacility, buildFacility } from './systems/SupplySystem.ts';
-import { toBigInt, mulB } from './utils.ts';
+import { toBigInt, mulB, divB } from './utils.ts';
 
 export interface ActionDispatchResult {
   ok: boolean;
@@ -128,7 +128,10 @@ function dispatchGameActionCore(state: GameState, action: GameAction): ActionDis
       const tier = BALANCE.tiers[state.subscriptionTier];
       const nextAgent = state.totalAgents + toBigInt(1);
       const blockedByCpu = !state.isPostGpuTransition && mulB(nextAgent, toBigInt(tier.coresPerAgent)) > state.cpuCoresTotal;
-      const blockedByGpuSlots = state.isPostGpuTransition && state.totalAgents >= state.installedGpuCount;
+      const maxAgentsByPflops = state.isPostGpuTransition
+        ? divB(state.totalPflops, toBigInt(BALANCE.pflopsPerGpu))
+        : 0n;
+      const blockedByGpuSlots = state.isPostGpuTransition && state.totalAgents >= maxAgentsByPflops;
       const blockedByFunds = state.funds < tier.cost;
       return result(performed > 0, {
         performed,
@@ -227,11 +230,13 @@ function dispatchGameActionCore(state: GameState, action: GameAction): ActionDis
       const amount = getRequestedAmount(action.amount ?? 1);
       if (amount <= 0) return result(false, { performed: 0, requested: 0, reason: 'invalid_amount', try_later: false });
       const ok = improveApi(state, amount);
+      const purchased = state.apiImprovementLevel + 1;
+      const atLimit = purchased >= BALANCE.apiImprovePurchaseLimit;
       return result(ok, {
         performed: ok ? amount : 0,
         requested: amount,
         reason: ok ? undefined : 'failed',
-        try_later: state.code < toBigInt(amount) * BALANCE.apiImproveCodeCost,
+        try_later: atLimit ? false : state.code < toBigInt(amount) * BALANCE.apiImproveCodeCost,
       });
     }
     case 'unlockApi': {
@@ -251,13 +256,12 @@ function dispatchGameActionCore(state: GameState, action: GameAction): ActionDis
       if (requested <= 0) return result(false, { performed: 0, requested: 0, reason: 'invalid_amount', try_later: false });
       const performed = assignAgentsToJob(state, action.jobType, requested);
       const hasUnassigned = state.agentPools.unassigned.totalCount > 0n;
-      const hasFreeSlots = state.activeAgentCount > (state.totalAgents - state.agentPools.unassigned.totalCount);
       return result(performed > 0, {
         performed,
         requested,
         partial: performed < requested,
         reason: performed > 0 ? undefined : 'failed',
-        try_later: hasUnassigned && hasFreeSlots,
+        try_later: hasUnassigned,
       });
     }
     case 'removeAgentsFromJob': {
@@ -278,12 +282,19 @@ function dispatchGameActionCore(state: GameState, action: GameAction): ActionDis
       const performed = hireHumanWorkers(state, action.jobType, requested);
       const jobConfig = BALANCE.jobs[action.jobType];
       const cost = jobConfig.hireCost ?? 0n;
+      const totalPaidHumans = (Object.keys(state.humanPools) as JobType[])
+        .reduce((sum, jt) => {
+          const cfg = BALANCE.jobs[jt];
+          if (cfg.workerType !== 'human' || !cfg.salaryPerMin) return sum;
+          return sum + state.humanPools[jt].totalCount;
+        }, 0n);
+      const remainingWorkforce = getHumanWorkforceRemaining(totalPaidHumans);
       return result(performed > 0, {
         performed,
         requested,
         partial: performed < requested,
         reason: performed > 0 ? undefined : 'failed',
-        try_later: state.intelligence >= jobConfig.unlockAtIntel && state.funds >= cost,
+        try_later: state.intelligence >= jobConfig.unlockAtIntel && state.funds >= cost && remainingWorkforce > 0n,
       });
     }
     case 'fireHumanWorkers': {

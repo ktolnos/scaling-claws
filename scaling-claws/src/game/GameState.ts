@@ -128,7 +128,7 @@ export interface GameState {
   // GPU & Compute
   gpuMarketPrice: bigint;      // current Earth GPU market price per unit
   installedGpuCount: bigint;   // computed: min(earth GPUs, gpuCapacity)
-  totalPflops: bigint;         // Earth compute used for gameplay allocation
+  totalPflops: bigint;         // Compute used for gameplay allocation (Earth + orbital)
   earthPflops: bigint;         // computed
   moonPflops: bigint;          // computed
   mercuryPflops: bigint;       // computed
@@ -207,8 +207,8 @@ export interface GameState {
   apiIncomePerMin: bigint;
   apiInferenceAllocationPct: number;
   apiUserSynthRate: bigint;
-  apiImprovementLevel: number;
-  apiQuality: number;
+  apiImprovementLevel: number; // optimization upgrade count
+  apiQuality: number; // inference efficiency multiplier (higher => fewer PFLOPS/user)
 
   // Space - Orbit
   satellites: bigint;

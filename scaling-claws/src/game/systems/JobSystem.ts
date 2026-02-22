@@ -1,7 +1,12 @@
 import type { GameState } from '../GameState.ts';
-import { getTotalAssignedAgents } from '../GameState.ts';
-import { BALANCE, JOB_ORDER, getStuckRate } from '../BalanceConfig.ts';
-import type { JobType } from '../BalanceConfig.ts';
+import {
+  BALANCE,
+  JOB_ORDER,
+  getStuckRate,
+  getHumanWorkforceRemaining,
+  getHumanSalaryPerMin,
+} from '../BalanceConfig.ts';
+import type { HumanJobType, JobType } from '../BalanceConfig.ts';
 import { toBigInt, fromBigInt, mulB, divB, scaleB, scaleBigInt } from '../utils.ts';
 import { getJobOutputAmount } from './JobRules.ts';
 import { nextGameRandom } from '../Random.ts';
@@ -20,6 +25,17 @@ function floorWholeAgents(value: bigint): bigint {
   const oneAgent = scaleBigInt(1n);
   if (value <= 0n) return 0n;
   return (value / oneAgent) * oneAgent;
+}
+
+function getTotalPaidHumans(state: GameState): bigint {
+  let total = 0n;
+  for (const jobType of JOB_ORDER) {
+    const config = BALANCE.jobs[jobType];
+    if (config.workerType !== 'human' || !config.salaryPerMin) continue;
+    const pool = state.humanPools[jobType];
+    if (pool?.totalCount > 0n) total += pool.totalCount;
+  }
+  return total;
 }
 
 /** Unstick stuck agents in bulk. */
@@ -119,9 +135,6 @@ export function tickJobs(state: GameState, dtMs: number): void {
     }
 
     let visible = intel >= jobConfig.unlockAtIntel;
-    if (jobType === 'robotWorker') {
-      visible = visible && state.completedResearch.includes('robotics1');
-    }
     if (visible && jobConfig.agentResearchReq && jobConfig.agentResearchReq.length > 0) {
       visible = jobConfig.agentResearchReq.every((id) => state.completedResearch.includes(id));
     }
@@ -148,6 +161,7 @@ export function tickJobs(state: GameState, dtMs: number): void {
 
   // --- Unified Worker Processing ---
   let humanSalaryPerMin = 0n;
+  const totalPaidHumans = getTotalPaidHumans(state);
 
   for (const jobType of JOB_ORDER) {
     const jobConfig = BALANCE.jobs[jobType];
@@ -299,7 +313,9 @@ export function tickJobs(state: GameState, dtMs: number): void {
       }
 
       // Salary
-      if (jobConfig.salaryPerMin) humanSalaryPerMin += mulB(jobConfig.salaryPerMin, humanPool.totalCount);
+      if (jobConfig.salaryPerMin) {
+        humanSalaryPerMin += getHumanSalaryPerMin(jobType as HumanJobType, humanPool.totalCount, totalPaidHumans);
+      }
 
       // Rates for UI
       let effectiveRate = divB(mulB(outputAmount, scaleBigInt(60000n)), toBigInt(jobConfig.timeMs));
@@ -368,6 +384,7 @@ export function tickJobs(state: GameState, dtMs: number): void {
   if (netDeficit > 0n && state.funds < netDeficit) {
     let salaryToCut = netDeficit;
     let anyFired = false;
+    let remainingPaidHumans = totalPaidHumans;
 
     // Fire in reverse order of seniority (last jobs first)
     for (let i = JOB_ORDER.length - 1; i >= 0; i--) {
@@ -377,14 +394,25 @@ export function tickJobs(state: GameState, dtMs: number): void {
 
       const pool = state.humanPools[jobType];
       if (pool.totalCount <= 0n) continue;
+      const currentPoolSalary = getHumanSalaryPerMin(jobType as HumanJobType, pool.totalCount, remainingPaidHumans);
+      if (currentPoolSalary <= 0n) continue;
 
-      // Ceiling division to get whole workers needed to cover salaryToCut
-      const workersNeededCeil = scaleBigInt((salaryToCut + config.salaryPerMin - 1n) / config.salaryPerMin);
+      const avgSalary = divB(currentPoolSalary, pool.totalCount);
+      if (avgSalary <= 0n) continue;
+      // Ceiling division to estimate how many workers to fire for the requested cut.
+      const workersNeededCeil = scaleBigInt((salaryToCut + avgSalary - 1n) / avgSalary);
       const workersToFire = pool.totalCount < workersNeededCeil ? pool.totalCount : workersNeededCeil;
       
       if (workersToFire > 0n) {
-        pool.totalCount -= workersToFire;
-        salaryToCut -= mulB(workersToFire, config.salaryPerMin);
+        const nextPoolCount = pool.totalCount - workersToFire;
+        const nextTotalPaidHumans = remainingPaidHumans - workersToFire;
+        const nextPoolSalary = getHumanSalaryPerMin(jobType as HumanJobType, nextPoolCount, nextTotalPaidHumans);
+        let salaryReduction = currentPoolSalary - nextPoolSalary;
+        if (salaryReduction <= 0n) salaryReduction = mulB(workersToFire, config.salaryPerMin);
+
+        pool.totalCount = nextPoolCount;
+        remainingPaidHumans = nextTotalPaidHumans;
+        salaryToCut -= salaryReduction;
         anyFired = true;
 
         // Visual feedback
@@ -395,11 +423,14 @@ export function tickJobs(state: GameState, dtMs: number): void {
 
     if (anyFired) {
       // Refresh humanSalaryPerMin and expensePerMin for accurate UI
+      const refreshedTotalPaidHumans = getTotalPaidHumans(state);
       let newHumanSalary = 0n;
       for (const jt of JOB_ORDER) {
         const pool = state.humanPools[jt];
         const jobConfig = BALANCE.jobs[jt];
-        if (jobConfig.salaryPerMin) newHumanSalary += mulB(jobConfig.salaryPerMin, pool?.totalCount || 0n);
+        if (jobConfig.salaryPerMin && (pool?.totalCount || 0n) > 0n) {
+          newHumanSalary += getHumanSalaryPerMin(jt as HumanJobType, pool.totalCount, refreshedTotalPaidHumans);
+        }
       }
 
       state.humanSalaryPerMin = newHumanSalary;
@@ -491,14 +522,11 @@ export function assignAgentsToJob(state: GameState, targetJob: JobType, count: n
   if (!canAssignAiAgent(state, targetJob)) return 0;
 
   const countB = toBigInt(count);
-  const assignedCount = getTotalAssignedAgents(state);
-  const availableSlots = state.activeAgentCount - assignedCount;
 
   const unassignedPool = state.agentPools['unassigned'];
   const targetPool = state.agentPools[targetJob];
 
-  let toAssign = countB < availableSlots ? countB : availableSlots;
-  toAssign = toAssign < unassignedPool.totalCount ? toAssign : unassignedPool.totalCount;
+  const toAssign = countB < unassignedPool.totalCount ? countB : unassignedPool.totalCount;
   
   if (toAssign <= 0n) return 0;
 
@@ -550,16 +578,19 @@ export function hireHumanWorkers(state: GameState, jobType: JobType, count: numb
 
   const countB = BigInt(count);
   const hireCost = jobConfig.hireCost ?? 0n;
+  const totalPaidHumans = getTotalPaidHumans(state);
+  const remainingWorkforce = getHumanWorkforceRemaining(totalPaidHumans) / scaleBigInt(1n);
+  const pool = state.humanPools[jobType];
   
   // Calculate how many we can afford
   const affordable = hireCost > 0n ? state.funds / hireCost : countB;
-  const toHire = countB < affordable ? countB : affordable;
+  const toHireByFunds = countB < affordable ? countB : affordable;
+  const toHire = toHireByFunds < remainingWorkforce ? toHireByFunds : remainingWorkforce;
 
   if (toHire <= 0n) return 0;
 
   state.funds -= toHire * hireCost;
   
-  const pool = state.humanPools[jobType];
   const oldCount = pool.totalCount;
   pool.totalCount += toHire * scaleBigInt(1n);
 

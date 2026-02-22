@@ -1,5 +1,5 @@
 import type { GameState } from '../GameState.ts';
-import { BALANCE } from '../BalanceConfig.ts';
+import { BALANCE, getSolarPowerGenerationMultiplier } from '../BalanceConfig.ts';
 import { toBigInt, mulB, fromBigInt } from '../utils.ts';
 
 function getEarthLaborPool(state: GameState): bigint {
@@ -12,6 +12,7 @@ function spendEarthLabor(state: GameState, amount: bigint): void {
 
 export function tickEnergy(state: GameState): void {
   if (!state.isPostGpuTransition) return;
+  const solarPowerMultiplier = toBigInt(getSolarPowerGenerationMultiplier(state.completedResearch));
 
   // Earth demand from installed GPUs
   state.powerDemandMW = mulB(state.installedGpuCount, toBigInt(BALANCE.gpuPowerMW));
@@ -23,7 +24,7 @@ export function tickEnergy(state: GameState): void {
   supply += mulB(state.nuclearPlants, BALANCE.powerPlants.nuclear.outputMW);
 
   const earthInstalledSolar = state.locationResources?.earth?.installedSolarPanels ?? 0n;
-  supply += mulB(earthInstalledSolar, toBigInt(BALANCE.solarPanelMW));
+  supply += mulB(mulB(earthInstalledSolar, toBigInt(BALANCE.solarPanelMW)), solarPowerMultiplier);
   state.powerSupplyMW = supply;
 
   if (state.powerDemandMW > 0n && state.powerSupplyMW < state.powerDemandMW) {
@@ -37,7 +38,7 @@ export function tickEnergy(state: GameState): void {
   const moonInstalledSolar = state.locationResources.moon.installedSolarPanels;
 
   state.lunarPowerDemandMW = mulB(moonInstalledGpus, toBigInt(BALANCE.gpuPowerMW));
-  state.lunarPowerSupplyMW = mulB(moonInstalledSolar, toBigInt(BALANCE.solarPanelMW));
+  state.lunarPowerSupplyMW = mulB(mulB(moonInstalledSolar, toBigInt(BALANCE.solarPanelMW)), solarPowerMultiplier);
 
   if (state.lunarPowerDemandMW > 0n && state.lunarPowerSupplyMW < state.lunarPowerDemandMW) {
     state.lunarPowerThrottle = Number(state.lunarPowerSupplyMW) / Number(state.lunarPowerDemandMW);
@@ -49,7 +50,7 @@ export function tickEnergy(state: GameState): void {
   const mercuryInstalledSolar = state.locationResources?.mercury?.installedSolarPanels ?? 0n;
 
   state.mercuryPowerDemandMW = mulB(mercuryInstalledGpus, toBigInt(BALANCE.gpuPowerMW));
-  state.mercuryPowerSupplyMW = mulB(mercuryInstalledSolar, toBigInt(BALANCE.solarPanelMW));
+  state.mercuryPowerSupplyMW = mulB(mulB(mercuryInstalledSolar, toBigInt(BALANCE.solarPanelMW)), solarPowerMultiplier);
   if (state.mercuryPowerDemandMW > 0n && state.mercuryPowerSupplyMW < state.mercuryPowerDemandMW) {
     state.mercuryPowerThrottle = Number(state.mercuryPowerSupplyMW) / Number(state.mercuryPowerDemandMW);
   } else {

@@ -64,7 +64,7 @@ const FACILITY_HINT_ID: Record<FacilityId, string> = {
   materialMine: 'resource.material',
   solarFactory: 'resource.solarPanels',
   robotFactory: 'resource.robots',
-  gpuFactory: 'resource.gpus',
+  gpuFactory: 'infra.gpuFactory',
   rocketFactory: 'resource.rockets',
   gpuSatelliteFactory: 'resource.gpuSatellites',
   massDriver: 'mechanic.spaceLogistics',
@@ -163,6 +163,32 @@ export class SupplyPanel implements Panel {
       return { cap: BALANCE.mercuryMaterialStockpileCap, label: BALANCE.mercuryMaterialStockpileCapLabel };
     }
     return null;
+  }
+
+  private hasResourceProductionSetup(state: GameState, location: LocationId, resource: SupplyResourceId): boolean {
+    const facilities = state.locationFacilities[location];
+    if (resource === 'material') {
+      return facilities.materialMine > 0n || facilities.solarFactory > 0n || facilities.robotFactory > 0n || facilities.gpuFactory > 0n || facilities.rocketFactory > 0n;
+    }
+    if (resource === 'labor') {
+      return facilities.materialMine > 0n || facilities.solarFactory > 0n || facilities.robotFactory > 0n || facilities.gpuFactory > 0n || facilities.rocketFactory > 0n;
+    }
+    if (resource === 'solarPanels') {
+      return facilities.solarFactory > 0n || facilities.gpuSatelliteFactory > 0n;
+    }
+    if (resource === 'robots') {
+      return facilities.robotFactory > 0n;
+    }
+    if (resource === 'gpus') {
+      return facilities.gpuFactory > 0n || facilities.gpuSatelliteFactory > 0n;
+    }
+    if (resource === 'rockets') {
+      return facilities.rocketFactory > 0n || facilities.massDriver > 0n;
+    }
+    if (resource === 'gpuSatellites') {
+      return facilities.gpuSatelliteFactory > 0n;
+    }
+    return false;
   }
 
   private isFacilityPaused(facility: FacilityId): boolean {
@@ -535,7 +561,6 @@ export class SupplyPanel implements Panel {
     this.state = state;
 
     const visible = state.isPostGpuTransition && (
-      state.completedResearch.includes('materialProcessing') ||
       state.completedResearch.includes('solarTechnology') ||
       state.completedResearch.includes('chipManufacturing') ||
       state.completedResearch.includes('robotics1') ||
@@ -565,6 +590,7 @@ export class SupplyPanel implements Panel {
         const income = state.locationProductionPerMin[location][resource.id];
         const expense = state.locationConsumptionPerMin[location][resource.id];
         const net = income - expense;
+        const showZeroRate = income === 0n && expense === 0n && this.hasResourceProductionSetup(state, location, resource.id);
 
         refs.value.textContent = formatNumber(stock);
         const capInfo = this.getResourceStockpileCap(location, resource.id);
@@ -577,15 +603,15 @@ export class SupplyPanel implements Panel {
           refs.value.style.color = '';
         }
         if (this.visibleLocations.length === 1) {
-          if (income !== 0n || expense !== 0n) {
+          if (income !== 0n || expense !== 0n || showZeroRate) {
             refs.rate.textContent = `+${formatNumber(income)} / -${formatNumber(expense)} /m`;
           } else {
             refs.rate.textContent = '';
           }
           refs.rate.style.color = net < 0n ? 'var(--accent-red)' : 'var(--text-muted)';
         } else {
-          refs.rate.textContent = net !== 0n
-            ? `${net > 0n ? '+' : ''}${formatNumber(net)}/m`
+          refs.rate.textContent = (net !== 0n || showZeroRate)
+            ? `${net >= 0n ? '+' : ''}${formatNumber(net)}/m`
             : '';
           refs.rate.style.color = net < 0n ? 'var(--accent-red)' : 'var(--text-muted)';
         }

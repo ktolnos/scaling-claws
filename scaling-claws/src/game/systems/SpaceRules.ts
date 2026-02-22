@@ -36,7 +36,7 @@ export function getTransportRouteCapacityKg(state: GameState, route: TransportRo
   }
 
   const massDrivers = paused ? 0 : fromBigInt(state.locationFacilities.moon.massDriver);
-  return BALANCE.rocketCapacityMercury * (1 + (massDrivers * BALANCE.massDriverCapacityMultiplier));
+  return BALANCE.rocketCapacityMoonMercury * (1 + (massDrivers * BALANCE.massDriverCapacityMultiplier));
 }
 
 export function estimateTransportRockets(

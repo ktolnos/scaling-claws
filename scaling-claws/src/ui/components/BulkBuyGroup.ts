@@ -8,6 +8,7 @@ const HOLD_REPEAT_ACCEL_MS_PER_SEC = 120;
 export class BulkBuyGroup {
   readonly el: HTMLDivElement;
   private buttons: HTMLButtonElement[] = [];
+  private displayTiers: number[] = [];
   private onAction: (amount: number) => void;
   private lastTiers: string = '';
   private prefix: string;
@@ -45,10 +46,12 @@ export class BulkBuyGroup {
   update(owned: number, canAct: (amount: number) => boolean, maxQuantity?: number | null): void {
     this.canAct = canAct;
     const tiers = this.getVisibleTiers(owned, maxQuantity);
+    const displayTiers = this.replaceLowerTierWithAffordableAmount(tiers, canAct);
+    this.displayTiers = displayTiers;
     const isMaxed = !!maxQuantity && owned >= maxQuantity;
-    const tiersKey = `${tiers.join(',')}|${isMaxed ? 'maxed' : 'active'}`;
+    const tiersKey = `${displayTiers.length}|${isMaxed ? 'maxed' : 'active'}`;
 
-    // Rebuild buttons if tiers changed
+    // Rebuild only when count/maxed mode changes, keep button elements stable otherwise.
     if (tiersKey !== this.lastTiers) {
       this.lastTiers = tiersKey;
       this.el.innerHTML = '';
@@ -57,11 +60,10 @@ export class BulkBuyGroup {
       if (isMaxed) {
         this.el.appendChild(this.maxedLabel);
       } else {
-        for (const amount of tiers) {
+        for (let i = 0; i < displayTiers.length; i++) {
           const btn = document.createElement('button');
-          btn.textContent = this.prefix + formatNumber(amount);
-          btn.addEventListener('click', (ev) => this.handleButtonClick(ev, amount));
-          btn.addEventListener('pointerdown', (ev) => this.handleButtonPointerDown(ev, amount));
+          btn.addEventListener('click', (ev) => this.handleButtonClick(ev, i));
+          btn.addEventListener('pointerdown', (ev) => this.handleButtonPointerDown(ev, i));
           this.el.appendChild(btn);
           this.buttons.push(btn);
         }
@@ -70,13 +72,16 @@ export class BulkBuyGroup {
 
     if (isMaxed) return;
 
-    // Update enabled state
-    for (let i = 0; i < tiers.length; i++) {
-      this.buttons[i].disabled = !canAct(tiers[i]);
+    // Update labels and enabled state without rebuilding.
+    for (let i = 0; i < displayTiers.length; i++) {
+      this.buttons[i].textContent = this.prefix + formatNumber(displayTiers[i]);
+      this.buttons[i].disabled = !canAct(displayTiers[i]);
     }
   }
 
-  private handleButtonClick(ev: MouseEvent, amount: number): void {
+  private handleButtonClick(ev: MouseEvent, index: number): void {
+    const amount = this.displayTiers[index];
+    if (!amount) return;
     if (performance.now() <= this.suppressClickUntilMs) {
       this.suppressClickUntilMs = 0;
       ev.preventDefault();
@@ -85,7 +90,9 @@ export class BulkBuyGroup {
     this.onAction(amount);
   }
 
-  private handleButtonPointerDown(ev: PointerEvent, amount: number): void {
+  private handleButtonPointerDown(ev: PointerEvent, index: number): void {
+    const amount = this.displayTiers[index];
+    if (!amount) return;
     const target = ev.currentTarget as HTMLButtonElement | null;
     if (ev.button !== 0 || !target || target.disabled) return;
 
@@ -157,19 +164,35 @@ export class BulkBuyGroup {
   }
 
   private getVisibleTiers(owned: number, maxQuantity?: number | null): number[] {
-    const baseTiers = getBuyTiers(owned);
-    if (maxQuantity === null || maxQuantity === undefined || maxQuantity <= 0) return baseTiers;
+    return getVisibleBuyTiers(owned, maxQuantity);
+  }
 
-    const remaining = Math.max(0, Math.floor(maxQuantity - owned));
-    if (remaining <= 0) return [];
+  private replaceLowerTierWithAffordableAmount(
+    tiers: number[],
+    canAct: (amount: number) => boolean,
+  ): number[] {
+    if (tiers.length < 2) return tiers;
 
-    const clamped = baseTiers.filter((amount) => amount <= remaining);
-    // Add an exact remainder tier only when limit actually clips normal tiers.
-    if (clamped.length < baseTiers.length && !clamped.includes(remaining)) {
-      clamped.push(remaining);
+    const low = tiers[0];
+    const high = tiers[1];
+    if (high <= low || low <= 1) return tiers;
+    if (canAct(low)) return tiers;
+
+    let left = 1;
+    let right = low - 1;
+    let best = 0;
+    while (left <= right) {
+      const mid = Math.floor((left + right) / 2);
+      if (canAct(mid)) {
+        best = mid;
+        left = mid + 1;
+      } else {
+        right = mid - 1;
+      }
     }
-    clamped.sort((a, b) => a - b);
-    return clamped;
+
+    if (best <= 0) return tiers;
+    return [best, high];
   }
 }
 
@@ -183,4 +206,20 @@ export function getBuyTiers(owned: number): number[] {
   const low = 10 ** (mag - 1);
   if (low <= 10) return [10, high];
   return [low, high];
+}
+
+export function getVisibleBuyTiers(owned: number, maxQuantity?: number | null): number[] {
+  const baseTiers = getBuyTiers(owned);
+  if (maxQuantity === null || maxQuantity === undefined || maxQuantity <= 0) return baseTiers;
+
+  const remaining = Math.max(0, Math.floor(maxQuantity - owned));
+  if (remaining <= 0) return [];
+
+  const clamped = baseTiers.filter((amount) => amount <= remaining);
+  // Add an exact remainder tier only when limit actually clips normal tiers.
+  if (clamped.length < baseTiers.length && !clamped.includes(remaining)) {
+    clamped.push(remaining);
+  }
+  clamped.sort((a, b) => a - b);
+  return clamped;
 }

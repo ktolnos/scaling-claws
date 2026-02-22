@@ -7,14 +7,15 @@ import {
   getTrainingDataRemainingPurchaseCapGB,
 } from '../../game/BalanceConfig.ts';
 import type { ResearchId } from '../../game/BalanceConfig.ts';
-import { formatNumber } from '../../game/utils.ts';
+import { formatMoney, formatNumber } from '../../game/utils.ts';
 import { dispatchGameAction } from '../../game/ActionDispatcher.ts';
 import {
   getAvailableResearch, canPurchaseResearch,
 } from '../../game/systems/ResearchSystem.ts';
-import { BulkBuyGroup } from '../components/BulkBuyGroup.ts';
+import { CountBulkBuyControls } from '../components/CountBulkBuyControls.ts';
 import { createPanelDivider, createPanelScaffold } from '../components/PanelScaffold.ts';
-import { emojiHtml, moneyWithEmojiHtml, resourceLabelHtml } from '../emoji.ts';
+import { emojiHtml, resourceLabelHtml } from '../emoji.ts';
+import { setHintTarget } from '../hints/HintUtils.ts';
 
 // --- Pre-built sub-section refs ---
 
@@ -40,7 +41,7 @@ interface AllocationRefs {
 
 interface DataRefs {
   info: HTMLSpanElement;
-  bulkBuy: BulkBuyGroup;
+  controls: CountBulkBuyControls;
 }
 
 export class TrainingPanel implements Panel {
@@ -64,7 +65,6 @@ export class TrainingPanel implements Panel {
   // Research
   private researchSection!: HTMLDivElement;
   private researchListEl!: HTMLDivElement;
-  private researchDoneEl!: HTMLDivElement;
   private researchRows: Map<ResearchId, { row: HTMLDivElement; btn: HTMLButtonElement }> = new Map();
 
   constructor(state: GameState) {
@@ -188,14 +188,14 @@ export class TrainingPanel implements Panel {
     info.className = 'label';
     row.appendChild(info);
 
-    const bulkBuy = new BulkBuyGroup((amount) => {
+    const controls = new CountBulkBuyControls((amount) => {
       dispatchGameAction(this.state, { type: 'buyTrainingData', amountGB: amount });
-    });
-    row.appendChild(bulkBuy.el);
+    }, { countPrefix: '' });
+    row.appendChild(controls.el);
 
     section.appendChild(row);
     parent.appendChild(section);
-    return { info, bulkBuy };
+    return { info, controls };
   }
 
   private buildAllocationSection(parent: HTMLElement): AllocationRefs {
@@ -260,13 +260,6 @@ export class TrainingPanel implements Panel {
     // Research list container
     this.researchListEl = document.createElement('div');
     container.appendChild(this.researchListEl);
-
-    // Completed research
-    this.researchDoneEl = document.createElement('div');
-    this.researchDoneEl.style.fontSize = '0.72rem';
-    this.researchDoneEl.style.color = 'var(--text-muted)';
-    this.researchDoneEl.style.padding = '4px 0';
-    container.appendChild(this.researchDoneEl);
   }
 
   // --- Update ---
@@ -385,16 +378,15 @@ export class TrainingPanel implements Panel {
     const purchasedGB = Math.max(0, Math.floor(state.trainingDataPurchases));
     const remainingCapGB = getTrainingDataRemainingPurchaseCapGB(purchasedGB);
 
-    let dataText = `${resourceLabelHtml('data')}: ${formatNumber(state.trainingData)} GB`;
+    let dataText = `${resourceLabelHtml('data', 'Data')} (GB)`;
     if (state.synthDataRate > 0) {
-      dataText += ` (+${formatNumber(state.synthDataRate)}/m)`;
+      dataText += ` [+${formatNumber(state.synthDataRate)} GB/m]`;
     }
-    dataText += ` | Purchased ${formatNumber(purchasedGB)}/${formatNumber(BALANCE.dataPurchaseLimitGB)} GB`;
-    dataText += ` (Cost: ${moneyWithEmojiHtml(pricePerGB, 'funds')}/GB)`;
-    if (remainingCapGB <= 0) dataText += ' [Market cap reached]';
+    dataText += ` <span style="color:var(--text-muted)">Cost: ${formatMoney(pricePerGB)}/GB</span>`;
     this.dataRefs.info.innerHTML = dataText;
+    this.dataRefs.controls.setCount(state.trainingData);
 
-    this.dataRefs.bulkBuy.update(
+    this.dataRefs.controls.bulk.update(
       purchasedGB,
       (amount) => amount <= remainingCapGB && state.funds >= getTrainingDataPurchaseCost(amount),
       BALANCE.dataPurchaseLimitGB,
@@ -424,8 +416,14 @@ export class TrainingPanel implements Panel {
 
 
 
-    // Available research — reconcile existing rows
-    const available = getAvailableResearch(state);
+    // Available research sorted by science requirement (cost), then name.
+    const available = getAvailableResearch(state)
+      .sort((a, b) => {
+        if (a.cost < b.cost) return -1;
+        if (a.cost > b.cost) return 1;
+        return a.name.localeCompare(b.name);
+      })
+      .slice(0, 6);
     const availableIds = new Set(available.map(r => r.id));
 
     // Remove rows for research no longer available
@@ -444,14 +442,27 @@ export class TrainingPanel implements Panel {
         row.className = 'panel-row';
         row.style.fontSize = '0.82rem';
         row.style.padding = '3px 0';
+        row.style.alignItems = 'flex-start';
 
-        const info = document.createElement('span');
+        const info = document.createElement('div');
         info.className = 'label';
+        info.style.display = 'flex';
+        info.style.flexDirection = 'column';
+        info.style.gap = '1px';
+        info.style.flex = '1';
+        info.style.minWidth = '0';
+        if (r.id.startsWith('algoEfficiency')) {
+          setHintTarget(info, 'research.algoEfficiency');
+        }
+
         const nameEl = document.createElement('strong');
-        nameEl.textContent = r.name + ' ';
-        const descEl = document.createElement('span');
+        nameEl.textContent = r.name;
+        nameEl.style.lineHeight = '1.2';
+
+        const descEl = document.createElement('div');
         descEl.style.fontSize = '0.72rem';
         descEl.style.color = 'var(--text-secondary)';
+        descEl.style.lineHeight = '1.25';
         descEl.textContent = r.description;
         info.appendChild(nameEl);
         info.appendChild(descEl);
@@ -460,6 +471,10 @@ export class TrainingPanel implements Panel {
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.style.fontSize = '0.72rem';
+        btn.style.width = '132px';
+        btn.style.flex = '0 0 132px';
+        btn.style.textAlign = 'center';
+        btn.style.whiteSpace = 'nowrap';
         row.appendChild(btn);
 
         this.researchListEl.appendChild(row);
@@ -481,18 +496,6 @@ export class TrainingPanel implements Panel {
         this.updateResearch(this.state);
       };
       refs.btn.disabled = !canPurchaseResearch(state, r.id);
-    }
-
-    // Completed research
-    if (state.completedResearch.length > 0) {
-      const names = state.completedResearch.map(id => {
-        const cfg = BALANCE.research.find(r => r.id === id);
-        return cfg ? cfg.name : id;
-      });
-      this.researchDoneEl.textContent = 'Done: ' + names.join(' · ');
-      this.researchDoneEl.style.display = '';
-    } else {
-      this.researchDoneEl.style.display = 'none';
     }
   }
 

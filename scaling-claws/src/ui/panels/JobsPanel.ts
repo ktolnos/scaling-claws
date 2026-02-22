@@ -1,8 +1,11 @@
 import type { GameState } from '../../game/GameState.ts';
-import { getTotalAssignedAgents } from '../../game/GameState.ts';
 import type { Panel } from '../PanelManager.ts';
-import { BALANCE } from '../../game/BalanceConfig.ts';
-import type { JobType } from '../../game/BalanceConfig.ts';
+import {
+  BALANCE,
+  getHumanWorkforceRemaining,
+  getHumanSalaryPerMin,
+} from '../../game/BalanceConfig.ts';
+import type { HumanJobType, JobType } from '../../game/BalanceConfig.ts';
 import { formatNumber, fromBigInt, scaleBigInt, mulB, divB, scaleB, toBigInt } from '../../game/utils.ts';
 import { ProgressBar } from '../components/ProgressBar.ts';
 import { BulkBuyGroup } from '../components/BulkBuyGroup.ts';
@@ -37,7 +40,7 @@ interface JobRowRefs {
   progressBars: ProgressBar[];
   overflowEl: HTMLSpanElement;
   addGroup: BulkBuyGroup;
-  removeGroup: BulkBuyGroup;
+  removeGroup?: BulkBuyGroup;
 }
 
 export class JobsPanel implements Panel {
@@ -185,21 +188,21 @@ export class JobsPanel implements Panel {
     controlsBlock.style.alignItems = 'center';
     controlsBlock.style.gap = '4px';
 
-    // Remove group
-    const removeGroup = new BulkBuyGroup(
-      (amount) => {
-        if (isRobotWorker) {
-          dispatchGameAction(this.state, { type: 'fireRobotWorkers', amount });
-        } else if (isHuman) {
-          dispatchGameAction(this.state, { type: 'fireHumanWorkers', jobType, amount });
-        } else {
-          dispatchGameAction(this.state, { type: 'removeAgentsFromJob', jobType, amount });
-        }
-      },
-      '-',
-      'vertical'
-    );
-    controlsBlock.appendChild(removeGroup.el);
+    let removeGroup: BulkBuyGroup | undefined;
+    if (!isRobotWorker) {
+      removeGroup = new BulkBuyGroup(
+        (amount) => {
+          if (isHuman) {
+            dispatchGameAction(this.state, { type: 'fireHumanWorkers', jobType, amount });
+          } else {
+            dispatchGameAction(this.state, { type: 'removeAgentsFromJob', jobType, amount });
+          }
+        },
+        '-',
+        'vertical'
+      );
+      controlsBlock.appendChild(removeGroup.el);
+    }
 
     // Count
     const countEl = document.createElement('span');
@@ -211,6 +214,7 @@ export class JobsPanel implements Panel {
     controlsBlock.appendChild(countEl);
 
     // Add group
+    const addMaxedLabel = isHuman && !isRobotWorker ? 'MAX HUMANS' : 'MAXED';
     const addGroup = new BulkBuyGroup(
       (amount) => {
         if (isRobotWorker) {
@@ -226,7 +230,8 @@ export class JobsPanel implements Panel {
         }
       },
       '+',
-      'vertical'
+      'vertical',
+      addMaxedLabel,
     );
     controlsBlock.appendChild(addGroup.el);
 
@@ -267,6 +272,16 @@ export class JobsPanel implements Panel {
     return effectivePerAgent;
   }
 
+  private getTotalPaidHumanWorkers(state: GameState): bigint {
+    let total = 0n;
+    for (const jt of Object.keys(BALANCE.jobs) as JobType[]) {
+      const config = BALANCE.jobs[jt];
+      if (config.workerType !== 'human' || !config.salaryPerMin) continue;
+      total += state.humanPools[jt].totalCount;
+    }
+    return total;
+  }
+
   private formatProductionTotal(resource: string, amountPerMin: bigint): string {
     if (resource === 'funds') {
       return `+${moneyWithEmojiHtml(amountPerMin, 'funds')}/m`;
@@ -279,6 +294,8 @@ export class JobsPanel implements Panel {
 
   update(state: GameState): void {
     this.state = state;
+    const totalPaidHumanWorkers = this.getTotalPaidHumanWorkers(state);
+    const remainingWorkforce = getHumanWorkforceRemaining(totalPaidHumanWorkers);
 
     // AI agents and human workers are already grouped in pools (no grouping needed!)
 
@@ -347,16 +364,23 @@ export class JobsPanel implements Panel {
 
       // Salary and total production lines
       const totalProductionPerMin = this.getJobProductionPerMin(state, jobType);
-      const productionTotalLine = `<span class="job-reward-total-prod">${this.formatProductionTotal(resource, totalProductionPerMin)}</span>`;
+      const productionTotalClass = totalProductionPerMin === 0n
+        ? 'job-reward-total-prod job-reward-total-prod-zero'
+        : 'job-reward-total-prod';
+      const productionTotalLine = `<span class="${productionTotalClass}">${this.formatProductionTotal(resource, totalProductionPerMin)}</span>`;
 
       let salaryLine = '';
       let totalsLine = productionTotalLine;
       if (isRobotWorker) {
         salaryLine = `<span class="job-reward-salary">Price: ${moneyWithEmojiHtml(BALANCE.robotImportCost, 'funds')} per robot</span>`;
       } else if (isHuman && config.salaryPerMin) {
-        salaryLine = `<span class="job-reward-salary">Salary: ${moneyWithEmojiHtml(config.salaryPerMin, 'funds')} / m per person</span>`;
-        const totalSalary = mulB(config.salaryPerMin, workerCount);
-        totalsLine += ` <span class="job-reward-total-sep">|</span> <span class="job-reward-total-salary">-${moneyWithEmojiHtml(totalSalary, 'funds')}/m</span>`;
+        const totalSalary = getHumanSalaryPerMin(jobType as HumanJobType, workerCount, totalPaidHumanWorkers);
+        const perPersonSalary = workerCount > 0n ? divB(totalSalary, workerCount) : config.salaryPerMin;
+        salaryLine = `<span class="job-reward-salary">Salary: ${moneyWithEmojiHtml(perPersonSalary, 'funds')} / m per person</span>`;
+        const salaryTotalClass = totalSalary === 0n
+          ? 'job-reward-total-salary job-reward-total-salary-zero'
+          : 'job-reward-total-salary';
+        totalsLine += ` <span class="job-reward-total-sep">|</span> <span class="${salaryTotalClass}">-${moneyWithEmojiHtml(totalSalary, 'funds')}/m</span>`;
       }
 
       if (baseLine) {
@@ -370,6 +394,14 @@ export class JobsPanel implements Panel {
 
         if (!agentEligible) {
           refs.reqEl.innerHTML = `(req ${resourceLabelHtml('intel')} ${config.agentIntelReq})`;
+          refs.reqEl.style.display = 'block';
+        } else {
+          refs.reqEl.textContent = '';
+          refs.reqEl.style.display = 'none';
+        }
+      } else if (isHuman && !isRobotWorker) {
+        if (remainingWorkforce <= 0n) {
+          refs.reqEl.innerHTML = '(global workforce exhausted)';
           refs.reqEl.style.display = 'block';
         } else {
           refs.reqEl.textContent = '';
@@ -395,7 +427,7 @@ export class JobsPanel implements Panel {
           const totalCost = mulB(toBigInt(amount), BALANCE.robotImportCost);
           return state.completedResearch.includes('robotics1') && state.funds >= totalCost;
         }, BALANCE.robotWorkerBuyLimit);
-        refs.removeGroup.update(countNum, (amount) => countNum >= amount);
+        refs.removeGroup?.update(countNum, (amount) => countNum >= amount);
       } else if (isHuman) {
         const pool = state.humanPools[jobType];
         const count = workerCount;
@@ -423,11 +455,13 @@ export class JobsPanel implements Panel {
 
         // BulkBuy groups
         const countNum = Math.floor(fromBigInt(count));
+        const maxForThisRow = count + remainingWorkforce;
+        const maxForThisRowNum = Math.floor(fromBigInt(maxForThisRow));
         refs.addGroup.update(countNum, (_amount) => {
           const hireCost = config.hireCost ?? 0n;
-          return state.funds >= hireCost && state.intelligence >= config.unlockAtIntel;
-        });
-        refs.removeGroup.update(countNum, (amount) => countNum >= amount);
+          return state.funds >= hireCost && state.intelligence >= config.unlockAtIntel && remainingWorkforce > 0n;
+        }, Math.max(countNum, maxForThisRowNum));
+        refs.removeGroup?.update(countNum, (amount) => countNum >= amount);
       } else {
         // AI job - use agentPools directly
         const pool = state.agentPools[jobType];
@@ -473,11 +507,9 @@ export class JobsPanel implements Panel {
           (!config.agentResearchReq || config.agentResearchReq.every(r => state.completedResearch.includes(r)));
 
         const unassignedHired = state.agentPools['unassigned'].totalCount;
-        const assignedCount = getTotalAssignedAgents(state);
-        const availableSlots = state.activeAgentCount - assignedCount;
 
-        refs.addGroup.update(countNum, (_amount) => agentEligible && unassignedHired > 0n && availableSlots > 0n);
-        refs.removeGroup.update(countNum, (amount) => countNum >= amount);
+        refs.addGroup.update(countNum, (_amount) => agentEligible && unassignedHired > 0n);
+        refs.removeGroup?.update(countNum, (amount) => countNum >= amount);
       }
     }
 

@@ -7,12 +7,12 @@ export function tickResearch(state: GameState, _dtMs: number): void {
 }
 
 function computeResearchBonuses(state: GameState): void {
-  // Algo Efficiency: each tier is 25% faster
+  // Algo Efficiency: each tier is 3x faster
   let algoBonus = 1.0;
-  if (state.completedResearch.includes('algoEfficiency1')) algoBonus *= 1.25;
-  if (state.completedResearch.includes('algoEfficiency2')) algoBonus *= 1.25;
-  if (state.completedResearch.includes('algoEfficiency3')) algoBonus *= 1.25;
-  if (state.completedResearch.includes('algoEfficiency4')) algoBonus *= 1.25;
+  if (state.completedResearch.includes('algoEfficiency1')) algoBonus *= 3;
+  if (state.completedResearch.includes('algoEfficiency2')) algoBonus *= 3;
+  if (state.completedResearch.includes('algoEfficiency3')) algoBonus *= 3;
+  if (state.completedResearch.includes('algoEfficiency4')) algoBonus *= 3;
   state.algoEfficiencyBonus = algoBonus;
 
   // GPU FLOPS
@@ -74,7 +74,11 @@ export function purchaseResearch(state: GameState, id: ResearchId): boolean {
 
   // Flavor text highlights
   if (id === 'robotics1') {
-    state.pendingFlavorTexts.push('"Robots now generate labor wherever they are deployed."');
+    state.pendingFlavorTexts.push('"Robot workers unlocked. Automated labor now scales with robotics tech."');
+  } else if (id === 'robotFactoryEngineering1') {
+    state.pendingFlavorTexts.push('"Earth robot factories unlocked."');
+  } else if (id === 'robotFactoryEngineering2') {
+    state.pendingFlavorTexts.push('"Off-world robot factories unlocked for Moon and Mercury."');
   } else if (id === 'syntheticData1') {
     state.pendingFlavorTexts.push('"AI Data Synthesizer unlocked. Agents can now generate training data directly."');
   } else if (id === 'payloadToMoon') {

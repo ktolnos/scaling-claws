@@ -1,9 +1,9 @@
 import type { GameState } from '../../game/GameState.ts';
 import type { Panel } from '../PanelManager.ts';
-import { BALANCE } from '../../game/BalanceConfig.ts';
+import { BALANCE, getSolarPowerGenerationMultiplier } from '../../game/BalanceConfig.ts';
 import { formatMW, formatNumber, toBigInt, mulB, fromBigInt, scaleBigInt } from '../../game/utils.ts';
 import { dispatchGameAction } from '../../game/ActionDispatcher.ts';
-import { BulkBuyGroup } from '../components/BulkBuyGroup.ts';
+import { BulkBuyGroup, getVisibleBuyTiers } from '../components/BulkBuyGroup.ts';
 import { CountBulkBuyControls } from '../components/CountBulkBuyControls.ts';
 import { createPanelDivider, createPanelScaffold } from '../components/PanelScaffold.ts';
 import { emojiHtml, moneyWithEmojiHtml, resourceLabelHtml } from '../emoji.ts';
@@ -11,6 +11,7 @@ import { setHintTarget } from '../hints/HintUtils.ts';
 
 interface PlantRowRefs {
   count: HTMLSpanElement;
+  production: HTMLSpanElement;
   buyGroup: BulkBuyGroup;
   buildLabel: HTMLSpanElement;
 }
@@ -111,7 +112,7 @@ export class SpaceEnergyPanel implements Panel {
     powerRow.className = 'panel-row';
     const powerLabel = document.createElement('span');
     powerLabel.className = 'label';
-    powerLabel.innerHTML = resourceLabelHtml('energy', 'Power');
+    powerLabel.innerHTML = emojiHtml('energy');
     setHintTarget(powerLabel, 'resource.energy');
     powerRow.appendChild(powerLabel);
 
@@ -188,23 +189,21 @@ export class SpaceEnergyPanel implements Panel {
 
     const lbl = document.createElement('span');
     lbl.className = 'label';
-    lbl.textContent = 'Install Solar Panels';
+    lbl.textContent = 'Solar Panels';
     setHintTarget(lbl, 'infra.solarInstall');
     top.appendChild(lbl);
 
-    this.earthSolarStatusEl = document.createElement('span');
-    this.earthSolarStatusEl.style.fontSize = '0.64rem';
-    this.earthSolarStatusEl.style.color = 'var(--text-muted)';
-    top.appendChild(this.earthSolarStatusEl);
+    this.earthSolarCostEl = document.createElement('span');
 
     left.appendChild(top);
 
     const sub = document.createElement('span');
     sub.style.fontSize = '0.64rem';
     sub.style.color = 'var(--text-muted)';
-    this.earthSolarCostEl = document.createElement('span');
-    sub.insertAdjacentHTML('beforeend', 'Cost: ');
-    sub.appendChild(this.earthSolarCostEl);
+    this.earthSolarStatusEl = document.createElement('span');
+    this.earthSolarStatusEl.style.fontSize = '0.64rem';
+    this.earthSolarStatusEl.style.color = 'var(--text-muted)';
+    sub.appendChild(this.earthSolarStatusEl);
     left.appendChild(sub);
 
     this.earthSolarRow.appendChild(left);
@@ -212,7 +211,21 @@ export class SpaceEnergyPanel implements Panel {
     this.earthSolarBulk = new BulkBuyGroup((amt) => {
       dispatchGameAction(this.state, { type: 'installSolarPanels', location: 'earth', amount: amt });
     }, '+');
-    this.earthSolarRow.appendChild(this.earthSolarBulk.el);
+    const earthSolarControls = document.createElement('div');
+    earthSolarControls.style.display = 'flex';
+    earthSolarControls.style.flexDirection = 'column';
+    earthSolarControls.style.alignItems = 'flex-end';
+    earthSolarControls.style.gap = '1px';
+    earthSolarControls.appendChild(this.earthSolarBulk.el);
+
+    const earthSolarActionLabel = document.createElement('span');
+    earthSolarActionLabel.insertAdjacentHTML('beforeend', 'Install: ');
+    earthSolarActionLabel.appendChild(this.earthSolarCostEl);
+    earthSolarActionLabel.style.fontSize = '0.62rem';
+    earthSolarActionLabel.style.color = 'var(--text-muted)';
+    earthSolarControls.appendChild(earthSolarActionLabel);
+
+    this.earthSolarRow.appendChild(earthSolarControls);
 
     parent.appendChild(this.earthSolarRow);
   }
@@ -226,12 +239,29 @@ export class SpaceEnergyPanel implements Panel {
   ): PlantRowRefs {
     const row = document.createElement('div');
     row.className = 'panel-row';
+    row.style.alignItems = 'center';
+
+    const left = document.createElement('div');
+    left.style.display = 'flex';
+    left.style.alignItems = 'baseline';
+    left.style.gap = '6px';
+    left.style.flex = '1';
+    left.style.minWidth = '0';
 
     const name = document.createElement('span');
     name.className = 'label';
     name.textContent = `${label} (${formatMW(outputMW).replace(' ', '')})`;
     setHintTarget(name, hintId);
-    row.appendChild(name);
+    left.appendChild(name);
+
+    const production = document.createElement('span');
+    production.className = 'value';
+    production.style.fontSize = '0.72rem';
+    production.style.color = 'var(--text-secondary)';
+    production.style.whiteSpace = 'nowrap';
+    left.appendChild(production);
+
+    row.appendChild(left);
 
     const right = document.createElement('div');
     right.style.display = 'flex';
@@ -249,7 +279,7 @@ export class SpaceEnergyPanel implements Panel {
     row.appendChild(right);
     parent.appendChild(row);
 
-    return { count: controls.countEl, buyGroup: controls.bulk, buildLabel };
+    return { count: controls.countEl, production, buyGroup: controls.bulk, buildLabel };
   }
 
   private buildLogistics(parent: HTMLElement): void {
@@ -544,7 +574,7 @@ export class SpaceEnergyPanel implements Panel {
 
     const powerLabel = document.createElement('span');
     powerLabel.className = 'label';
-    powerLabel.innerHTML = resourceLabelHtml('energy', 'Power');
+    powerLabel.innerHTML = emojiHtml('energy');
     setHintTarget(powerLabel, 'resource.energy');
     powerRow.appendChild(powerLabel);
 
@@ -580,12 +610,14 @@ export class SpaceEnergyPanel implements Panel {
     solarLbl.style.whiteSpace = 'nowrap';
     solarTop.appendChild(solarLbl);
 
-    this.moonSolarStatusEl = document.createElement('span');
-    this.moonSolarStatusEl.style.fontSize = '0.68rem';
-    this.moonSolarStatusEl.style.color = 'var(--text-secondary)';
-    this.moonSolarStatusEl.style.whiteSpace = 'nowrap';
-    this.moonSolarStatusEl.style.marginLeft = 'auto';
-    solarTop.appendChild(this.moonSolarStatusEl);
+    const solarTopCost = document.createElement('span');
+    solarTopCost.style.fontSize = '0.66rem';
+    solarTopCost.style.color = 'var(--text-secondary)';
+    solarTopCost.style.marginLeft = 'auto';
+    this.moonSolarCostEl = document.createElement('span');
+    solarTopCost.insertAdjacentHTML('beforeend', 'Cost: ');
+    solarTopCost.appendChild(this.moonSolarCostEl);
+    solarTop.appendChild(solarTopCost);
 
     const solarBottom = document.createElement('div');
     solarBottom.className = 'panel-row';
@@ -593,11 +625,13 @@ export class SpaceEnergyPanel implements Panel {
     solarBottom.style.gap = '6px';
 
     const solarMeta = document.createElement('span');
-    solarMeta.style.fontSize = '0.66rem';
+    solarMeta.style.fontSize = '0.68rem';
     solarMeta.style.color = 'var(--text-secondary)';
-    this.moonSolarCostEl = document.createElement('span');
-    solarMeta.insertAdjacentHTML('beforeend', 'Cost: ');
-    solarMeta.appendChild(this.moonSolarCostEl);
+    this.moonSolarStatusEl = document.createElement('span');
+    this.moonSolarStatusEl.style.fontSize = '0.68rem';
+    this.moonSolarStatusEl.style.color = 'var(--text-secondary)';
+    this.moonSolarStatusEl.style.whiteSpace = 'nowrap';
+    solarMeta.appendChild(this.moonSolarStatusEl);
     solarBottom.appendChild(solarMeta);
 
     this.moonSolarBulk = new BulkBuyGroup((amt) => {
@@ -633,12 +667,14 @@ export class SpaceEnergyPanel implements Panel {
     gpuTitle.appendChild(gpuLbl);
     gpuTop.appendChild(gpuTitle);
 
-    this.moonGpuStatusEl = document.createElement('span');
-    this.moonGpuStatusEl.style.fontSize = '0.68rem';
-    this.moonGpuStatusEl.style.color = 'var(--text-secondary)';
-    this.moonGpuStatusEl.style.whiteSpace = 'nowrap';
-    this.moonGpuStatusEl.style.marginLeft = 'auto';
-    gpuTop.appendChild(this.moonGpuStatusEl);
+    const gpuTopCost = document.createElement('span');
+    gpuTopCost.style.fontSize = '0.66rem';
+    gpuTopCost.style.color = 'var(--text-secondary)';
+    gpuTopCost.style.marginLeft = 'auto';
+    this.moonGpuCostEl = document.createElement('span');
+    gpuTopCost.insertAdjacentHTML('beforeend', 'Cost: ');
+    gpuTopCost.appendChild(this.moonGpuCostEl);
+    gpuTop.appendChild(gpuTopCost);
 
     const gpuBottom = document.createElement('div');
     gpuBottom.className = 'panel-row';
@@ -646,11 +682,13 @@ export class SpaceEnergyPanel implements Panel {
     gpuBottom.style.gap = '6px';
 
     const gpuMeta = document.createElement('span');
-    gpuMeta.style.fontSize = '0.66rem';
+    gpuMeta.style.fontSize = '0.68rem';
     gpuMeta.style.color = 'var(--text-secondary)';
-    this.moonGpuCostEl = document.createElement('span');
-    gpuMeta.insertAdjacentHTML('beforeend', 'Cost: ');
-    gpuMeta.appendChild(this.moonGpuCostEl);
+    this.moonGpuStatusEl = document.createElement('span');
+    this.moonGpuStatusEl.style.fontSize = '0.68rem';
+    this.moonGpuStatusEl.style.color = 'var(--text-secondary)';
+    this.moonGpuStatusEl.style.whiteSpace = 'nowrap';
+    gpuMeta.appendChild(this.moonGpuStatusEl);
     gpuBottom.appendChild(gpuMeta);
 
     this.moonGpuBulk = new BulkBuyGroup((amt) => {
@@ -720,10 +758,33 @@ export class SpaceEnergyPanel implements Panel {
     parent.appendChild(this.mercurySection);
   }
 
-  private updatePlant(refs: PlantRowRefs, count: bigint, cost: bigint, labor: bigint, canBuy: (amt: number) => boolean, maxCount: number | null = null): void {
+  private updatePlant(
+    refs: PlantRowRefs,
+    count: bigint,
+    outputMW: bigint,
+    cost: bigint,
+    labor: bigint,
+    canBuy: (amt: number) => boolean,
+    maxCount: number | null = null,
+  ): void {
+    const owned = Math.floor(fromBigInt(count));
+    const visibleTiers = getVisibleBuyTiers(owned, maxCount);
+    const smallestTier = visibleTiers[0] ?? 0;
+    const tierScale = toBigInt(smallestTier);
+    const fundsNeeded = smallestTier > 0 ? mulB(tierScale, cost) : 0n;
+    const laborNeeded = smallestTier > 0 ? mulB(tierScale, labor) : 0n;
+    const fundsMet = this.state.funds >= fundsNeeded;
+    const laborMet = this.state.locationResources.earth.labor >= laborNeeded;
+    const moneyColor = fundsMet ? 'var(--text-muted)' : 'var(--accent-red)';
+    const laborColor = laborMet ? 'var(--text-muted)' : 'var(--accent-red)';
+
     refs.count.textContent = `x${formatNumber(count)}`;
-    refs.buildLabel.innerHTML = `${moneyWithEmojiHtml(cost, 'money')} + ${formatNumber(labor)} ${emojiHtml('labor')} labor`;
-    refs.buyGroup.update(Math.floor(fromBigInt(count)), canBuy, maxCount);
+    refs.production.textContent = formatMW(mulB(count, outputMW));
+    refs.buildLabel.innerHTML =
+      `<span style="color:${moneyColor}">${moneyWithEmojiHtml(cost, 'money')}</span>` +
+      ` + ` +
+      `<span style="color:${laborColor}">${formatNumber(labor)} ${emojiHtml('labor')} labor</span>`;
+    refs.buyGroup.update(owned, canBuy, maxCount);
   }
 
   update(state: GameState): void {
@@ -761,6 +822,7 @@ export class SpaceEnergyPanel implements Panel {
     this.updatePlant(
       this.gasRefs,
       state.gasPlants,
+      BALANCE.powerPlants.gas.outputMW,
       BALANCE.powerPlants.gas.cost,
       BALANCE.powerPlants.gas.laborCost,
       (amt) => {
@@ -772,6 +834,7 @@ export class SpaceEnergyPanel implements Panel {
     this.updatePlant(
       this.nuclearRefs,
       state.nuclearPlants,
+      BALANCE.powerPlants.nuclear.outputMW,
       BALANCE.powerPlants.nuclear.cost,
       BALANCE.powerPlants.nuclear.laborCost,
       (amt) => {
@@ -784,7 +847,10 @@ export class SpaceEnergyPanel implements Panel {
     const earthSolarUnlocked = state.completedResearch.includes('solarTechnology');
     this.earthSolarRow.style.display = earthSolarUnlocked ? '' : 'none';
     const earth = state.locationResources.earth;
-    this.earthSolarStatusEl.innerHTML = `Stock ${formatNumber(earth.solarPanels)} | Installed ${formatNumber(earth.installedSolarPanels)}`;
+    const solarPowerMultiplier = toBigInt(getSolarPowerGenerationMultiplier(state.completedResearch));
+    const earthSolarProduction = mulB(mulB(earth.installedSolarPanels, toBigInt(BALANCE.solarPanelMW)), solarPowerMultiplier);
+    this.earthSolarStatusEl.innerHTML =
+      `Stock ${formatNumber(earth.solarPanels)} | Installed ${formatNumber(earth.installedSolarPanels)} (${formatMW(earthSolarProduction)})`;
     const earthLaborOk = earth.labor >= BALANCE.earthSolarInstallLaborCost;
     const earthSolarOk = earth.solarPanels >= toBigInt(1);
     this.earthSolarCostEl.innerHTML =
@@ -871,7 +937,9 @@ export class SpaceEnergyPanel implements Panel {
       this.moonPowerSupplyEl.style.color = state.lunarPowerSupplyMW >= state.lunarPowerDemandMW ? 'var(--accent-green)' : 'var(--accent-red)';
       const moonEffPct = Math.round(state.lunarPowerThrottle * 100);
 
-      this.moonSolarStatusEl.innerHTML = `Stock ${formatNumber(moon.solarPanels)} | Installed ${formatNumber(moon.installedSolarPanels)}`;
+      const moonSolarProduction = mulB(mulB(moon.installedSolarPanels, toBigInt(BALANCE.solarPanelMW)), solarPowerMultiplier);
+      this.moonSolarStatusEl.innerHTML =
+        `Stock ${formatNumber(moon.solarPanels)} | Installed ${formatNumber(moon.installedSolarPanels)} | ${formatMW(moonSolarProduction)}`;
       const moonSolarLaborOk = moon.labor >= BALANCE.moonInstallLaborCost;
       const moonSolarUnitOk = moon.solarPanels >= toBigInt(1);
       this.moonSolarCostEl.innerHTML =

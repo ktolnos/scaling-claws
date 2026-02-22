@@ -25,9 +25,17 @@ function bigIntReviver(_key: string, value: any): any {
   return value;
 }
 
+export function serializeGameState(state: GameState): string {
+  return JSON.stringify(state, bigIntReplacer);
+}
+
+export function deserializeGameState(json: string): GameState {
+  return JSON.parse(json, bigIntReviver) as GameState;
+}
+
 export function saveGame(state: GameState): void {
   try {
-    const json = JSON.stringify(state, bigIntReplacer);
+    const json = serializeGameState(state);
     localStorage.setItem(SAVE_KEY, json);
     console.log('[SaveManager] Game saved successfully');
   } catch (e) {
@@ -43,7 +51,7 @@ export function loadGame(): GameState | null {
       return null;
     }
 
-    const parsed = JSON.parse(json, bigIntReviver) as GameState;
+    const parsed = deserializeGameState(json);
 
     console.log('[SaveManager] Game loaded successfully');
     return parsed;
