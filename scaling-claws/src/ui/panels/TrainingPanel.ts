@@ -190,7 +190,7 @@ export class TrainingPanel implements Panel {
 
     const controls = new CountBulkBuyControls((amount) => {
       dispatchGameAction(this.state, { type: 'buyTrainingData', amountGB: amount });
-    }, { countPrefix: '' });
+    }, { countPrefix: '', maxedLabel: 'SOLD\nOUT' });
     row.appendChild(controls.el);
 
     section.appendChild(row);
@@ -380,9 +380,9 @@ export class TrainingPanel implements Panel {
 
     let dataText = `${resourceLabelHtml('data', 'Data')} (GB)`;
     if (state.synthDataRate > 0) {
-      dataText += ` [+${formatNumber(state.synthDataRate)} GB/m]`;
+      dataText += ` +${formatNumber(state.synthDataRate)} GB/m`;
     }
-    dataText += ` <span style="color:var(--text-muted)">Cost: ${formatMoney(pricePerGB)}/GB</span>`;
+    dataText += ` <span style="color:var(--text-muted)">${formatMoney(pricePerGB)}/GB</span>`;
     this.dataRefs.info.innerHTML = dataText;
     this.dataRefs.controls.setCount(state.trainingData);
 
@@ -423,7 +423,7 @@ export class TrainingPanel implements Panel {
         if (a.cost > b.cost) return 1;
         return a.name.localeCompare(b.name);
       })
-      .slice(0, 6);
+      .slice(0, 9);
     const availableIds = new Set(available.map(r => r.id));
 
     // Remove rows for research no longer available

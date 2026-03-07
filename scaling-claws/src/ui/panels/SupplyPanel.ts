@@ -209,11 +209,11 @@ export class SupplyPanel implements Panel {
   }
 
   private getBusyRocketsForLocation(state: GameState, location: LocationId): bigint {
-    const reserved = state.logisticsReservedRockets || { earthOrbit: 0n, earthMoon: 0n, moonMercury: 0n, mercuryOrbit: 0n };
+    const reserved = state.logisticsReservedRockets || { earthOrbit: 0n, earthMoon: 0n, moonMercury: 0n, mercurySun: 0n };
     let busy = 0n;
     if (location === 'earth') busy += (reserved.earthOrbit || 0n) + (reserved.earthMoon || 0n);
     if (location === 'moon') busy += (reserved.moonMercury || 0n);
-    if (location === 'mercury') busy += (reserved.mercuryOrbit || 0n);
+    if (location === 'mercury') busy += (reserved.mercurySun || 0n);
 
     const inFlight = state.transportBatches || [];
     for (const batch of inFlight) {
@@ -232,60 +232,68 @@ export class SupplyPanel implements Panel {
   private getFacilityInfo(facility: FacilityId): { price: string; output: string } {
     if (facility === 'materialMine') {
       return {
-        price: `Price: ${formatNumber(BALANCE.materialMineLaborCost)} ${emojiHtml('labor')} labor`,
+        price: `Price: ${formatNumber(BALANCE.materialMineBuildLaborCost)} ${emojiHtml('labor')} labor`,
         output: `${formatNumber(BALANCE.materialMineLaborReq)} ${emojiHtml('labor')} ➜ ${formatNumber(BALANCE.materialMineOutput)} ${emojiHtml('material')}`,
       };
     }
     if (facility === 'solarFactory') {
       return {
-        price: `Price: ${formatNumber(BALANCE.solarFactoryCost)} ${emojiHtml('material')} material`,
+        price: `Price: ${formatNumber(BALANCE.solarFactoryBuildMaterialCost)} ${emojiHtml('material')} material`,
         output: `${formatNumber(BALANCE.solarFactoryMaterialReq)} ${emojiHtml('material')} + ${formatNumber(BALANCE.solarFactoryLaborCost)} ${emojiHtml('labor')} ➜ ${formatNumber(BALANCE.solarFactoryOutput)} ${emojiHtml('solarPanels')}`,
       };
     }
     if (facility === 'robotFactory') {
       return {
-        price: `Price: ${formatNumber(BALANCE.robotFactoryCost)} ${emojiHtml('material')} material`,
+        price: `Price: ${formatNumber(BALANCE.robotFactoryBuildMaterialCost)} ${emojiHtml('material')} material`,
         output: `${formatNumber(BALANCE.robotFactoryMaterialReq)} ${emojiHtml('material')} + ${formatNumber(BALANCE.robotFactoryLaborCost)} ${emojiHtml('labor')} ➜ ${formatNumber(BALANCE.robotFactoryOutput)} ${emojiHtml('robots')}`,
       };
     }
     if (facility === 'gpuFactory') {
       return {
-        price: `Price: ${formatNumber(BALANCE.gpuFactoryCost)} ${emojiHtml('material')} material`,
+        price: `Price: ${formatNumber(BALANCE.gpuFactoryBuildMaterialCost)} ${emojiHtml('material')} material`,
         output: `${formatNumber(BALANCE.gpuFactoryMaterialReq)} ${emojiHtml('material')} + ${formatNumber(BALANCE.gpuFactoryLaborCost)} ${emojiHtml('labor')} ➜ ${formatNumber(BALANCE.gpuFactoryOutput)} ${emojiHtml('gpus')}`,
       };
     }
     if (facility === 'rocketFactory') {
       return {
-        price: `Price: ${formatNumber(BALANCE.rocketFactoryCost)} ${emojiHtml('material')} material`,
+        price: `Price: ${formatNumber(BALANCE.rocketFactoryBuildMaterialCost)} ${emojiHtml('material')} material`,
         output: `${formatNumber(BALANCE.rocketFactoryMaterialReq)} ${emojiHtml('material')} + ${formatNumber(BALANCE.rocketFactoryLaborCost)} ${emojiHtml('labor')} ➜ ${this.fmtAmount(BALANCE.rocketFactoryOutput)} ${emojiHtml('rockets')}`,
       };
     }
     if (facility === 'gpuSatelliteFactory') {
       return {
-        price: `Price: ${formatNumber(BALANCE.gpuSatelliteFactoryCost)} ${emojiHtml('material')} material`,
-        output: `${formatNumber(BALANCE.gpuSatelliteFactoryMaterialReq)} ${emojiHtml('solarPanels')} + ${formatNumber(BALANCE.gpuSatelliteFactoryGpuReq)} ${emojiHtml('gpus')} ➜ ${this.fmtAmount(BALANCE.gpuSatelliteFactoryOutput)} ${emojiHtml('gpuSatellites')}`,
+        price: `Price: ${formatNumber(BALANCE.gpuSatelliteFactoryBuildMaterialCost)} ${emojiHtml('material')} material`,
+        output: `${formatNumber(BALANCE.gpuSatelliteFactorySolarPanelReq)} ${emojiHtml('solarPanels')} + ${formatNumber(BALANCE.gpuSatelliteFactoryGpuReq)} ${emojiHtml('gpus')} ➜ ${this.fmtAmount(BALANCE.gpuSatelliteFactoryOutput)} ${emojiHtml('gpuSatellites')}`,
       };
     }
     return {
-      price: `Price: ${formatNumber(BALANCE.rocketFactoryCost)} ${emojiHtml('material')} material`,
+      price: `Price: ${formatNumber(BALANCE.rocketFactoryBuildMaterialCost)} ${emojiHtml('material')} material`,
       output: `${formatNumber(toBigInt(BALANCE.massDriverLaunchesPerMin))} ${emojiHtml('rockets')} ➜ x${BALANCE.massDriverCapacityMultiplier}`,
     };
   }
 
   private getFacilityLimit(location: LocationId, facility: FacilityId): number | null {
-    if (location === 'earth') {
-      if (facility === 'materialMine') return BALANCE.materialMineLimit;
-      if (facility === 'solarFactory') return BALANCE.solarFactoryLimit;
-      if (facility === 'robotFactory') return BALANCE.robotFactoryLimit;
-      if (facility === 'gpuFactory') return BALANCE.gpuFactoryLimit;
-      if (facility === 'rocketFactory') return BALANCE.rocketFactoryLimit;
-      if (facility === 'gpuSatelliteFactory') return BALANCE.gpuSatelliteFactoryLimit;
+    const getEarthLimit = (type: FacilityId): number => {
+      if (type === 'materialMine') return BALANCE.materialMineLimit;
+      if (type === 'solarFactory') return BALANCE.solarFactoryLimit;
+      if (type === 'robotFactory') return BALANCE.robotFactoryLimit;
+      if (type === 'gpuFactory') return BALANCE.gpuFactoryLimit;
+      if (type === 'rocketFactory') return BALANCE.rocketFactoryLimit;
+      if (type === 'gpuSatelliteFactory') return BALANCE.gpuSatelliteFactoryLimit;
       return 0;
+    };
+
+    if (location === 'earth') {
+      return getEarthLimit(facility);
     }
 
     if (location === 'moon') {
-      const limits = BALANCE.moonFacilityLimits as Record<string, number>;
-      return limits[facility] ?? 0;
+      if (facility === 'massDriver') return BALANCE.moonMassDriverLimit;
+      const earthLimit = getEarthLimit(facility);
+      if (earthLimit <= 0) return 0;
+      const multipliers = BALANCE.moonFacilityLimits as Record<string, number>;
+      const multiplier = multipliers[facility] ?? 0;
+      return Math.floor(earthLimit * multiplier);
     }
 
     if (facility === 'massDriver') {
@@ -294,9 +302,11 @@ export class SupplyPanel implements Panel {
       return Math.max(1, Math.ceil(rocketsCap / launchesPerMin));
     }
 
-    // Mercury is effectively unlimited in this design.
-    if (BALANCE.mercuryFacilityUnlimited) return null;
-    return 0;
+    const earthLimit = getEarthLimit(facility);
+    if (earthLimit <= 0) return 0;
+    const multipliers = BALANCE.mercuryFacilityLimits as Record<string, number>;
+    const multiplier = multipliers[facility] ?? 0;
+    return Math.floor(earthLimit * multiplier);
   }
 
   private rebuildLayout(state: GameState): void {
@@ -653,3 +663,4 @@ export class SupplyPanel implements Panel {
     }
   }
 }
+

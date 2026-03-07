@@ -1,7 +1,7 @@
 import type { GameState } from '../../game/GameState.ts';
 import { getTotalAssignedAgents } from '../../game/GameState.ts';
 import type { Panel } from '../PanelManager.ts';
-import { BALANCE, getApiPflopsPerUser } from '../../game/BalanceConfig.ts';
+import { BALANCE, getApiPflopsPerUser, getGpuSatellitePflopsPerUnit } from '../../game/BalanceConfig.ts';
 import { formatNumber, formatMoney, fromBigInt, toBigInt, divB, scaleB, mulB } from '../../game/utils.ts';
 import { dispatchGameAction } from '../../game/ActionDispatcher.ts';
 import { BulkBuyGroup, getVisibleBuyTiers } from '../components/BulkBuyGroup.ts';
@@ -224,7 +224,7 @@ export class ComputePanel implements Panel {
 
     this.buyGpuControls = new CountBulkBuyControls((amt) => {
       dispatchGameAction(this.state, { type: 'buyGpu', amount: amt });
-    }, { prefix: '+' });
+    }, { prefix: '+', maxedLabel: 'SOLD\nOUT' });
     this.buyGpuRow.appendChild(this.buyGpuControls.el);
     body.appendChild(this.buyGpuRow);
 
@@ -246,6 +246,15 @@ export class ComputePanel implements Panel {
     this.gpuStockBarFill.style.background = 'var(--accent-blue)';
     gpuStockBar.appendChild(this.gpuStockBarFill);
     body.appendChild(gpuStockBar);
+
+    // Datacenter warnings: keep directly under stock/capacity bar to reduce eye travel.
+    // Reserve vertical space even when no warning is active to avoid layout jumps.
+    this.datacenterHintEl = document.createElement('div');
+    this.datacenterHintEl.className = 'warning-text compute-datacenter-hint';
+    this.datacenterHintEl.style.color = 'var(--accent-blue)';
+    this.datacenterHintEl.style.visibility = 'hidden';
+    this.datacenterHintEl.textContent = '\u00a0';
+    body.appendChild(this.datacenterHintEl);
 
     // Model upgrade section
     this.upgradeSection = document.createElement('div');
@@ -277,12 +286,7 @@ export class ComputePanel implements Panel {
 
     body.appendChild(createPanelDivider());
 
-    // Datacenter hint / buy section
-    this.datacenterHintEl = document.createElement('div');
-    this.datacenterHintEl.style.fontSize = '0.82rem';
-    this.datacenterHintEl.style.color = 'var(--accent-blue)';
-    body.appendChild(this.datacenterHintEl);
-
+    // Datacenter buy section
     this.datacenterSection = document.createElement('div');
     this.datacenterSection.className = 'panel-section';
     body.appendChild(this.datacenterSection);
@@ -517,7 +521,7 @@ export class ComputePanel implements Panel {
     const computeAllocPct = pflopsNeeded > 0n
       ? Math.max(0, Math.min(100, Math.round(fromBigInt(divB(state.freeCompute, pflopsNeeded)) * 100)))
       : 100;
-    const powerPct = Math.max(0, Math.min(100, Math.round(state.powerThrottle * 100)));
+    const powerPct = this.getGlobalPowerEfficiencyPct(state);
     const efficiencyColor = efficiencyPct === 100 ? 'var(--text-primary)' : 'var(--accent-red)';
     const reasons: Array<{ label: string; pct: number }> = [];
     if (computeAllocPct < 100) reasons.push({ label: 'Compute Allocation', pct: computeAllocPct });
@@ -531,6 +535,30 @@ export class ComputePanel implements Panel {
     }
 
     this.agentEfficiencyEl.innerHTML = `Agents Efficiency: <span style="color:${efficiencyColor}">${efficiencyPct}%</span>${breakdown}`;
+  }
+
+  private getGlobalPowerEfficiencyPct(state: GameState): number {
+    if (!state.isPostGpuTransition) return 100;
+
+    let earthRawPflops = scaleB(state.installedGpuCount, BALANCE.pflopsPerGpu);
+    earthRawPflops = scaleB(earthRawPflops, state.gpuFlopsBonus);
+
+    let moonRawPflops = scaleB(state.locationResources.moon.installedGpus, BALANCE.pflopsPerGpu);
+    moonRawPflops = scaleB(moonRawPflops, state.gpuFlopsBonus);
+
+    const mercuryInstalled = state.locationResources?.mercury?.installedGpus ?? 0n;
+    let mercuryRawPflops = scaleB(mercuryInstalled, BALANCE.pflopsPerGpu);
+    mercuryRawPflops = scaleB(mercuryRawPflops, state.gpuFlopsBonus);
+
+    const orbitalSatellites = state.satellites + state.dysonSwarmSatellites;
+    let orbitalRawPflops = mulB(orbitalSatellites, getGpuSatellitePflopsPerUnit());
+    orbitalRawPflops = scaleB(orbitalRawPflops, state.gpuFlopsBonus);
+
+    const rawTotalPflops = earthRawPflops + moonRawPflops + mercuryRawPflops + orbitalRawPflops;
+    if (rawTotalPflops <= 0n) return 100;
+
+    const powerRatio = fromBigInt(divB(state.totalPflops, rawTotalPflops));
+    return Math.max(0, Math.min(100, Math.round(powerRatio * 100)));
   }
 
   private getLoadRatio(used: bigint, capacity: bigint): number {
@@ -750,18 +778,35 @@ export class ComputePanel implements Panel {
       this.upgradeSection.style.display = 'none';
     }
 
+    const allDatacentersMaxed = BALANCE.datacenters.length > 0 && BALANCE.datacenters.every((dc, i) => {
+      const limit = dc.limit ?? 0;
+      return limit > 0 && state.datacenters[i] >= toBigInt(limit);
+    });
+
     // Datacenter hint
-    if (earthGpuCount > state.gpuCapacity) {
+    if (allDatacentersMaxed) {
+      this.datacenterHintEl.style.display = 'none';
+      this.datacenterHintEl.style.visibility = 'hidden';
+      this.datacenterHintEl.textContent = '\u00a0';
+    } else if (earthGpuCount > state.gpuCapacity) {
+      this.datacenterHintEl.style.display = '';
+      this.datacenterHintEl.style.visibility = 'visible';
       this.datacenterHintEl.innerHTML = `Unutilized ${resourceLabelHtml('gpus')}! Buy datacenters to install them.`;
       this.datacenterHintEl.style.color = 'var(--accent-red)';
     } else if (earthGpuCount > scaleB(state.gpuCapacity, 0.8)) {
+      this.datacenterHintEl.style.display = '';
+      this.datacenterHintEl.style.visibility = 'visible';
       this.datacenterHintEl.innerHTML = `At ${formatNumber(state.gpuCapacity)} ${emojiHtml('gpus')} GPUs you'll need a datacenter.`;
       this.datacenterHintEl.style.color = 'var(--accent-blue)';
     } else if (state.gpuCapacity > earthGpuCount * 2n) {
+      this.datacenterHintEl.style.display = '';
+      this.datacenterHintEl.style.visibility = 'visible';
       this.datacenterHintEl.innerHTML = `Hint: ${resourceLabelHtml('gpus', 'GPUs')} must be bought separately from datacenters.`;
       this.datacenterHintEl.style.color = 'var(--accent-blue)';
     } else {
-      this.datacenterHintEl.textContent = '';
+      this.datacenterHintEl.style.display = '';
+      this.datacenterHintEl.style.visibility = 'hidden';
+      this.datacenterHintEl.textContent = '\u00a0';
     }
 
     // Datacenter purchase

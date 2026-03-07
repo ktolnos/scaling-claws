@@ -214,7 +214,9 @@ export class JobsPanel implements Panel {
     controlsBlock.appendChild(countEl);
 
     // Add group
-    const addMaxedLabel = isHuman && !isRobotWorker ? 'MAX HUMANS' : 'MAXED';
+    const addMaxedLabel = isHuman && !isRobotWorker
+      ? 'MAX HUMANS'
+      : (isRobotWorker ? 'SOLD\nOUT' : 'MAXED');
     const addGroup = new BulkBuyGroup(
       (amount) => {
         if (isRobotWorker) {
@@ -351,7 +353,7 @@ export class JobsPanel implements Panel {
       let baseLine = '';
       if (isRobotWorker) {
         const perRobotPerMin = getRobotLaborPerMin(state);
-        baseLine = `<span class="job-reward-main">${formatNumber(perRobotPerMin)} ${resourceLabelHtml('labor')} / m per robot</span>`;
+        baseLine = `<span class="job-reward-main">${formatNumber(perRobotPerMin)} ${resourceLabelHtml('labor')} / m</span>`;
       } else if (resource === 'funds' && amount > 0) {
         baseLine = `<span class="job-reward-main">${moneyWithEmojiHtml(outputAmount, 'funds')} / ${config.timeMs / 1000}s</span>`;
       } else if (resource !== 'nudge' && amount > 0) {
@@ -372,11 +374,11 @@ export class JobsPanel implements Panel {
       let salaryLine = '';
       let totalsLine = productionTotalLine;
       if (isRobotWorker) {
-        salaryLine = `<span class="job-reward-salary">Price: ${moneyWithEmojiHtml(BALANCE.robotImportCost, 'funds')} per robot</span>`;
+        salaryLine = `<span class="job-reward-salary">Price: ${moneyWithEmojiHtml(BALANCE.robotImportCost, 'funds')}</span>`;
       } else if (isHuman && config.salaryPerMin) {
         const totalSalary = getHumanSalaryPerMin(jobType as HumanJobType, workerCount, totalPaidHumanWorkers);
         const perPersonSalary = workerCount > 0n ? divB(totalSalary, workerCount) : config.salaryPerMin;
-        salaryLine = `<span class="job-reward-salary">Salary: ${moneyWithEmojiHtml(perPersonSalary, 'funds')} / m per person</span>`;
+        salaryLine = `<span class="job-reward-salary">Salary: ${moneyWithEmojiHtml(perPersonSalary, 'funds')} / m</span>`;
         const salaryTotalClass = totalSalary === 0n
           ? 'job-reward-total-salary job-reward-total-salary-zero'
           : 'job-reward-total-salary';
@@ -457,9 +459,17 @@ export class JobsPanel implements Panel {
         const countNum = Math.floor(fromBigInt(count));
         const maxForThisRow = count + remainingWorkforce;
         const maxForThisRowNum = Math.floor(fromBigInt(maxForThisRow));
-        refs.addGroup.update(countNum, (_amount) => {
+        refs.addGroup.update(countNum, (amount) => {
+          if (amount <= 0) return false;
+          if (state.intelligence < config.unlockAtIntel) return false;
+          if (remainingWorkforce <= 0n) return false;
+
+          const amountB = toBigInt(amount);
+          if (amountB > remainingWorkforce) return false;
+
           const hireCost = config.hireCost ?? 0n;
-          return state.funds >= hireCost && state.intelligence >= config.unlockAtIntel && remainingWorkforce > 0n;
+          const totalHireCost = mulB(amountB, hireCost);
+          return state.funds >= totalHireCost;
         }, Math.max(countNum, maxForThisRowNum));
         refs.removeGroup?.update(countNum, (amount) => countNum >= amount);
       } else {
@@ -508,7 +518,11 @@ export class JobsPanel implements Panel {
 
         const unassignedHired = state.agentPools['unassigned'].totalCount;
 
-        refs.addGroup.update(countNum, (_amount) => agentEligible && unassignedHired > 0n);
+        refs.addGroup.update(countNum, (amount) => {
+          if (amount <= 0) return false;
+          if (!agentEligible) return false;
+          return unassignedHired >= toBigInt(amount);
+        });
         refs.removeGroup?.update(countNum, (amount) => countNum >= amount);
       }
     }

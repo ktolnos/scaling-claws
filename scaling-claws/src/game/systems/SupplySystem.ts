@@ -69,12 +69,12 @@ export function isFacilityUnlocked(state: GameState, location: LocationId, facil
     if (facility === 'gpuSatelliteFactory') return state.completedResearch.includes('moonSatelliteManufacturing');
     if (facility === 'rocketFactory') return state.completedResearch.includes('moonRocketry');
     if (facility === 'massDriver') return state.completedResearch.includes('moonMassDrivers');
-    if (facility === 'robotFactory') return state.completedResearch.includes('robotFactoryEngineering2');
+    if (facility === 'robotFactory') return state.completedResearch.includes('moonRobotics');
     return false;
   }
 
   if (!state.completedResearch.includes('payloadToMercury')) return false;
-  if (facility === 'robotFactory') return state.completedResearch.includes('robotFactoryEngineering2');
+  if (facility === 'robotFactory') return state.completedResearch.includes('mercuryRobotics');
   return true;
 }
 
@@ -343,7 +343,7 @@ export function tickSupply(state: GameState, dtMs: number): void {
         facility: 'gpuSatelliteFactory',
         outputResource: 'gpuSatellites',
         outputPerFactoryPerMin: getFacilityOutputPerMin(state, 'gpuSatelliteFactory', BALANCE.gpuSatelliteFactoryOutput),
-        inputA: { resource: 'solarPanels', reqPerFactoryPerMin: BALANCE.gpuSatelliteFactoryMaterialReq },
+        inputA: { resource: 'solarPanels', reqPerFactoryPerMin: BALANCE.gpuSatelliteFactorySolarPanelReq },
         inputB: { resource: 'gpus', reqPerFactoryPerMin: BALANCE.gpuSatelliteFactoryGpuReq },
       });
     } else if (state.pausedFacilities.gpuSatelliteFactory) {
@@ -381,15 +381,37 @@ function getMercuryMassDriverLimit(): number {
   return Math.max(1, Math.ceil(rocketsCap / launchesPerMin));
 }
 
-function getFacilityBaseCost(type: FacilityId): { money: bigint; labor: bigint } {
-  if (type === 'materialMine') return { money: BALANCE.materialMineCost, labor: BALANCE.materialMineLaborCost };
-  if (type === 'solarFactory') return { money: BALANCE.solarFactoryCost, labor: 0n };
-  if (type === 'robotFactory') return { money: BALANCE.robotFactoryCost, labor: 0n };
-  if (type === 'gpuFactory') return { money: BALANCE.gpuFactoryCost, labor: 0n };
-  if (type === 'rocketFactory') return { money: BALANCE.rocketFactoryCost, labor: 0n };
-  if (type === 'gpuSatelliteFactory') return { money: BALANCE.gpuSatelliteFactoryCost, labor: 0n };
+function getMoonFacilityLimit(type: FacilityId): number {
+  if (type === 'massDriver') return BALANCE.moonMassDriverLimit;
+  const earthLimit = getEarthLimit(type);
+  if (earthLimit <= 0) return 0;
+  const multiplier = (BALANCE.moonFacilityLimits as Record<string, number>)[type] ?? 0;
+  return Math.floor(earthLimit * multiplier);
+}
+
+function getMercuryFacilityLimit(type: FacilityId): number | null {
+  if (type === 'massDriver') return getMercuryMassDriverLimit();
+  const earthLimit = getEarthLimit(type);
+  if (earthLimit <= 0) return 0;
+  const multiplier = (BALANCE.mercuryFacilityLimits as Record<string, number>)[type] ?? 0;
+  return Math.floor(earthLimit * multiplier);
+}
+
+function getFacilityLimitByLocation(location: LocationId, type: FacilityId): number | null {
+  if (location === 'earth') return getEarthLimit(type);
+  if (location === 'moon') return getMoonFacilityLimit(type);
+  return getMercuryFacilityLimit(type);
+}
+
+function getFacilityBaseCost(type: FacilityId): { material: bigint; labor: bigint } {
+  if (type === 'materialMine') return { material: BALANCE.materialMineBuildMaterialCost, labor: BALANCE.materialMineBuildLaborCost };
+  if (type === 'solarFactory') return { material: BALANCE.solarFactoryBuildMaterialCost, labor: 0n };
+  if (type === 'robotFactory') return { material: BALANCE.robotFactoryBuildMaterialCost, labor: 0n };
+  if (type === 'gpuFactory') return { material: BALANCE.gpuFactoryBuildMaterialCost, labor: 0n };
+  if (type === 'rocketFactory') return { material: BALANCE.rocketFactoryBuildMaterialCost, labor: 0n };
+  if (type === 'gpuSatelliteFactory') return { material: BALANCE.gpuSatelliteFactoryBuildMaterialCost, labor: 0n };
   // Mass driver uses rocket factory-scale economics
-  return { money: BALANCE.rocketFactoryCost, labor: 0n };
+  return { material: BALANCE.rocketFactoryBuildMaterialCost, labor: 0n };
 }
 
 export function canBuildFacility(state: GameState, location: LocationId, type: FacilityId, amount: number): boolean {
@@ -398,35 +420,27 @@ export function canBuildFacility(state: GameState, location: LocationId, type: F
 
   const amountB = toBigInt(amount);
   const current = state.locationFacilities[location][type];
-
-  if (location === 'earth') {
-    const limit = getEarthLimit(type);
-    if (limit > 0 && current + amountB > toBigInt(limit)) return false;
-  } else if (location === 'moon') {
-    const limit = (BALANCE.moonFacilityLimits as Record<string, number>)[type] ?? 0;
-    if (limit > 0 && current + amountB > toBigInt(limit)) return false;
-  } else if (location === 'mercury' && type === 'massDriver') {
-    const limit = getMercuryMassDriverLimit();
-    if (current + amountB > toBigInt(limit)) return false;
-  }
+  const limit = getFacilityLimitByLocation(location, type);
+  if (limit !== null && limit > 0 && current + amountB > toBigInt(limit)) return false;
 
   const base = getFacilityBaseCost(type);
-  let moneyEach = base.money;
+  let materialEach = base.material;
   let laborEach = base.labor;
 
   if (location === 'moon') {
-    moneyEach = mulB(base.money, toBigInt(BALANCE.moonFacilityCostMultiplier));
+    materialEach = mulB(base.material, toBigInt(BALANCE.moonFacilityCostMultiplier));
     laborEach = mulB(base.labor, toBigInt(BALANCE.moonFacilityLaborMultiplier));
   } else if (location === 'mercury') {
-    moneyEach = mulB(base.money, toBigInt(BALANCE.mercuryFacilityCostMultiplier));
+    materialEach = mulB(base.material, toBigInt(BALANCE.mercuryFacilityCostMultiplier));
     laborEach = mulB(base.labor, toBigInt(BALANCE.mercuryFacilityLaborMultiplier));
   }
 
-  const totalMoney = mulB(toBigInt(amount), moneyEach);
+  const totalMaterial = mulB(toBigInt(amount), materialEach);
   const totalLabor = mulB(toBigInt(amount), laborEach);
 
+  const materialPool = state.locationResources[location].material;
   const laborPool = state.locationResources[location].labor;
-  if (state.funds < totalMoney) return false;
+  if (materialPool < totalMaterial) return false;
   if (laborPool < totalLabor) return false;
 
   return true;
@@ -441,26 +455,24 @@ export function buildFacility(
   if (!canBuildFacility(state, location, type, amount)) return false;
 
   const base = getFacilityBaseCost(type);
-  let moneyEach = base.money;
+  let materialEach = base.material;
   let laborEach = base.labor;
 
   if (location === 'moon') {
-    moneyEach = mulB(base.money, toBigInt(BALANCE.moonFacilityCostMultiplier));
+    materialEach = mulB(base.material, toBigInt(BALANCE.moonFacilityCostMultiplier));
     laborEach = mulB(base.labor, toBigInt(BALANCE.moonFacilityLaborMultiplier));
   } else if (location === 'mercury') {
-    moneyEach = mulB(base.money, toBigInt(BALANCE.mercuryFacilityCostMultiplier));
+    materialEach = mulB(base.material, toBigInt(BALANCE.mercuryFacilityCostMultiplier));
     laborEach = mulB(base.labor, toBigInt(BALANCE.mercuryFacilityLaborMultiplier));
   }
 
-  const totalMoney = mulB(toBigInt(amount), moneyEach);
+  const totalMaterial = mulB(toBigInt(amount), materialEach);
   const totalLabor = mulB(toBigInt(amount), laborEach);
 
-  state.funds -= totalMoney;
+  state.locationResources[location].material -= totalMaterial;
   state.locationResources[location].labor -= totalLabor;
   state.locationFacilities[location][type] += toBigInt(amount);
 
   reconcileEarthGpuInstallation(state);
   return true;
 }
-
-

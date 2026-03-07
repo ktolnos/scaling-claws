@@ -102,7 +102,7 @@
 - Build first Moon `gpuSatelliteFactory`.
 - Buy research `moonMassDrivers` to convert logistics from attrition-limited to throughput-limited.
 - Build first Moon `massDriver`.
-- Buy research `robotFactoryEngineering2` to unlock Moon and Mercury robot factories.
+- Buy research `moonRobotics` to unlock Moon robot factories.
 - Buy research `lunarAutonomy1` (proposed) to reduce Moon install labor pressure as expansion accelerates.
 - Install another Moon GPU/solar batch and verify lower labor friction.
 - Buy research `synthData3`
@@ -112,6 +112,7 @@
 - Complete `Aries-1.5`.
 - Assign first AI agent to `AI Researcher` to start replacing expensive human science payroll.
 - Buy research `payloadToMercury` to open effectively unbounded industrial scale.
+- Buy research `mercuryRobotics` to unlock Mercury robot factories.
 - Schedule first Moon -> Mercury payload (`robots`).
 - Build first Mercury `materialMine`.
 - Buy research `facilityThroughput1` to increase output from every built site when expansion is map-wide.

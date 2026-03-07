@@ -18,7 +18,7 @@ export class BulkBuyGroup {
   private holdDelayTimer: number | null = null;
   private holdRafId: number | null = null;
   private holdPointerId: number | null = null;
-  private holdAmount: number = 0;
+  private holdButtonIndex: number = -1;
   private holdStartedAtMs: number = 0;
   private holdNextFireAtMs: number = 0;
   private holdActive = false;
@@ -98,16 +98,24 @@ export class BulkBuyGroup {
 
     this.stopHold();
     this.holdPointerId = ev.pointerId;
-    this.holdAmount = amount;
+    this.holdButtonIndex = index;
 
     window.addEventListener('pointerup', this.onWindowPointerEnd);
     window.addEventListener('pointercancel', this.onWindowPointerEnd);
     this.holdDelayTimer = window.setTimeout(() => this.startHoldRepeat(), HOLD_REPEAT_DELAY_MS);
   }
 
+  private getCurrentHoldAmount(): number | null {
+    if (this.holdButtonIndex < 0) return null;
+    const amount = this.displayTiers[this.holdButtonIndex];
+    return amount && amount > 0 ? amount : null;
+  }
+
   private startHoldRepeat(): void {
     if (this.holdPointerId === null) return;
-    if (this.canAct && !this.canAct(this.holdAmount)) return;
+    const firstAmount = this.getCurrentHoldAmount();
+    if (!firstAmount) return;
+    if (this.canAct && !this.canAct(firstAmount)) return;
 
     this.holdActive = true;
     this.suppressClickUntilMs = performance.now() + 600;
@@ -119,13 +127,19 @@ export class BulkBuyGroup {
     const tick = (ts: number): void => {
       if (!this.holdActive || this.holdPointerId === null) return;
 
-      if (this.canAct && !this.canAct(this.holdAmount)) {
+      const amount = this.getCurrentHoldAmount();
+      if (!amount) {
+        this.stopHold();
+        return;
+      }
+
+      if (this.canAct && !this.canAct(amount)) {
         this.stopHold();
         return;
       }
 
       if (ts >= this.holdNextFireAtMs) {
-        this.onAction(this.holdAmount);
+        this.onAction(amount);
         const heldMs = ts - this.holdStartedAtMs;
         const intervalMs = Math.max(
           HOLD_REPEAT_MIN_INTERVAL_MS,
@@ -161,6 +175,7 @@ export class BulkBuyGroup {
     window.removeEventListener('pointerup', this.onWindowPointerEnd);
     window.removeEventListener('pointercancel', this.onWindowPointerEnd);
     this.holdPointerId = null;
+    this.holdButtonIndex = -1;
   }
 
   private getVisibleTiers(owned: number, maxQuantity?: number | null): number[] {

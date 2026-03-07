@@ -37,7 +37,7 @@ export interface HumanPool {
 export type LocationId = 'earth' | 'moon' | 'mercury';
 export type SupplyResourceId = 'material' | 'solarPanels' | 'robots' | 'gpus' | 'rockets' | 'gpuSatellites' | 'labor';
 export type FacilityId = 'materialMine' | 'solarFactory' | 'robotFactory' | 'gpuFactory' | 'rocketFactory' | 'gpuSatelliteFactory' | 'massDriver';
-export type TransportRouteId = 'earthOrbit' | 'earthMoon' | 'moonMercury' | 'mercuryOrbit';
+export type TransportRouteId = 'earthOrbit' | 'earthMoon' | 'moonOrbit' | 'moonMercury' | 'mercurySun';
 export type TransportPayloadId = 'gpuSatellites' | 'gpus' | 'solarPanels' | 'robots';
 
 export interface LocationResourceState {
@@ -128,12 +128,11 @@ export interface GameState {
   // GPU & Compute
   gpuMarketPrice: bigint;      // current Earth GPU market price per unit
   installedGpuCount: bigint;   // computed: min(earth GPUs, gpuCapacity)
-  totalPflops: bigint;         // Compute used for gameplay allocation (Earth + orbital)
+  totalPflops: bigint;         // Compute used for gameplay allocation (Earth + Moon + Mercury + orbital)
   earthPflops: bigint;         // computed
   moonPflops: bigint;          // computed
   mercuryPflops: bigint;       // computed
   orbitalPflops: bigint;       // computed
-  totalPflopsDisplay: bigint;  // computed aggregate for UI
   currentModelIndex: number;   // index into BALANCE.models
   freeCompute: bigint;         // computed
   isPostGpuTransition: boolean;
@@ -314,8 +313,9 @@ function createInitialLogisticsMap(): Record<string, bigint> {
     'earthMoon:gpus': 0n,
     'earthMoon:solarPanels': 0n,
     'earthMoon:robots': 0n,
+    'moonOrbit:gpuSatellites': 0n,
     'moonMercury:robots': 0n,
-    'mercuryOrbit:gpuSatellites': 0n,
+    'mercurySun:gpuSatellites': 0n,
   };
 }
 
@@ -323,8 +323,9 @@ function createInitialReservedRocketMap(): Record<TransportRouteId, bigint> {
   return {
     earthOrbit: 0n,
     earthMoon: 0n,
+    moonOrbit: 0n,
     moonMercury: 0n,
-    mercuryOrbit: 0n,
+    mercurySun: 0n,
   };
 }
 
@@ -401,7 +402,6 @@ export function createInitialState(): GameState {
     moonPflops: 0n,
     mercuryPflops: 0n,
     orbitalPflops: 0n,
-    totalPflopsDisplay: 0n,
     currentModelIndex: 0,
     freeCompute: 0n,
     isPostGpuTransition: false,
@@ -573,3 +573,4 @@ export function getTotalAssignedAgents(state: GameState): bigint {
 }
 
 // NOTE: DO NOT add migrations here. The game is in active development and breaking changes to saves are currently acceptable.
+

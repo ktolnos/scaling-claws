@@ -109,9 +109,8 @@ function tickGpuEra(state: GameState, dtMs: number): void {
   orbitalPflops = scaleB(orbitalPflops, state.gpuFlopsBonus);
   state.orbitalPflops = orbitalPflops;
 
-  // Gameplay allocations use Earth + orbital compute.
-  state.totalPflops = state.earthPflops + state.orbitalPflops;
-  state.totalPflopsDisplay = state.earthPflops + state.moonPflops + state.mercuryPflops + state.orbitalPflops;
+  // Gameplay allocations use total compute across all locations.
+  state.totalPflops = state.earthPflops + state.moonPflops + state.mercuryPflops + state.orbitalPflops;
   syncAgentsToPflopsCapacity(state);
 
   // Only set intelligence from model if no training has been done yet
@@ -166,7 +165,8 @@ function tickGpuEra(state: GameState, dtMs: number): void {
      computeEfficiency = Math.min(1.0, Number(agentsAllocatedPflops) / Number(pflopsNeeded));
   }
 
-  state.agentEfficiency = state.powerThrottle * computeEfficiency;
+  // Power constraints are already baked into per-location PFLOPS before total aggregation.
+  state.agentEfficiency = computeEfficiency;
 
   // API Services
   if (state.apiUnlocked) {

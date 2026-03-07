@@ -1,7 +1,8 @@
 #top-bar {
   display: flex;
   align-items: center;
-  gap: var(--spacing-lg);
+  gap: var(--spacing-sm);
+  row-gap: 2px;
   padding: var(--spacing-sm) var(--spacing-md);
   background: var(--bg-panel);
   border-bottom: 1px solid var(--border-panel);
@@ -94,20 +95,98 @@
   gap: var(--spacing-xs);
   white-space: nowrap;
   position: relative;
+  flex: 0 1 auto;
+  min-width: max-content;
 }
 
 .top-bar-item .label {
   color: var(--text-secondary);
+  flex: 0 0 auto;
 }
 
 .top-bar-item .value {
   color: var(--accent-gold);
   font-weight: 600;
+  flex: 0 0 auto;
+  min-width: 7ch;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 .top-bar-item .rate {
   color: var(--accent-green);
-  font-size: 0.8rem;
+  font-size: 0.74rem;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 2px;
+  flex: 0 0 auto;
+  text-align: left;
+  min-width: 0;
+  margin-left: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.top-bar-item .rate:empty {
+  display: none;
+  min-width: 0;
+  margin-left: 0;
+}
+
+.top-bar-item .rate [data-role="income"],
+.top-bar-item .rate [data-role="expense"] {
+  display: inline-block;
+  min-width: 0;
+}
+
+.top-bar-item[data-resource="funds"] .value {
+  min-width: 8ch;
+}
+
+.top-bar-item[data-resource="funds"] .rate {
+  display: grid;
+  grid-template-columns: 8.5ch 8.5ch;
+  column-gap: 4px;
+  min-width: calc(17ch + 4px);
+}
+
+.top-bar-item[data-resource="funds"] .rate [data-role="income"],
+.top-bar-item[data-resource="funds"] .rate [data-role="expense"] {
+  min-width: 8.5ch;
+}
+
+.top-bar-item[data-resource="code"] .rate,
+.top-bar-item[data-resource="science"] .rate,
+.top-bar-item[data-resource="labor"] .rate {
+  min-width: 7ch;
+}
+
+.top-bar-item[data-resource="code"] .rate [data-role="income"],
+.top-bar-item[data-resource="science"] .rate [data-role="income"],
+.top-bar-item[data-resource="labor"] .rate [data-role="income"] {
+  min-width: 7ch;
+}
+
+.top-bar-item[data-resource="code"] .rate [data-role="expense"]:empty,
+.top-bar-item[data-resource="science"] .rate [data-role="expense"]:empty,
+.top-bar-item[data-resource="labor"] .rate [data-role="expense"]:empty {
+  display: none;
+}
+
+.top-bar-item[data-resource="compute"] .value {
+  min-width: 10ch;
+}
+
+.top-bar-item[data-resource="intel"] .value {
+  min-width: 4ch;
+}
+
+.top-bar-item[data-resource="energy"] .value {
+  min-width: 6ch;
+}
+
+.top-bar-spacer {
+  flex: 1 1 auto;
+  min-width: 8px;
 }
 
 .top-bar-item .rate.negative {
@@ -122,7 +201,6 @@
 .btn-restart {
   font-size: 0.75rem;
   padding: 4px 10px;
-  margin-left: var(--spacing-md);
   opacity: 0.9;
 }
 
@@ -630,6 +708,9 @@ body.compute-allocation-dragging * {
   font-weight: 700;
   letter-spacing: 0.03em;
   user-select: none;
+  white-space: pre-line;
+  text-align: center;
+  line-height: 1.05;
 }
 
 .btn-mini {
@@ -684,6 +765,18 @@ body.compute-allocation-dragging * {
   font-size: 0.75rem;
   color: var(--accent-red);
   font-weight: 500;
+}
+
+.compute-datacenter-hint,
+.earth-power-warning {
+  min-height: 14px;
+  line-height: 1.1;
+  padding: 1px 0;
+}
+
+.compute-datacenter-hint {
+  margin-top: 1px;
+  margin-bottom: 1px;
 }
 
 .job-row .job-reward-main {

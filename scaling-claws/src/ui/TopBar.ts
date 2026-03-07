@@ -39,6 +39,7 @@ export class TopBar {
     this.container.appendChild(this.createSeparator());
 
     const intelItem = this.createItem('Intel', 'intel', 'resource.intel');
+    intelItem.dataset.resource = 'intel';
     this.intelValueEl = intelItem.querySelector('.value')!;
     intelItem.querySelector('.rate')!.remove();
     this.container.appendChild(intelItem);
@@ -64,11 +65,12 @@ export class TopBar {
     this.container.appendChild(this.laborItem);
 
     this.energyItem = this.createItem('Energy', 'energy', 'resource.energy');
+    this.energyItem.dataset.resource = 'energy';
     this.energyItem.classList.add('hidden');
     this.container.appendChild(this.energyItem);
 
     const spacer = document.createElement('div');
-    spacer.style.flex = '1';
+    spacer.className = 'top-bar-spacer';
     this.container.appendChild(spacer);
 
     const restartBtn = document.createElement('button');
@@ -148,7 +150,6 @@ export class TopBar {
     const expenseEl = document.createElement('span');
     expenseEl.dataset.role = 'expense';
     expenseEl.style.color = 'var(--accent-red)';
-    expenseEl.style.marginLeft = '4px';
     rateContainer.appendChild(expenseEl);
 
     item.appendChild(rateContainer);
@@ -171,8 +172,7 @@ export class TopBar {
 
     if (state.isPostGpuTransition) {
       this.flopsItem.classList.remove('hidden');
-      const totalFlops = state.totalPflopsDisplay > 0n ? state.totalPflopsDisplay : state.totalPflops;
-      this.flopsItem.querySelector('.value')!.textContent = formatFlops(totalFlops);
+      this.flopsItem.querySelector('.value')!.textContent = formatFlops(state.totalPflops);
     }
 
     if (state.code > 0n || state.codePerMin > 0n) {
@@ -248,11 +248,11 @@ export class TopBar {
       html += `<div class="breakdown-row"><span class="label">${locationLabelHtml('moon')}</span><span class="value">${formatFlops(state.moonPflops)}</span></div>`;
       html += `<div class="breakdown-row"><span class="label">${locationLabelHtml('mercury')}</span><span class="value">${formatFlops(state.mercuryPflops)}</span></div>`;
       html += `<div class="breakdown-row"><span class="label">${locationLabelHtml('orbit', 'Space (Orbit)')}</span><span class="value">${formatFlops(state.orbitalPflops)}</span></div>`;
-      html += `<div class="breakdown-row"><span class="label">Total</span><span class="value">${formatFlops(state.totalPflopsDisplay > 0n ? state.totalPflopsDisplay : state.totalPflops)}</span></div>`;
+      html += `<div class="breakdown-row"><span class="label">Total</span><span class="value">${formatFlops(state.totalPflops)}</span></div>`;
       html += '</div>';
 
       html += '<div class="breakdown-section">';
-      html += `<div class="section-title">${resourceLabelHtml('flops', 'Compute Allocation')} (Earth Runtime)</div>`;
+      html += `<div class="section-title">${resourceLabelHtml('flops', 'Compute Allocation')} (Global Runtime)</div>`;
       for (const item of state.resourceBreakdown.compute) {
         const pflopsNum = typeof item.pflops === 'bigint' ? Number(item.pflops) / 1_000_000 : item.pflops;
         html += `<div class="breakdown-row"><span class="label">${item.label}</span><span class="value">${(Math.round(pflopsNum * 10) / 10).toString()}</span></div>`;
