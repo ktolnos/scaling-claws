@@ -448,7 +448,7 @@ export const BALANCE = {
       cost: toBigInt(10_000),
       prereqs: ['solarTechnology'],
       description: 'Unlock robot workers.',
-      productionBoosts: { jobs: { robotWorker: 0.1 } },
+      productionBoosts: { jobs: { robotWorker: 0.5 } },
     },
     { id: 'robotFactoryEngineering1', name: 'Robot Factory Engineering I', cost: toBigInt(80_000), prereqs: ['robotics1'], description: 'Unlock Earth robot factories' },
 
@@ -480,7 +480,7 @@ export const BALANCE = {
       cost: toBigInt(100_000),
       prereqs: ['robotics1'],
       description: 'Robot labor output x10 (matches human)',
-      productionBoosts: { jobs: { robotWorker: 10 } },
+      productionBoosts: { jobs: { robotWorker: 2 } },
     },
     {
       id: 'robotics3',

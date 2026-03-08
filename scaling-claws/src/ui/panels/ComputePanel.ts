@@ -51,7 +51,15 @@ export class ComputePanel implements Panel {
   private upgradeBtnText?: HTMLSpanElement;
   private upgradeBtnReq?: HTMLSpanElement;
   private upgradeInfo?: HTMLElement;
-  private datacenterRows: { row: HTMLElement; info: HTMLSpanElement; costInfo: HTMLSpanElement; count: HTMLSpanElement; bulk: BulkBuyGroup }[] = [];
+  private datacenterRows: {
+    row: HTMLElement;
+    info: HTMLSpanElement;
+    costInfo: HTMLSpanElement;
+    costMoney: HTMLSpanElement;
+    costLabor: HTMLSpanElement;
+    count: HTMLSpanElement;
+    bulk: BulkBuyGroup;
+  }[] = [];
   private apiSection!: HTMLDivElement;
 
   // API sub-elements
@@ -69,6 +77,7 @@ export class ComputePanel implements Panel {
   private apiDemandText!: HTMLDivElement;
 
   private apiAdInfo!: HTMLSpanElement;
+  private apiAdCostEl!: HTMLSpanElement;
   private apiAdBtnGroup!: BulkBuyGroup;
 
   private apiImproveRow!: HTMLDivElement;
@@ -316,6 +325,11 @@ export class ComputePanel implements Panel {
         const costInfo = document.createElement('span');
         costInfo.style.fontSize = '0.68rem';
         costInfo.style.color = 'var(--text-muted)';
+        const costMoney = document.createElement('span');
+        const costLabor = document.createElement('span');
+        costInfo.appendChild(costMoney);
+        costInfo.appendChild(document.createTextNode(' + '));
+        costInfo.appendChild(costLabor);
         left.appendChild(costInfo);
 
         row.appendChild(left);
@@ -326,7 +340,7 @@ export class ComputePanel implements Panel {
 
         row.appendChild(controls.el);
         this.datacenterSection.appendChild(row);
-        this.datacenterRows[i] = { row, info, costInfo, count: controls.countEl, bulk: controls.bulk };
+        this.datacenterRows[i] = { row, info, costInfo, costMoney, costLabor, count: controls.countEl, bulk: controls.bulk };
     }
 
     // API Services section
@@ -482,7 +496,13 @@ export class ComputePanel implements Panel {
     adControls.style.alignItems = 'center';
 
     const marketingLabel = document.createElement('span');
-    marketingLabel.innerHTML = `Marketing <span style="color:var(--text-secondary);font-size:0.8em">${moneyWithEmojiHtml(BALANCE.apiAdCost, 'funds')}</span>:`;
+    marketingLabel.textContent = 'Marketing ';
+    this.apiAdCostEl = document.createElement('span');
+    this.apiAdCostEl.style.color = 'var(--text-secondary)';
+    this.apiAdCostEl.style.fontSize = '0.8em';
+    this.apiAdCostEl.innerHTML = moneyWithEmojiHtml(BALANCE.apiAdCost, 'funds');
+    marketingLabel.appendChild(this.apiAdCostEl);
+    marketingLabel.appendChild(document.createTextNode(':'));
     adControls.appendChild(marketingLabel);
 
     this.apiAdBtnGroup = new BulkBuyGroup((amt) => {
@@ -863,18 +883,23 @@ export class ComputePanel implements Panel {
 
               const moneyColor = moneyMet ? 'var(--text-muted)' : 'var(--accent-red)';
               const laborColor = laborMet ? 'var(--text-muted)' : 'var(--accent-red)';
-              refs.costInfo.innerHTML =
-                `<span style="color:${moneyColor}">${moneyWithEmojiHtml(dc.cost, 'funds')}</span>` +
-                ` + ` +
-                `<span style="color:${laborColor}">${formatNumber(dc.laborCost)} ${emojiHtml('labor')} labor</span>`;
+              refs.costMoney.innerHTML = moneyWithEmojiHtml(dc.cost, 'funds');
+              refs.costMoney.style.color = moneyColor;
+              refs.costLabor.innerHTML = `${formatNumber(dc.laborCost)} ${emojiHtml('labor')} labor`;
+              refs.costLabor.style.color = laborColor;
               
               refs.bulk.update(owned, (amt) => {
                 const amtB = toBigInt(amt);
                 const moneyOk = state.funds >= mulB(amtB, dc.cost);
                 const laborOk = earthLabor >= mulB(amtB, dc.laborCost);
                 return moneyOk && laborOk;
-              }, maxQuantity, () => {
-                flashElement(refs.count);
+              }, maxQuantity, (amt) => {
+                const amtB = toBigInt(amt);
+                const moneyOk = state.funds >= mulB(amtB, dc.cost);
+                const laborOk = earthLabor >= mulB(amtB, dc.laborCost);
+                if (!moneyOk) flashElement(refs.costMoney);
+                if (!laborOk) flashElement(refs.costLabor);
+                if (moneyOk && laborOk) flashElement(refs.count);
               });
           } else {
               refs.row.style.display = 'none';
@@ -963,7 +988,7 @@ export class ComputePanel implements Panel {
     // Ads
     this.apiAdInfo.innerHTML = `Awareness: ${formatNumber(state.apiAwareness)}`;
     this.apiAdBtnGroup.update(state.apiAwareness, (amt) => state.funds >= BigInt(amt) * BALANCE.apiAdCost, null, () => {
-      flashElement(this.apiAdInfo);
+      flashElement(this.apiAdCostEl);
     });
 
     // Improvements
