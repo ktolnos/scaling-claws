@@ -16,6 +16,7 @@ import { CountBulkBuyControls } from '../components/CountBulkBuyControls.ts';
 import { createPanelDivider, createPanelScaffold } from '../components/PanelScaffold.ts';
 import { emojiHtml, resourceLabelHtml } from '../emoji.ts';
 import { setHintTarget } from '../hints/HintUtils.ts';
+import { flashElement } from '../UIUtils.ts';
 
 // --- Pre-built sub-section refs ---
 
@@ -390,6 +391,9 @@ export class TrainingPanel implements Panel {
       purchasedGB,
       (amount) => amount <= remainingCapGB && state.funds >= getTrainingDataPurchaseCost(amount),
       BALANCE.dataPurchaseLimitGB,
+      () => {
+        flashElement(this.dataRefs.info);
+      },
     );
   }
 

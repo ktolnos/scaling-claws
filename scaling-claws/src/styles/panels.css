@@ -15,6 +15,7 @@
   top: 0;
   z-index: 1000;
   transition: min-height 0.2s ease;
+  justify-content: space-between;
 }
 
 #top-bar.is-expanded {
@@ -185,8 +186,7 @@
 }
 
 .top-bar-spacer {
-  flex: 1 1 auto;
-  min-width: 8px;
+  display: none;
 }
 
 .top-bar-item .rate.negative {
@@ -701,6 +701,17 @@ body.compute-allocation-dragging * {
   font-family: var(--font-mono);
 }
 
+.bulk-buy-group button.bulk-buy-disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.bulk-buy-group button.bulk-buy-disabled:hover,
+.bulk-buy-group button.bulk-buy-disabled:active {
+  background: var(--bg-panel-header);
+  border-color: var(--border-panel);
+}
+
 .bulk-buy-maxed {
   font-size: 0.68rem;
   color: var(--text-muted);
@@ -822,6 +833,10 @@ body.compute-allocation-dragging * {
 .job-row .job-reward-total {
   color: var(--text-muted);
   font-size: 0.7rem;
+}
+
+.job-row.job-row-locked {
+  opacity: 0.45;
 }
 
 /* Ticker */

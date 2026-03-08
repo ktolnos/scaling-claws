@@ -70,7 +70,7 @@ function configurePanels(state: GameState): void {
   if (state.isPostGpuTransition) {
     panelManager.register('compute', new ComputePanel(state));
     computePanelActive = true;
-    if (state.completedResearch.includes('orbitalLogistics') || state.datacenters.some(c => c > 0n)) {
+    if (state.completedResearch.includes('rocketry') || state.datacenters.some(c => c > 0n)) {
       panelManager.register('energy', new SpaceEnergyPanel(state));
     }
   } else {
@@ -89,7 +89,7 @@ function configurePanels(state: GameState): void {
   trainingPanelAdded = state.intelligence >= BALANCE.trainingUnlockIntel;
   supplyPanelAdded = hasSupplyPanelUnlock(state);
   energyPanelAdded = state.isPostGpuTransition &&
-    (state.completedResearch.includes('orbitalLogistics') || state.datacenters.some(c => c > 0n));
+    (state.completedResearch.includes('rocketry') || state.datacenters.some(c => c > 0n));
 }
 
 configurePanels(initialState);
@@ -117,7 +117,7 @@ setInterval(() => {
   }
 
   // Check for mid-game energy unlock (first datacenter or direct orbital unlock)
-  if (!energyPanelAdded && (s.datacenters.some(c => c > 0n) || s.completedResearch.includes('orbitalLogistics'))) {
+  if (!energyPanelAdded && (s.datacenters.some(c => c > 0n) || s.completedResearch.includes('rocketry'))) {
     panelManager.register('energy', new SpaceEnergyPanel(s));
     energyPanelAdded = true;
   }

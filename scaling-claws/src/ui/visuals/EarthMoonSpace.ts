@@ -81,7 +81,7 @@ export class EarthMoonSpace {
   }
 
   update(state: GameState): void {
-    const shouldShow = state.completedResearch.includes('orbitalLogistics') && state.satellites > 0n;
+    const shouldShow = state.completedResearch.includes('rocketry') && state.satellites > 0n;
 
     if (shouldShow && !this.isVisible) {
       this.stageEl.classList.remove('hidden');

@@ -14,6 +14,7 @@ export class BulkBuyGroup {
   private prefix: string;
   private maxedLabel: HTMLSpanElement;
   private canAct: ((amount: number) => boolean) | null = null;
+  private onInsufficient: ((amount: number) => void) | null = null;
 
   private holdDelayTimer: number | null = null;
   private holdRafId: number | null = null;
@@ -43,8 +44,14 @@ export class BulkBuyGroup {
     this.maxedLabel.textContent = maxedLabelText;
   }
 
-  update(owned: number, canAct: (amount: number) => boolean, maxQuantity?: number | null): void {
+  update(
+    owned: number,
+    canAct: (amount: number) => boolean,
+    maxQuantity?: number | null,
+    onInsufficient?: (amount: number) => void,
+  ): void {
     this.canAct = canAct;
+    this.onInsufficient = onInsufficient ?? null;
     const tiers = this.getVisibleTiers(owned, maxQuantity);
     const displayTiers = this.replaceLowerTierWithAffordableAmount(tiers, canAct);
     this.displayTiers = displayTiers;
@@ -74,8 +81,11 @@ export class BulkBuyGroup {
 
     // Update labels and enabled state without rebuilding.
     for (let i = 0; i < displayTiers.length; i++) {
+      const enabled = canAct(displayTiers[i]);
       this.buttons[i].textContent = this.prefix + formatNumber(displayTiers[i]);
-      this.buttons[i].disabled = !canAct(displayTiers[i]);
+      this.buttons[i].disabled = false;
+      this.buttons[i].classList.toggle('bulk-buy-disabled', !enabled);
+      this.buttons[i].setAttribute('aria-disabled', enabled ? 'false' : 'true');
     }
   }
 
@@ -87,6 +97,11 @@ export class BulkBuyGroup {
       ev.preventDefault();
       return;
     }
+    if (this.canAct && !this.canAct(amount)) {
+      this.onInsufficient?.(amount);
+      ev.preventDefault();
+      return;
+    }
     this.onAction(amount);
   }
 
@@ -94,7 +109,8 @@ export class BulkBuyGroup {
     const amount = this.displayTiers[index];
     if (!amount) return;
     const target = ev.currentTarget as HTMLButtonElement | null;
-    if (ev.button !== 0 || !target || target.disabled) return;
+    if (ev.button !== 0 || !target) return;
+    if (this.canAct && !this.canAct(amount)) return;
 
     this.stopHold();
     this.holdPointerId = ev.pointerId;

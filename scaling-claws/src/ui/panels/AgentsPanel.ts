@@ -7,7 +7,7 @@ import { flashElement } from '../UIUtils.ts';
 import { createPanelDivider, createPanelScaffold } from '../components/PanelScaffold.ts';
 import { BulkBuyGroup } from '../components/BulkBuyGroup.ts';
 import { CountBulkBuyControls } from '../components/CountBulkBuyControls.ts';
-import { emojiHtml, moneyWithEmojiHtml, resourceLabelHtml } from '../emoji.ts';
+import { emojiHtml, moneyWithEmojiHtml } from '../emoji.ts';
 import { setHintTarget } from '../hints/HintUtils.ts';
 
 export class AgentsPanel implements Panel {
@@ -17,22 +17,21 @@ export class AgentsPanel implements Panel {
 
   // Subscription Tier Elements
   private subTierNameEl!: HTMLSpanElement;
-  private subTierIntelEl!: HTMLSpanElement;
-  private subTierCostEl!: HTMLSpanElement;
   private upgradeBtn!: HTMLButtonElement;
 
   // Agent Controls
+  private agentSection!: HTMLDivElement;
   private agentHireControls!: CountBulkBuyControls;
   private unassignedCountEl!: HTMLSpanElement;
   private agentCostEl!: HTMLSpanElement;
 
   // Other refs
+  private coresRow!: HTMLDivElement;
+  private micMiniRow!: HTMLDivElement;
   private coresEl!: HTMLSpanElement;
   private micMiniControls!: CountBulkBuyControls;
   private micMiniBuyMetaEl!: HTMLSpanElement;
   private micMiniBuyGroup!: BulkBuyGroup;
-  private totalAgentsEl!: HTMLSpanElement;
-  private totalCostEl!: HTMLSpanElement;
   private selfHostedSection!: HTMLDivElement;
   private selfHostedCostEl!: HTMLSpanElement;
   private selfHostedBtn!: HTMLButtonElement;
@@ -67,18 +66,7 @@ export class AgentsPanel implements Panel {
     this.subTierNameEl = document.createElement('div');
     this.subTierNameEl.className = 'highlight';
     
-    const tierMeta = document.createElement('div');
-    tierMeta.style.fontSize = '0.78rem';
-    tierMeta.style.color = 'var(--text-muted)';
-    this.subTierIntelEl = document.createElement('span');
-    this.subTierCostEl = document.createElement('span');
-    this.subTierCostEl.style.marginLeft = '8px';
-    
-    tierMeta.appendChild(this.subTierIntelEl);
-    tierMeta.appendChild(this.subTierCostEl);
-
     tierValue.appendChild(this.subTierNameEl);
-    tierValue.appendChild(tierMeta);
     tierHeader.appendChild(tierLabel);
     tierHeader.appendChild(tierValue);
     tierSection.appendChild(tierHeader);
@@ -87,7 +75,7 @@ export class AgentsPanel implements Panel {
     intelHint.style.fontSize = '0.72rem';
     intelHint.style.color = 'var(--text-muted)';
     intelHint.style.marginTop = '4px';
-    intelHint.textContent = 'Higher intelligence = faster job completion.';
+    intelHint.textContent = 'Higher intelligence = faster job completion and less getting stuck.';
     tierSection.appendChild(intelHint);
 
     this.upgradeBtn = document.createElement('button');
@@ -103,9 +91,9 @@ export class AgentsPanel implements Panel {
     body.appendChild(tierSection);
 
     // --- Agent Hiring Details (Moved from JobsPanel) ---
-    const agentSection = document.createElement('div');
-    agentSection.className = 'section';
-    agentSection.style.marginBottom = '12px';
+    this.agentSection = document.createElement('div');
+    this.agentSection.className = 'section';
+    this.agentSection.style.marginBottom = '12px';
     
     const agentRow = document.createElement('div');
     agentRow.className = 'panel-row';
@@ -132,7 +120,7 @@ export class AgentsPanel implements Panel {
           flashElement(this.coresEl);
         }
       }
-    }, { prefix: '+', maxedLabel: 'MAXED CPUs' });
+    }, { prefix: '+' });
     controls.appendChild(this.agentHireControls.el);
     
     agentRow.appendChild(agentLabel);
@@ -156,7 +144,7 @@ export class AgentsPanel implements Panel {
     
     unassignedRow.appendChild(unassignedLabel);
     unassignedRow.appendChild(this.unassignedCountEl);
-    agentSection.appendChild(unassignedRow);
+    this.agentSection.appendChild(unassignedRow);
 
     // Flash listener
     document.addEventListener('flash-unassigned', () => {
@@ -170,9 +158,9 @@ export class AgentsPanel implements Panel {
     this.agentCostEl.style.color = 'var(--text-muted)';
     this.agentCostEl.style.marginTop = '4px';
 
-    agentSection.appendChild(agentRow);
-    agentSection.appendChild(this.agentCostEl);
-    body.appendChild(agentSection);
+    this.agentSection.appendChild(agentRow);
+    this.agentSection.appendChild(this.agentCostEl);
+    body.appendChild(this.agentSection);
 
 
     // --- Hardware ---
@@ -180,21 +168,21 @@ export class AgentsPanel implements Panel {
     body.appendChild(createPanelDivider());
 
     // CPU Cores
-    const coresRow = document.createElement('div');
-    coresRow.className = 'panel-row';
+    this.coresRow = document.createElement('div');
+    this.coresRow.className = 'panel-row';
     const coresLabel = document.createElement('span');
     coresLabel.className = 'label';
     coresLabel.textContent = 'CPU Cores';
     setHintTarget(coresLabel, 'mechanic.agentCapacity');
     this.coresEl = document.createElement('span');
     this.coresEl.className = 'value';
-    coresRow.appendChild(coresLabel);
-    coresRow.appendChild(this.coresEl);
-    body.appendChild(coresRow);
+    this.coresRow.appendChild(coresLabel);
+    this.coresRow.appendChild(this.coresEl);
+    body.appendChild(this.coresRow);
 
     // Mic-mini row
-    const micRow = document.createElement('div');
-    micRow.className = 'panel-row';
+    this.micMiniRow = document.createElement('div');
+    this.micMiniRow.className = 'panel-row';
     const micLeft = document.createElement('span');
     micLeft.style.display = 'flex';
     micLeft.style.alignItems = 'center';
@@ -224,26 +212,9 @@ export class AgentsPanel implements Panel {
     micRight.appendChild(this.micMiniBuyMetaEl);
     micRight.appendChild(this.micMiniControls.el);
 
-    micRow.appendChild(micLeft);
-    micRow.appendChild(micRight);
-    body.appendChild(micRow);
-
-    // Divider
-    body.appendChild(createPanelDivider());
-
-    // Summary
-    const summary = document.createElement('div');
-    summary.className = 'panel-summary';
-
-    const summaryLeft = document.createElement('span');
-    this.totalAgentsEl = document.createElement('span');
-    summaryLeft.appendChild(this.totalAgentsEl);
-    summary.appendChild(summaryLeft);
-
-    this.totalCostEl = document.createElement('span');
-    this.totalCostEl.className = 'highlight';
-    summary.appendChild(this.totalCostEl);
-    body.appendChild(summary);
+    this.micMiniRow.appendChild(micLeft);
+    this.micMiniRow.appendChild(micRight);
+    body.appendChild(this.micMiniRow);
 
     // Go Self-Hosted section (hidden initially)
     this.selfHostedSection = document.createElement('div');
@@ -293,21 +264,21 @@ export class AgentsPanel implements Panel {
     // -- Subscription Tier --
     const currentTier = BALANCE.tiers[state.subscriptionTier];
     this.subTierNameEl.textContent = currentTier.displayName;
-    this.subTierIntelEl.innerHTML = `${resourceLabelHtml('intel')} ${(Math.round(currentTier.intel * 10) / 10).toString()}`;
-    this.subTierCostEl.innerHTML = `${moneyWithEmojiHtml(currentTier.cost, 'funds')} upfront`;
     
     // Upgrade Info
     const nextTierType = getNextTier(state.subscriptionTier);
     if (nextTierType) {
       const nextTier = BALANCE.tiers[nextTierType];
-      // Updated Text: Upgrade To <Tier Name> ($price/m/agent, X intelligence)
-      // "The cost should be paid upfront (upgrade pays for the subscription for 1 minute)"
       
       this.upgradeBtn.style.display = 'block';
       const agentCount = state.totalAgents;
       const deltaCostPerAgent = nextTier.cost - currentTier.cost;
       const upgradeCost = mulB(deltaCostPerAgent, agentCount);
-      this.upgradeBtn.innerHTML = `Upgrade to ${nextTier.displayName} (${formatNumber(agentCount)} × Δ${moneyWithEmojiHtml(deltaCostPerAgent, 'funds')} = ${moneyWithEmojiHtml(upgradeCost, 'funds')}, ${resourceLabelHtml('intel')} ${(Math.round(nextTier.intel * 10) / 10).toString()})`;
+      const currentIntel = (Math.round(currentTier.intel * 10) / 10).toString();
+      const nextIntel = (Math.round(nextTier.intel * 10) / 10).toString();
+      this.upgradeBtn.innerHTML =
+        `<div>Upgrade to ${nextTier.displayName} (${moneyWithEmojiHtml(upgradeCost, 'funds')})</div>` +
+        `<div style="font-size:0.82em;opacity:0.9">${emojiHtml('intel')}Intel ${currentIntel} ${emojiHtml('route')} ${nextIntel}</div>`;
       
       this.upgradeBtn.disabled = deltaCostPerAgent <= 0n || state.funds < upgradeCost;
       
@@ -327,8 +298,18 @@ export class AgentsPanel implements Panel {
     }
     
     const coresPerAgent = toBigInt(currentTier.coresPerAgent);
-    const maxAgentsByCpu = Math.floor(fromBigInt(divB(state.cpuCoresTotal, coresPerAgent)));
     const maxAgentsByPflops = divB(state.totalPflops, toBigInt(BALANCE.pflopsPerGpu));
+    const showAgentControls = state.intelligence >= BALANCE.agentControlUnlockIntel;
+    this.agentSection.classList.toggle('hidden', !showAgentControls);
+    const showCpuCores = showAgentControls && state.totalAgents >= toBigInt(2);
+    this.coresRow.classList.toggle('hidden', !showCpuCores);
+
+    const nextAgent = state.totalAgents + toBigInt(1);
+    const cpuLimitReached = !state.isPostGpuTransition &&
+      mulB(nextAgent, coresPerAgent) > state.cpuCoresTotal;
+    const showMicMiniControls = showAgentControls && (cpuLimitReached || state.micMiniCount > 0n);
+    this.micMiniRow.classList.toggle('hidden', !showMicMiniControls);
+
     this.agentHireControls.bulk.update(
       Math.floor(fromBigInt(state.totalAgents)),
       (amount) => {
@@ -344,7 +325,22 @@ export class AgentsPanel implements Panel {
         const requiredCores = mulB(state.totalAgents + amountB, coresPerAgent);
         return requiredCores <= state.cpuCoresTotal;
       },
-      !state.isPostGpuTransition ? maxAgentsByCpu : null,
+      undefined,
+      (amount) => {
+        const amountB = toBigInt(amount);
+        const totalCost = mulB(amountB, currentTier.cost);
+        const blockedByFunds = state.funds < totalCost;
+        if (blockedByFunds) {
+          document.dispatchEvent(new CustomEvent('flash-funds'));
+          return;
+        }
+
+        if (state.isPostGpuTransition) {
+          document.dispatchEvent(new CustomEvent('flash-gpu-capacity'));
+        } else {
+          flashElement(this.coresEl);
+        }
+      },
     );
 
     this.agentCostEl.innerHTML = `${moneyWithEmojiHtml(currentTier.cost, 'funds')} per agent`;
@@ -369,12 +365,11 @@ export class AgentsPanel implements Panel {
         return state.funds >= totalCost;
       },
       BALANCE.micMini.limit,
+      () => {
+        flashElement(this.micMiniBuyMetaEl);
+      },
     );
-
-    // Summary
     const totalAgents = state.totalAgents;
-    this.totalAgentsEl.textContent = 'Total agents: ' + formatNumber(totalAgents);
-    this.totalCostEl.innerHTML = `Income potential: ${moneyWithEmojiHtml(state.incomePerMin, 'funds')}/min`;
 
     // Go Self-Hosted
     const minGpus = BALANCE.models[0].minGpus;

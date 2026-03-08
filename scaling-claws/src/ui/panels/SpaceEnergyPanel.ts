@@ -8,13 +8,17 @@ import { CountBulkBuyControls } from '../components/CountBulkBuyControls.ts';
 import { createPanelDivider, createPanelScaffold } from '../components/PanelScaffold.ts';
 import { emojiHtml, moneyWithEmojiHtml, resourceLabelHtml } from '../emoji.ts';
 import { setHintTarget } from '../hints/HintUtils.ts';
+import { flashElement } from '../UIUtils.ts';
 
 interface PlantRowRefs {
+  row: HTMLDivElement;
   count: HTMLSpanElement;
   production: HTMLSpanElement;
   buyGroup: BulkBuyGroup;
   buildLabel: HTMLSpanElement;
 }
+
+const POWER_PLANT_UNLOCK_GRID_KW = toBigInt(1_000_000);
 
 type LogisticsRoute = 'earthOrbit' | 'earthMoon' | 'moonOrbit' | 'moonMercury' | 'mercurySun';
 
@@ -43,6 +47,7 @@ export class SpaceEnergyPanel implements Panel {
   private throttleEl!: HTMLDivElement;
   private gridRow!: HTMLDivElement;
   private gridEl!: HTMLSpanElement;
+  private gridCostEl!: HTMLSpanElement;
   private gridBuyGroup!: BulkBuyGroup;
   private gridSellGroup!: BulkBuyGroup;
 
@@ -136,7 +141,7 @@ export class SpaceEnergyPanel implements Panel {
 
     const gridLabel = document.createElement('span');
     gridLabel.className = 'label';
-    gridLabel.textContent = 'Grid';
+    gridLabel.textContent = 'Grid Contract';
     setHintTarget(gridLabel, 'mechanic.gridPower');
     this.gridRow.appendChild(gridLabel);
 
@@ -160,7 +165,20 @@ export class SpaceEnergyPanel implements Panel {
     gridControls.appendChild(this.gridSellGroup.el);
     gridControls.appendChild(this.gridEl);
     gridControls.appendChild(this.gridBuyGroup.el);
-    this.gridRow.appendChild(gridControls);
+
+    const gridRight = document.createElement('div');
+    gridRight.style.display = 'flex';
+    gridRight.style.flexDirection = 'column';
+    gridRight.style.alignItems = 'flex-end';
+    gridRight.style.gap = '1px';
+
+    this.gridCostEl = document.createElement('span');
+    this.gridCostEl.style.fontSize = '0.62rem';
+    this.gridCostEl.style.color = 'var(--text-muted)';
+
+    gridRight.appendChild(gridControls);
+    gridRight.appendChild(this.gridCostEl);
+    this.gridRow.appendChild(gridRight);
     parent.appendChild(this.gridRow);
 
     this.gasRefs = this.buildPlantRow(parent, 'Gas Plants', BALANCE.powerPlants.gas.outputMW, (amt) => {
@@ -290,7 +308,7 @@ export class SpaceEnergyPanel implements Panel {
     row.appendChild(right);
     parent.appendChild(row);
 
-    return { count: controls.countEl, production, buyGroup: controls.bulk, buildLabel };
+    return { row, count: controls.countEl, production, buyGroup: controls.bulk, buildLabel };
   }
 
   private buildLogistics(parent: HTMLElement): void {
@@ -803,7 +821,9 @@ export class SpaceEnergyPanel implements Panel {
       `<span style="color:${moneyColor}">${moneyWithEmojiHtml(cost, 'money')}</span>` +
       ` + ` +
       `<span style="color:${laborColor}">${formatNumber(labor)} ${emojiHtml('labor')} labor</span>`;
-    refs.buyGroup.update(owned, canBuy, maxCount);
+    refs.buyGroup.update(owned, canBuy, maxCount, () => {
+      flashElement(refs.buildLabel);
+    });
   }
 
   update(state: GameState): void {
@@ -815,7 +835,7 @@ export class SpaceEnergyPanel implements Panel {
     }
     this.el.style.display = '';
 
-    const spaceUnlocked = state.spaceUnlocked || state.completedResearch.includes('orbitalLogistics');
+    const spaceUnlocked = state.spaceUnlocked || state.completedResearch.includes('rocketry');
     this.panelHeaderEl.textContent = spaceUnlocked ? 'SPACE & ENERGY' : 'ENERGY';
     this.earthEnergyTitleEl.style.display = spaceUnlocked ? '' : 'none';
 
@@ -827,33 +847,54 @@ export class SpaceEnergyPanel implements Panel {
     this.gridRow.style.display = '';
     this.gridEl.textContent = formatMW(state.gridPowerKW / 1000n);
     const gridOwned = Math.floor(fromBigInt(state.gridPowerKW));
-    this.gridBuyGroup.update(gridOwned, (amt) => state.funds >= mulB(toBigInt(amt), toBigInt(BALANCE.gridPowerKWCost)), BALANCE.gridPowerKWLimit);
-    this.gridSellGroup.update(gridOwned, (amt) => gridOwned >= amt);
-
-    // Plants
-    this.updatePlant(
-      this.gasRefs,
-      state.gasPlants,
-      BALANCE.powerPlants.gas.outputMW,
-      BALANCE.powerPlants.gas.cost,
-      BALANCE.powerPlants.gas.laborCost,
-      (amt) => {
-        return state.funds >= mulB(toBigInt(amt), BALANCE.powerPlants.gas.cost) && state.locationResources.earth.labor >= mulB(toBigInt(amt), BALANCE.powerPlants.gas.laborCost);
+    const visibleGridTiers = getVisibleBuyTiers(gridOwned, BALANCE.gridPowerKWLimit);
+    const smallestGridTier = visibleGridTiers[0] ?? 0;
+    const gridCostNeeded = smallestGridTier > 0
+      ? mulB(toBigInt(smallestGridTier), toBigInt(BALANCE.gridPowerKWCost))
+      : 0n;
+    const gridCostColor = state.funds >= gridCostNeeded ? 'var(--text-muted)' : 'var(--accent-red)';
+    this.gridCostEl.innerHTML = `Cost: <span style="color:${gridCostColor}">${moneyWithEmojiHtml(toBigInt(BALANCE.gridPowerKWCost), 'money')}</span>/kW`;
+    this.gridBuyGroup.update(
+      gridOwned,
+      (amt) => state.funds >= mulB(toBigInt(amt), toBigInt(BALANCE.gridPowerKWCost)),
+      BALANCE.gridPowerKWLimit,
+      () => {
+        flashElement(this.gridEl);
       },
-      BALANCE.powerPlants.gas.limit ?? null,
     );
+    this.gridSellGroup.update(gridOwned, (amt) => gridOwned >= amt, null, () => {
+      flashElement(this.gridEl);
+    });
 
-    this.updatePlant(
-      this.nuclearRefs,
-      state.nuclearPlants,
-      BALANCE.powerPlants.nuclear.outputMW,
-      BALANCE.powerPlants.nuclear.cost,
-      BALANCE.powerPlants.nuclear.laborCost,
-      (amt) => {
-        return state.funds >= mulB(toBigInt(amt), BALANCE.powerPlants.nuclear.cost) && state.locationResources.earth.labor >= mulB(toBigInt(amt), BALANCE.powerPlants.nuclear.laborCost);
-      },
-      BALANCE.powerPlants.nuclear.limit ?? null,
-    );
+    const powerPlantsUnlocked = state.gridPowerKW >= POWER_PLANT_UNLOCK_GRID_KW;
+    this.gasRefs.row.style.display = powerPlantsUnlocked ? '' : 'none';
+    this.nuclearRefs.row.style.display = powerPlantsUnlocked ? '' : 'none';
+
+    if (powerPlantsUnlocked) {
+      this.updatePlant(
+        this.gasRefs,
+        state.gasPlants,
+        BALANCE.powerPlants.gas.outputMW,
+        BALANCE.powerPlants.gas.cost,
+        BALANCE.powerPlants.gas.laborCost,
+        (amt) => {
+          return state.funds >= mulB(toBigInt(amt), BALANCE.powerPlants.gas.cost) && state.locationResources.earth.labor >= mulB(toBigInt(amt), BALANCE.powerPlants.gas.laborCost);
+        },
+        BALANCE.powerPlants.gas.limit ?? null,
+      );
+
+      this.updatePlant(
+        this.nuclearRefs,
+        state.nuclearPlants,
+        BALANCE.powerPlants.nuclear.outputMW,
+        BALANCE.powerPlants.nuclear.cost,
+        BALANCE.powerPlants.nuclear.laborCost,
+        (amt) => {
+          return state.funds >= mulB(toBigInt(amt), BALANCE.powerPlants.nuclear.cost) && state.locationResources.earth.labor >= mulB(toBigInt(amt), BALANCE.powerPlants.nuclear.laborCost);
+        },
+        BALANCE.powerPlants.nuclear.limit ?? null,
+      );
+    }
 
     // Earth solar install
     const earthSolarUnlocked = state.completedResearch.includes('solarTechnology');
@@ -874,7 +915,9 @@ export class SpaceEnergyPanel implements Panel {
       const a = toBigInt(amt);
       const laborCost = mulB(a, BALANCE.earthSolarInstallLaborCost);
       return earth.solarPanels >= a && earth.labor >= laborCost;
-    }, Math.floor(fromBigInt(BALANCE.earthSolarInstallLimit)));
+    }, Math.floor(fromBigInt(BALANCE.earthSolarInstallLimit)), () => {
+      flashElement(this.earthSolarStatusEl);
+    });
 
     const gasLimit = BALANCE.powerPlants.gas.limit ?? 0;
     const nuclearLimit = BALANCE.powerPlants.nuclear.limit ?? 0;
@@ -893,7 +936,7 @@ export class SpaceEnergyPanel implements Panel {
       this.throttleEl.textContent = '\u00a0';
     }
 
-    const logisticsUnlocked = state.completedResearch.includes('orbitalLogistics');
+    const logisticsUnlocked = state.completedResearch.includes('rocketry');
     this.logisticsSection.style.display = logisticsUnlocked ? '' : 'none';
 
     // Orbit
@@ -901,11 +944,11 @@ export class SpaceEnergyPanel implements Panel {
     this.orbitPowerEl.innerHTML = `${resourceLabelHtml('energy', 'Power')} ${formatMW(state.orbitalPowerMW)}`;
 
     const logisticsConfigs: Array<{ key: string; route: LogisticsRoute; source: bigint; enabled: boolean }> = [
-      { key: 'earthOrbit:gpuSatellites', route: 'earthOrbit', source: state.locationResources.earth.gpuSatellites, enabled: state.completedResearch.includes('orbitalLogistics') },
+      { key: 'earthOrbit:gpuSatellites', route: 'earthOrbit', source: state.locationResources.earth.gpuSatellites, enabled: state.completedResearch.includes('rocketry') },
       { key: 'earthMoon:gpus', route: 'earthMoon', source: state.locationResources.earth.gpus, enabled: state.completedResearch.includes('payloadToMoon') },
       { key: 'earthMoon:solarPanels', route: 'earthMoon', source: state.locationResources.earth.solarPanels, enabled: state.completedResearch.includes('payloadToMoon') },
       { key: 'earthMoon:robots', route: 'earthMoon', source: state.locationResources.earth.robots, enabled: state.completedResearch.includes('payloadToMoon') },
-      { key: 'moonOrbit:gpuSatellites', route: 'moonOrbit', source: state.locationResources.moon.gpuSatellites, enabled: state.completedResearch.includes('orbitalLogistics') && state.completedResearch.includes('payloadToMoon') },
+      { key: 'moonOrbit:gpuSatellites', route: 'moonOrbit', source: state.locationResources.moon.gpuSatellites, enabled: state.completedResearch.includes('rocketry') && state.completedResearch.includes('payloadToMoon') },
       { key: 'moonMercury:robots', route: 'moonMercury', source: state.locationResources.moon.robots, enabled: state.completedResearch.includes('payloadToMercury') },
       { key: 'mercurySun:gpuSatellites', route: 'mercurySun', source: state.locationResources.mercury.gpuSatellites, enabled: state.completedResearch.includes('payloadToMercury') },
     ];
@@ -936,7 +979,14 @@ export class SpaceEnergyPanel implements Panel {
       routeTotals[config.route].queued += queued;
 
       if (refs.bulk) {
-        refs.bulk.update(Math.floor(fromBigInt(sent)), (amt) => config.enabled && config.source >= toBigInt(amt));
+        refs.bulk.update(
+          Math.floor(fromBigInt(sent)),
+          (amt) => config.enabled && config.source >= toBigInt(amt),
+          null,
+          () => {
+            flashElement(refs.waiting);
+          },
+        );
         refs.bulk.el.style.opacity = config.enabled ? '1' : '0.45';
       }
     }
@@ -982,7 +1032,9 @@ export class SpaceEnergyPanel implements Panel {
         const a = toBigInt(amt);
         const laborCost = mulB(a, BALANCE.moonSolarInstallLaborCost);
         return moon.solarPanels >= a && moon.labor >= laborCost;
-      }, Math.floor(fromBigInt(BALANCE.moonSolarInstallLimit)));
+      }, Math.floor(fromBigInt(BALANCE.moonSolarInstallLimit)), () => {
+        flashElement(this.moonSolarStatusEl);
+      });
 
       const moonEffColor = moonEffPct === 100 ? 'var(--text-primary)' : 'var(--accent-red)';
       this.moonGpuStatusEl.innerHTML =
@@ -998,7 +1050,9 @@ export class SpaceEnergyPanel implements Panel {
         const a = toBigInt(amt);
         const laborCost = mulB(a, BALANCE.moonGpuInstallLaborCost);
         return moon.gpus >= a && moon.labor >= laborCost;
-      }, Math.floor(fromBigInt(BALANCE.moonGpuInstallLimit)));
+      }, Math.floor(fromBigInt(BALANCE.moonGpuInstallLimit)), () => {
+        flashElement(this.moonGpuStatusEl);
+      });
     }
 
     // Mercury and endgame

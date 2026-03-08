@@ -3,8 +3,8 @@ import type { GameState, LocationId, TransportPayloadId, TransportRouteId } from
 import { fromBigInt } from '../utils.ts';
 
 export function isTransportRouteUnlocked(state: GameState, route: TransportRouteId): boolean {
-  if (route === 'earthOrbit') return state.completedResearch.includes('orbitalLogistics');
-  if (route === 'moonOrbit') return state.completedResearch.includes('orbitalLogistics') && state.completedResearch.includes('payloadToMoon');
+  if (route === 'earthOrbit') return state.completedResearch.includes('rocketry');
+  if (route === 'moonOrbit') return state.completedResearch.includes('rocketry') && state.completedResearch.includes('payloadToMoon');
   if (route === 'earthMoon') return state.completedResearch.includes('payloadToMoon');
   return state.completedResearch.includes('payloadToMercury');
 }

@@ -9,6 +9,7 @@ import { BulkBuyGroup } from '../components/BulkBuyGroup.ts';
 import { createPanelDivider, createPanelScaffold } from '../components/PanelScaffold.ts';
 import { emojiHtml, locationLabelHtml, resourceLabelHtml } from '../emoji.ts';
 import { setHintTarget } from '../hints/HintUtils.ts';
+import { flashElement } from '../UIUtils.ts';
 
 interface ResourceCellRefs {
   value: HTMLSpanElement;
@@ -83,6 +84,7 @@ export class SupplyPanel implements Panel {
 
   private resourceRefs = new Map<string, ResourceCellRefs>();
   private facilityRefs = new Map<string, FacilityCellRefs>();
+  private facilityPriceRefs = new Map<FacilityId, HTMLSpanElement>();
   private facilityPauseBtns = new Map<FacilityId, HTMLButtonElement>();
 
   constructor(state: GameState) {
@@ -130,8 +132,8 @@ export class SupplyPanel implements Panel {
     }
 
     if (resource === 'gpuSatellites') {
-      if (location === 'earth') return state.completedResearch.includes('orbitalLogistics');
-      if (location === 'moon') return state.completedResearch.includes('moonSatelliteManufacturing');
+      if (location === 'earth') return state.completedResearch.includes('rocketry');
+      if (location === 'moon') return state.completedResearch.includes('moonRocketry');
       return false;
     }
 
@@ -319,6 +321,7 @@ export class SupplyPanel implements Panel {
     const facilityLabelFr = dense ? 1.45 : 1.5;
     this.resourceRefs.clear();
     this.facilityRefs.clear();
+    this.facilityPriceRefs.clear();
     this.facilityPauseBtns.clear();
     this.resourcesSection.innerHTML = '';
     this.facilitiesSection.innerHTML = '';
@@ -493,6 +496,7 @@ export class SupplyPanel implements Panel {
       meta.innerHTML = facilityInfo.price;
       meta.title = `${facility.shortLabel} price`;
       labelWrap.appendChild(meta);
+      this.facilityPriceRefs.set(facility.id, meta);
 
       const output = document.createElement('span');
       output.style.fontSize = facilityMetaFontSize;
@@ -647,7 +651,7 @@ export class SupplyPanel implements Panel {
         const efficiencyPct = Math.max(0, Math.min(100, Math.round(efficiency * 100)));
         const limit = this.getFacilityLimit(location, facility.id);
         if (refs.efficiency) {
-          if (efficiencyPct >= 100) {
+          if (ownedNum <= 0 || efficiencyPct >= 100) {
             refs.efficiency.textContent = '';
             refs.efficiency.style.display = 'none';
           } else {
@@ -658,7 +662,21 @@ export class SupplyPanel implements Panel {
         }
         refs.count.textContent = formatNumber(owned);
 
-        refs.buyGroup.update(ownedNum, (amt) => canBuildFacility(this.state, location, facility.id, amt), (limit !== null && limit > 0) ? limit : null);
+        refs.buyGroup.update(
+          ownedNum,
+          (amt) => canBuildFacility(this.state, location, facility.id, amt),
+          (limit !== null && limit > 0) ? limit : null,
+          (amt) => {
+            if (amt === 1) {
+              const priceRef = this.facilityPriceRefs.get(facility.id);
+              if (priceRef) {
+                flashElement(priceRef);
+                return;
+              }
+            }
+            flashElement(refs.count);
+          },
+        );
       }
     }
   }

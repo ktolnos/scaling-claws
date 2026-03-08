@@ -4,7 +4,6 @@ import { BALANCE, getApiDemand, getApiPflopsPerUser, getBestModel, getGpuTargetP
 import type { SubscriptionTier } from '../BalanceConfig.ts';
 import { toBigInt, divB, mulB, scaleB, fromBigInt, scaleBigInt } from '../utils.ts';
 import { reconcileEarthGpuInstallation } from './GpuState.ts';
-import { nextGameRandom } from '../Random.ts';
 
 function getEarthGpuCount(state: GameState): bigint {
   return state.locationResources.earth.gpus;
@@ -224,35 +223,8 @@ function tickGpuEra(state: GameState, dtMs: number): void {
 }
 
 function tickGpuMarketPrice(state: GameState, dtMs: number): void {
-  const target = getGpuTargetPrice(state.locationResources.earth.gpus);
-  if (state.gpuMarketPrice <= 0n) {
-    state.gpuMarketPrice = target;
-    return;
-  }
-
-  const lowerBound = scaleB(target, 1 - BALANCE.gpuPriceVariationPct);
-  const upperBound = scaleB(target, 1 + BALANCE.gpuPriceVariationPct);
-  const stepPct = BALANCE.gpuPriceMaxChangePerSecondPct * (dtMs / 1000);
-  const maxStep = scaleB(target, stepPct);
-
-  let direction: number;
-  if (state.gpuMarketPrice < lowerBound) {
-    direction = nextGameRandom();
-  } else if (state.gpuMarketPrice > upperBound) {
-    direction = -nextGameRandom();
-  } else {
-    direction = nextGameRandom() * 2 - 1;
-  }
-
-  const delta = scaleB(maxStep, direction);
-  const next = state.gpuMarketPrice + delta;
-  if (next < lowerBound) {
-    state.gpuMarketPrice = lowerBound;
-  } else if (next > upperBound) {
-    state.gpuMarketPrice = upperBound;
-  } else {
-    state.gpuMarketPrice = next;
-  }
+  void dtMs;
+  state.gpuMarketPrice = getGpuTargetPrice(state.locationResources.earth.gpus);
 }
 
 function allocateCores(state: GameState): void {

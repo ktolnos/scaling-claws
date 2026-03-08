@@ -17,6 +17,7 @@ import {
 } from './systems/ComputeSystem.ts';
 import {
   nudgeAgent,
+  nudgeAllAgents,
   assignAgentsToJob,
   removeAgentsFromJob,
   hireHumanWorkers,
@@ -143,10 +144,12 @@ function dispatchGameActionCore(state: GameState, action: GameAction): ActionDis
     }
     case 'upgradeTier': {
       const ok = upgradeTier(state, action.tier);
+      const nudged = ok ? nudgeAllAgents(state) : 0;
       const currentConfig = BALANCE.tiers[state.subscriptionTier];
       const nextConfig = BALANCE.tiers[action.tier];
       const deltaCostPerAgent = nextConfig.cost - currentConfig.cost;
       return result(ok, {
+        nudged,
         reason: ok ? undefined : 'failed',
         try_later: deltaCostPerAgent > 0n && state.funds < mulB(deltaCostPerAgent, state.totalAgents),
       });

@@ -367,7 +367,7 @@ export function tickSpace(state: GameState, dtMs: number): void {
   processReturns(state, now);
   processDeliveries(state, now);
 
-  state.spaceUnlocked = state.completedResearch.includes('orbitalLogistics');
+  state.spaceUnlocked = state.completedResearch.includes('rocketry');
   if (!state.spaceUnlocked) {
     state.orbitalPowerMW = 0n;
     return;

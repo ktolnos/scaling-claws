@@ -476,6 +476,24 @@ export function nudgeAgent(state: GameState): boolean {
   return after < before;
 }
 
+export function nudgeAllAgents(state: GameState): number {
+  let before = 0n;
+  for (const pool of Object.values(state.agentPools)) before += pool.stuckCount;
+  if (before <= 0n) {
+    state.stuckCount = 0n;
+    return 0;
+  }
+
+  nudgeAgents(state, before);
+
+  let after = 0n;
+  for (const pool of Object.values(state.agentPools)) after += pool.stuckCount;
+  state.stuckCount = after;
+
+  const nudged = before - after;
+  return Math.max(0, Math.floor(fromBigInt(nudged)));
+}
+
 /** Check if an AI agent can be assigned to a given job. */
 function canAssignAiAgent(state: GameState, jobType: JobType): boolean {
   if (!state.unlockedJobs.includes(jobType)) return false;

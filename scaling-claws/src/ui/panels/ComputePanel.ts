@@ -9,6 +9,7 @@ import { CountBulkBuyControls } from '../components/CountBulkBuyControls.ts';
 import { createPanelDivider, createPanelScaffold } from '../components/PanelScaffold.ts';
 import { UI_EMOJI, emojiHtml, moneyWithEmojiHtml, resourceLabelHtml } from '../emoji.ts';
 import { setHintTarget } from '../hints/HintUtils.ts';
+import { flashElement } from '../UIUtils.ts';
 
 export class ComputePanel implements Panel {
   readonly el: HTMLElement;
@@ -41,8 +42,10 @@ export class ComputePanel implements Panel {
   private buyGpuControls!: CountBulkBuyControls;
   private gpuPricePart!: HTMLSpanElement;
   private upgradeSection!: HTMLDivElement;
+  private datacenterDivider!: HTMLHRElement;
   private datacenterSection!: HTMLDivElement;
   private datacenterHintEl!: HTMLDivElement;
+  private apiDivider!: HTMLHRElement;
 
   private upgradeBtn?: HTMLButtonElement;
   private upgradeBtnText?: HTMLSpanElement;
@@ -71,6 +74,7 @@ export class ComputePanel implements Panel {
   private apiImproveRow!: HTMLDivElement;
   private apiImproveBtnGroup!: BulkBuyGroup;
   private apiImproveInfo!: HTMLSpanElement;
+  private apiImproveCostEl!: HTMLSpanElement;
 
   constructor(state: GameState) {
     this.state = state;
@@ -198,7 +202,8 @@ export class ComputePanel implements Panel {
     this.computeAllocationWrap.appendChild(this.allocSliderTrack);
     body.appendChild(this.computeAllocationWrap);
 
-    body.appendChild(createPanelDivider());
+    this.datacenterDivider = createPanelDivider();
+    body.appendChild(this.datacenterDivider);
 
     // GPUs buttons with count display
     this.buyGpuRow = document.createElement('div');
@@ -328,9 +333,9 @@ export class ComputePanel implements Panel {
     this.apiSection = document.createElement('div');
     this.apiSection.className = 'panel-section hidden';
 
-    const subDivider = document.createElement('hr');
-    subDivider.className = 'panel-divider';
-    this.apiSection.appendChild(subDivider);
+    this.apiDivider = document.createElement('hr');
+    this.apiDivider.className = 'panel-divider';
+    this.apiSection.appendChild(this.apiDivider);
 
     const subTitle = document.createElement('div');
     subTitle.className = 'panel-section-title api-services';
@@ -444,7 +449,13 @@ export class ComputePanel implements Panel {
     improveControls.style.alignItems = 'center';
 
     const improveLabel = document.createElement('span');
-    improveLabel.innerHTML = `Optimization <span style="color:var(--text-secondary);font-size:0.8em">(${formatNumber(BALANCE.apiImproveCodeCost)} ${emojiHtml('code')} Code)</span>:`;
+    improveLabel.textContent = 'Optimization ';
+    this.apiImproveCostEl = document.createElement('span');
+    this.apiImproveCostEl.style.color = 'var(--text-secondary)';
+    this.apiImproveCostEl.style.fontSize = '0.8em';
+    this.apiImproveCostEl.innerHTML = `(${formatNumber(BALANCE.apiImproveCodeCost)} ${emojiHtml('code')} Code)`;
+    improveLabel.appendChild(this.apiImproveCostEl);
+    improveLabel.appendChild(document.createTextNode(':'));
     improveControls.appendChild(improveLabel);
 
     this.apiImproveBtnGroup = new BulkBuyGroup((amt) => {
@@ -515,6 +526,11 @@ export class ComputePanel implements Panel {
   }
 
   private updateAgentEfficiencyDisplay(state: GameState): void {
+    const hasAnyDatacenter = state.datacenters.some((count) => count > 0n);
+    const showAgentEfficiency = state.apiUnlocked || hasAnyDatacenter;
+    this.agentEfficiencyEl.style.display = showAgentEfficiency ? '' : 'none';
+    if (!showAgentEfficiency) return;
+
     const efficiencyPct = Math.max(0, Math.round(state.agentEfficiency * 100));
     const assignedAgents = getTotalAssignedAgents(state);
     const pflopsNeeded = scaleB(assignedAgents, BALANCE.pflopsPerGpu);
@@ -755,6 +771,9 @@ export class ComputePanel implements Panel {
       Math.floor(fromBigInt(earthGpuCount)),
       (amt) => state.funds >= BigInt(amt) * state.gpuMarketPrice,
       BALANCE.gpuBuyLimit,
+      () => {
+        flashElement(this.buyGpuControls.countEl);
+      },
     );
 
     // Model upgrade
@@ -778,75 +797,89 @@ export class ComputePanel implements Panel {
       this.upgradeSection.style.display = 'none';
     }
 
-    const allDatacentersMaxed = BALANCE.datacenters.length > 0 && BALANCE.datacenters.every((dc, i) => {
-      const limit = dc.limit ?? 0;
-      return limit > 0 && state.datacenters[i] >= toBigInt(limit);
-    });
+    const workersUnlocked = state.unlockedJobs.includes('humanWorker');
+    this.datacenterDivider.style.display = workersUnlocked ? '' : 'none';
+    this.datacenterSection.style.display = workersUnlocked ? '' : 'none';
+    this.apiDivider.style.display = workersUnlocked ? '' : 'none';
 
-    // Datacenter hint
-    if (allDatacentersMaxed) {
+    if (!workersUnlocked) {
       this.datacenterHintEl.style.display = 'none';
       this.datacenterHintEl.style.visibility = 'hidden';
       this.datacenterHintEl.textContent = '\u00a0';
-    } else if (earthGpuCount > state.gpuCapacity) {
-      this.datacenterHintEl.style.display = '';
-      this.datacenterHintEl.style.visibility = 'visible';
-      this.datacenterHintEl.innerHTML = `Unutilized ${resourceLabelHtml('gpus')}! Buy datacenters to install them.`;
-      this.datacenterHintEl.style.color = 'var(--accent-red)';
-    } else if (earthGpuCount > scaleB(state.gpuCapacity, 0.8)) {
-      this.datacenterHintEl.style.display = '';
-      this.datacenterHintEl.style.visibility = 'visible';
-      this.datacenterHintEl.innerHTML = `At ${formatNumber(state.gpuCapacity)} ${emojiHtml('gpus')} GPUs you'll need a datacenter.`;
-      this.datacenterHintEl.style.color = 'var(--accent-blue)';
-    } else if (state.gpuCapacity > earthGpuCount * 2n) {
-      this.datacenterHintEl.style.display = '';
-      this.datacenterHintEl.style.visibility = 'visible';
-      this.datacenterHintEl.innerHTML = `Hint: ${resourceLabelHtml('gpus', 'GPUs')} must be bought separately from datacenters.`;
-      this.datacenterHintEl.style.color = 'var(--accent-blue)';
     } else {
-      this.datacenterHintEl.style.display = '';
-      this.datacenterHintEl.style.visibility = 'hidden';
-      this.datacenterHintEl.textContent = '\u00a0';
-    }
+      const allDatacentersMaxed = BALANCE.datacenters.length > 0 && BALANCE.datacenters.every((dc, i) => {
+        const limit = dc.limit ?? 0;
+        return limit > 0 && state.datacenters[i] >= toBigInt(limit);
+      });
+      const hasAnyDatacenter = state.datacenters.some((count) => count > 0n);
 
-    // Datacenter purchase
-    for (let i = 0; i < BALANCE.datacenters.length; i++) {
-        const dc = BALANCE.datacenters[i];
-        const refs = this.datacenterRows[i];
-        // Only show if player is near needing it or already has previous tiers
-        if (i === 0 || state.datacenters[i] > 0n || state.datacenters[Math.max(0, i - 1)] > 0n) {
-            refs.row.style.display = 'flex';
-            const earthLabor = state.locationResources.earth.labor;
-            const owned = Math.floor(fromBigInt(state.datacenters[i]));
-            const limit = dc.limit ?? 0;
-            const maxQuantity = limit > 0 ? limit : null;
-            const visibleTiers = getVisibleBuyTiers(owned, maxQuantity);
-            const smallestTier = visibleTiers[0] ?? 0;
-            const tierScale = toBigInt(smallestTier);
-            const moneyNeed = smallestTier > 0 ? mulB(tierScale, dc.cost) : 0n;
-            const laborNeed = smallestTier > 0 ? mulB(tierScale, dc.laborCost) : 0n;
-            const laborMet = earthLabor >= laborNeed;
-            const moneyMet = state.funds >= moneyNeed;
+      // Datacenter hint
+      if (allDatacentersMaxed) {
+        this.datacenterHintEl.style.display = 'none';
+        this.datacenterHintEl.style.visibility = 'hidden';
+        this.datacenterHintEl.textContent = '\u00a0';
+      } else if (earthGpuCount > state.gpuCapacity) {
+        this.datacenterHintEl.style.display = '';
+        this.datacenterHintEl.style.visibility = 'visible';
+        this.datacenterHintEl.innerHTML = `Unutilized ${resourceLabelHtml('gpus')}! Buy datacenters to install them.`;
+        this.datacenterHintEl.style.color = 'var(--accent-red)';
+      } else if (earthGpuCount > scaleB(state.gpuCapacity, 0.8)) {
+        this.datacenterHintEl.style.display = '';
+        this.datacenterHintEl.style.visibility = 'visible';
+        this.datacenterHintEl.innerHTML = `At ${formatNumber(state.gpuCapacity)} ${emojiHtml('gpus')} GPUs you'll need a datacenter.`;
+        this.datacenterHintEl.style.color = 'var(--accent-blue)';
+      } else if (state.gpuCapacity > earthGpuCount * 2n && hasAnyDatacenter) {
+        this.datacenterHintEl.style.display = '';
+        this.datacenterHintEl.style.visibility = 'visible';
+        this.datacenterHintEl.innerHTML = `Hint: ${resourceLabelHtml('gpus', 'GPUs')} must be bought separately from datacenters.`;
+        this.datacenterHintEl.style.color = 'var(--accent-blue)';
+      } else {
+        this.datacenterHintEl.style.display = '';
+        this.datacenterHintEl.style.visibility = 'hidden';
+        this.datacenterHintEl.textContent = '\u00a0';
+      }
 
-            refs.info.innerHTML = `${dc.name} (${formatNumber(dc.gpuCapacity)} ${emojiHtml('gpus')})`;
-            refs.count.textContent = 'x' + formatNumber(state.datacenters[i]);
+      // Datacenter purchase
+      for (let i = 0; i < BALANCE.datacenters.length; i++) {
+          const dc = BALANCE.datacenters[i];
+          const refs = this.datacenterRows[i];
+          // Only show if player is near needing it or already has previous tiers
+          if (i === 0 || state.datacenters[i] > 0n || state.datacenters[Math.max(0, i - 1)] > 0n) {
+              refs.row.style.display = 'flex';
+              const earthLabor = state.locationResources.earth.labor;
+              const owned = Math.floor(fromBigInt(state.datacenters[i]));
+              const limit = dc.limit ?? 0;
+              const maxQuantity = limit > 0 ? limit : null;
+              const visibleTiers = getVisibleBuyTiers(owned, maxQuantity);
+              const smallestTier = visibleTiers[0] ?? 0;
+              const tierScale = toBigInt(smallestTier);
+              const moneyNeed = smallestTier > 0 ? mulB(tierScale, dc.cost) : 0n;
+              const laborNeed = smallestTier > 0 ? mulB(tierScale, dc.laborCost) : 0n;
+              const laborMet = earthLabor >= laborNeed;
+              const moneyMet = state.funds >= moneyNeed;
 
-            const moneyColor = moneyMet ? 'var(--text-muted)' : 'var(--accent-red)';
-            const laborColor = laborMet ? 'var(--text-muted)' : 'var(--accent-red)';
-            refs.costInfo.innerHTML =
-              `<span style="color:${moneyColor}">${moneyWithEmojiHtml(dc.cost, 'funds')}</span>` +
-              ` + ` +
-              `<span style="color:${laborColor}">${formatNumber(dc.laborCost)} ${emojiHtml('labor')} labor</span>`;
-            
-            refs.bulk.update(owned, (amt) => {
-              const amtB = toBigInt(amt);
-              const moneyOk = state.funds >= mulB(amtB, dc.cost);
-              const laborOk = earthLabor >= mulB(amtB, dc.laborCost);
-              return moneyOk && laborOk;
-            }, maxQuantity);
-        } else {
-            refs.row.style.display = 'none';
-        }
+              refs.info.innerHTML = `${dc.name} (${formatNumber(dc.gpuCapacity)} ${emojiHtml('gpus')})`;
+              refs.count.textContent = 'x' + formatNumber(state.datacenters[i]);
+
+              const moneyColor = moneyMet ? 'var(--text-muted)' : 'var(--accent-red)';
+              const laborColor = laborMet ? 'var(--text-muted)' : 'var(--accent-red)';
+              refs.costInfo.innerHTML =
+                `<span style="color:${moneyColor}">${moneyWithEmojiHtml(dc.cost, 'funds')}</span>` +
+                ` + ` +
+                `<span style="color:${laborColor}">${formatNumber(dc.laborCost)} ${emojiHtml('labor')} labor</span>`;
+              
+              refs.bulk.update(owned, (amt) => {
+                const amtB = toBigInt(amt);
+                const moneyOk = state.funds >= mulB(amtB, dc.cost);
+                const laborOk = earthLabor >= mulB(amtB, dc.laborCost);
+                return moneyOk && laborOk;
+              }, maxQuantity, () => {
+                flashElement(refs.count);
+              });
+          } else {
+              refs.row.style.display = 'none';
+          }
+      }
     }
 
 
@@ -920,12 +953,18 @@ export class ComputePanel implements Panel {
 
     // Price
     this.apiPriceVal.innerHTML = moneyWithEmojiHtml(state.apiPrice, 'funds');
-    this.priceDecreaseGroup.update(state.apiPrice, (amt) => state.apiPrice - amt >= 0.1);
-    this.priceIncreaseGroup.update(state.apiPrice, () => true);
+    this.priceDecreaseGroup.update(state.apiPrice, (amt) => state.apiPrice - amt >= 0.1, null, () => {
+      flashElement(this.apiPriceVal);
+    });
+    this.priceIncreaseGroup.update(state.apiPrice, () => true, null, () => {
+      flashElement(this.apiPriceVal);
+    });
 
     // Ads
     this.apiAdInfo.innerHTML = `Awareness: ${formatNumber(state.apiAwareness)}`;
-    this.apiAdBtnGroup.update(state.apiAwareness, (amt) => state.funds >= BigInt(amt) * BALANCE.apiAdCost);
+    this.apiAdBtnGroup.update(state.apiAwareness, (amt) => state.funds >= BigInt(amt) * BALANCE.apiAdCost, null, () => {
+      flashElement(this.apiAdInfo);
+    });
 
     // Improvements
     this.apiImproveInfo.innerHTML =
@@ -935,6 +974,9 @@ export class ComputePanel implements Panel {
       state.apiImprovementLevel,
       (amt) => state.code >= BigInt(amt) * BALANCE.apiImproveCodeCost,
       BALANCE.apiImprovePurchaseLimit - 1,
+      () => {
+        flashElement(this.apiImproveCostEl);
+      },
     );
   }
 }

@@ -226,7 +226,7 @@ export class JobsPanel implements Panel {
         } else {
           const actionResult = dispatchGameAction(this.state, { type: 'assignAgentsToJob', jobType, amount });
           const assigned = typeof actionResult.info.performed === 'number' ? actionResult.info.performed : 0;
-          if (assigned === 0) {
+          if (assigned === 0 && this.state.agentPools['unassigned'].totalCount <= 0n) {
             document.dispatchEvent(new CustomEvent('flash-unassigned'));
           }
         }
@@ -390,6 +390,7 @@ export class JobsPanel implements Panel {
       }
 
       // Requirements
+      let requirementsMet = true;
       if (!isHuman && !isRobotWorker) {
         const agentEligible = state.intelligence >= config.agentIntelReq &&
           (!config.agentResearchReq || config.agentResearchReq.every(r => state.completedResearch.includes(r)));
@@ -397,6 +398,7 @@ export class JobsPanel implements Panel {
         if (!agentEligible) {
           refs.reqEl.innerHTML = `(req ${resourceLabelHtml('intel')} ${config.agentIntelReq})`;
           refs.reqEl.style.display = 'block';
+          requirementsMet = false;
         } else {
           refs.reqEl.textContent = '';
           refs.reqEl.style.display = 'none';
@@ -405,6 +407,7 @@ export class JobsPanel implements Panel {
         if (remainingWorkforce <= 0n) {
           refs.reqEl.innerHTML = '(global workforce exhausted)';
           refs.reqEl.style.display = 'block';
+          requirementsMet = false;
         } else {
           refs.reqEl.textContent = '';
           refs.reqEl.style.display = 'none';
@@ -413,6 +416,7 @@ export class JobsPanel implements Panel {
         refs.reqEl.textContent = '';
         refs.reqEl.style.display = 'none';
       }
+      refs.row.classList.toggle('job-row-locked', !requirementsMet);
 
       // Worker count and progress bars
       if (isRobotWorker) {
@@ -428,8 +432,12 @@ export class JobsPanel implements Panel {
         refs.addGroup.update(countNum, (amount) => {
           const totalCost = mulB(toBigInt(amount), BALANCE.robotImportCost);
           return state.completedResearch.includes('robotics1') && state.funds >= totalCost;
-        }, BALANCE.robotWorkerBuyLimit);
-        refs.removeGroup?.update(countNum, (amount) => countNum >= amount);
+        }, BALANCE.robotWorkerBuyLimit, () => {
+          flashElement(refs.countEl);
+        });
+        refs.removeGroup?.update(countNum, (amount) => countNum >= amount, null, () => {
+          flashElement(refs.countEl);
+        });
       } else if (isHuman) {
         const pool = state.humanPools[jobType];
         const count = workerCount;
@@ -470,8 +478,12 @@ export class JobsPanel implements Panel {
           const hireCost = config.hireCost ?? 0n;
           const totalHireCost = mulB(amountB, hireCost);
           return state.funds >= totalHireCost;
-        }, Math.max(countNum, maxForThisRowNum));
-        refs.removeGroup?.update(countNum, (amount) => countNum >= amount);
+        }, Math.max(countNum, maxForThisRowNum), () => {
+          flashElement(refs.countEl);
+        });
+        refs.removeGroup?.update(countNum, (amount) => countNum >= amount, null, () => {
+          flashElement(refs.countEl);
+        });
       } else {
         // AI job - use agentPools directly
         const pool = state.agentPools[jobType];
@@ -522,8 +534,16 @@ export class JobsPanel implements Panel {
           if (amount <= 0) return false;
           if (!agentEligible) return false;
           return unassignedHired >= toBigInt(amount);
+        }, null, () => {
+          if (state.agentPools['unassigned'].totalCount <= 0n) {
+            document.dispatchEvent(new CustomEvent('flash-unassigned'));
+            return;
+          }
+          flashElement(refs.countEl);
         });
-        refs.removeGroup?.update(countNum, (amount) => countNum >= amount);
+        refs.removeGroup?.update(countNum, (amount) => countNum >= amount, null, () => {
+          flashElement(refs.countEl);
+        });
       }
     }
 

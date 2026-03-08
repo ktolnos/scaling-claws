@@ -134,7 +134,6 @@ export const ResearchIds = {
   moonRobotics: 'moonRobotics',
   mercuryRobotics: 'mercuryRobotics',
   rocketry: 'rocketry',
-  orbitalLogistics: 'orbitalLogistics',
 
   // Space payload unlocks
   payloadToMoon: 'payloadToMoon',
@@ -144,7 +143,6 @@ export const ResearchIds = {
   moonMineEngineering: 'moonMineEngineering',
   moonSolarManufacturing: 'moonSolarManufacturing',
   moonChipManufacturing: 'moonChipManufacturing',
-  moonSatelliteManufacturing: 'moonSatelliteManufacturing',
   moonRocketry: 'moonRocketry',
   moonMassDrivers: 'moonMassDrivers',
 
@@ -241,6 +239,8 @@ export const BALANCE = {
   tickIntervalMs: 100,
   uiUpdateIntervalMs: 200,
   autoSaveIntervalMs: 30000,
+  // UI progression gate for first-time visibility of agent-hiring + CPU controls.
+  agentControlUnlockIntel: 1.0,
 
   // Internal mental-math anchors for resource <-> fiat conversions.
   usdPerMaterial: USD_PER_MATERIAL,
@@ -453,16 +453,14 @@ export const BALANCE = {
     { id: 'robotFactoryEngineering1', name: 'Robot Factory Engineering I', cost: toBigInt(80_000), prereqs: ['robotics1'], description: 'Unlock Earth robot factories' },
 
     // Second wave
-    { id: 'orbitalLogistics',     name: 'Satellite Manufacturing', cost: toBigInt(1), prereqs: ['solarTechnology', 'chipManufacturing'], description: 'Unlock Earth GPU satellite factories and orbital deployment UI' },
-    { id: 'rocketry',             name: 'Rocketry',               cost: toBigInt(10_000),  prereqs: ['solarTechnology'],   description: 'Unlock Earth rocket factories' },
+    { id: 'rocketry',             name: 'Rocketry',               cost: toBigInt(10_000),  prereqs: ['solarTechnology', 'chipManufacturing'],   description: 'Unlock Earth rocket and GPU satellite factories plus orbital deployment UI' },
 
     // Transport and lunar expansion
-    { id: 'payloadToMoon',        name: 'Lunar Transport',        cost: toBigInt(5_000_000),  prereqs: ['rocketry', 'orbitalLogistics'], description: 'Unlock Earth->Moon logistics and Moon installation UI' },
+    { id: 'payloadToMoon',        name: 'Lunar Transport',        cost: toBigInt(5_000_000),  prereqs: ['rocketry'], description: 'Unlock Earth->Moon logistics and Moon installation UI' },
     { id: 'moonMineEngineering',  name: 'Moon Mines',             cost: toBigInt(20_000_000),  prereqs: ['payloadToMoon'], description: 'Unlock Moon material mines' },
     { id: 'moonSolarManufacturing', name: 'Moon Solar Plants',    cost: toBigInt(20_000_000), prereqs: ['payloadToMoon'], description: 'Unlock Moon solar factories' },
     { id: 'moonChipManufacturing',  name: 'Moon Chip Fabs',       cost: toBigInt(20_000_000), prereqs: ['payloadToMoon'], description: 'Unlock Moon GPU factories' },
-    { id: 'moonSatelliteManufacturing', name: 'Moon Satellite Fabs', cost: toBigInt(20_000_000), prereqs: ['payloadToMoon', 'orbitalLogistics'], description: 'Unlock Moon GPU satellite factories' },
-    { id: 'moonRocketry',         name: 'Moon Rocketry',          cost: toBigInt(20_000_000), prereqs: ['payloadToMoon', 'rocketry'], description: 'Unlock Moon rocket factories' },
+    { id: 'moonRocketry',         name: 'Moon Rocketry',          cost: toBigInt(20_000_000), prereqs: ['payloadToMoon', 'rocketry'], description: 'Unlock Moon rocket and GPU satellite factories' },
     { id: 'moonMassDrivers',      name: 'Moon Mass Drivers',      cost: toBigInt(100_000_000_000), prereqs: ['payloadToMoon', 'moonRocketry'], description: 'Unlock Moon mass drivers (more launches, larger payload)' },
     { id: 'moonRobotics', name: 'Moon Robotics', cost: toBigInt(20_000_000), prereqs: ['payloadToMoon', 'robotFactoryEngineering1'], description: 'Unlock Moon robot factories' },
 

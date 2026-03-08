@@ -3,6 +3,7 @@ import { formatFlops, formatNumber, formatMW } from '../game/utils.ts';
 import { deleteSave } from '../game/SaveManager.ts';
 import { emojiHtml, locationLabelHtml, moneyWithEmojiHtml, resourceLabelHtml } from './emoji.ts';
 import { setHintTarget } from './hints/HintUtils.ts';
+import { flashElement } from './UIUtils.ts';
 
 export class TopBar {
   private container: HTMLElement;
@@ -35,6 +36,10 @@ export class TopBar {
     this.fundsIncomeEl = fundsItem.querySelector('[data-role="income"]')!;
     this.fundsExpenseEl = fundsItem.querySelector('[data-role="expense"]')!;
     this.container.appendChild(fundsItem);
+
+    document.addEventListener('flash-funds', () => {
+      flashElement(this.fundsValueEl);
+    });
 
     this.container.appendChild(this.createSeparator());
 
@@ -164,6 +169,9 @@ export class TopBar {
   }
 
   update(state: GameState): void {
+    const energyPanelUnlocked = state.isPostGpuTransition &&
+      (state.completedResearch.includes('rocketry') || state.datacenters.some(c => c > 0n));
+
     this.fundsValueEl.innerHTML = moneyWithEmojiHtml(state.funds, 'funds');
     this.fundsIncomeEl.innerHTML = state.incomePerMin > 0n ? '+' + moneyWithEmojiHtml(state.incomePerMin, 'funds') + '/m' : '';
     this.fundsExpenseEl.innerHTML = state.expensePerMin > 0n ? '-' + moneyWithEmojiHtml(state.expensePerMin, 'funds') + '/m' : '';
@@ -212,11 +220,13 @@ export class TopBar {
       expenseEl.textContent = '';
     }
 
-    if (state.isPostGpuTransition) {
+    if (energyPanelUnlocked) {
       this.energyItem.classList.remove('hidden');
       const valueEl = this.energyItem.querySelector('.value')!;
       valueEl.textContent = formatMW(state.totalEnergyMW);
       this.energyItem.querySelector('.rate')!.textContent = '';
+    } else {
+      this.energyItem.classList.add('hidden');
     }
 
     const breakdownEl = this.container.querySelector('#top-bar-breakdown')!;
@@ -233,7 +243,10 @@ export class TopBar {
     html += this.renderBreakdownSection(`${resourceLabelHtml('science')} (u/min)`, state.resourceBreakdown.science, (v) => formatNumber(v));
     html += this.renderBreakdownSection(`${resourceLabelHtml('labor')} (u/min)`, state.resourceBreakdown.labor, (v) => formatNumber(v));
 
-    if (state.isPostGpuTransition) {
+    const energyPanelUnlocked = state.isPostGpuTransition &&
+      (state.completedResearch.includes('rocketry') || state.datacenters.some(c => c > 0n));
+
+    if (energyPanelUnlocked) {
       html += '<div class="breakdown-section">';
       html += `<div class="section-title">${resourceLabelHtml('energy')} by Location</div>`;
       html += `<div class="breakdown-row"><span class="label">${locationLabelHtml('earth')}</span><span class="value">Supply ${formatMW(state.powerSupplyMW)} / Demand ${formatMW(state.powerDemandMW)}</span></div>`;
