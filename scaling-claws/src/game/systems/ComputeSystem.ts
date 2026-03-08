@@ -1,9 +1,30 @@
 import type { GameState } from '../GameState.ts';
 import { getTotalAssignedAgents } from '../GameState.ts';
-import { BALANCE, getApiDemand, getApiPflopsPerUser, getBestModel, getGpuTargetPrice, getGpuSatellitePflopsPerUnit, JOB_ORDER } from '../BalanceConfig.ts';
+import {
+  BALANCE,
+  getApiDemand,
+  getApiPflopsPerUser,
+  getAgentsRequiredAllocationPct,
+  getBestModel,
+  getGpuTargetPrice,
+  getGpuSatellitePflopsPerUnit,
+  isApiAutoPricingUnlocked,
+  isComputeAutoAllocationUnlocked,
+  JOB_ORDER,
+} from '../BalanceConfig.ts';
 import type { SubscriptionTier } from '../BalanceConfig.ts';
 import { toBigInt, divB, mulB, scaleB, fromBigInt, scaleBigInt } from '../utils.ts';
 import { reconcileEarthGpuInstallation } from './GpuState.ts';
+
+const API_AUTO_PRICE_MIN = 1;
+const API_AUTO_PRICE_LOCAL_STEP = 1;
+const API_AUTO_PRICE_PROBE_PCT = 0.02;
+const API_AUTO_PRICE_PROBE_MIN = 1;
+const API_AUTO_PRICE_GRADIENT_EPS = 1e-6;
+const API_AUTO_PRICE_STEP_PCT_MIN = 0.005;
+const API_AUTO_PRICE_STEP_PCT_MAX = 0.08;
+const COMPUTE_AUTO_TRAINING_MIN_PCT = 10;
+const COMPUTE_AUTO_INFERENCE_MIN_PCT = 1;
 
 function getEarthGpuCount(state: GameState): bigint {
   return state.locationResources.earth.gpus;
@@ -127,6 +148,10 @@ function tickGpuEra(state: GameState, dtMs: number): void {
     }
   }
 
+  if (state.computeAutoAllocationEnabled && isComputeAutoAllocationUnlocked(state.completedResearch)) {
+    autoAdjustComputeAllocations(state);
+  }
+
   // Allocation Logic (Percentages)
   const trainingPct = toBigInt(state.trainingAllocationPct);
   const inferencePct = state.apiUnlocked ? toBigInt(state.apiInferenceAllocationPct) : 0n;
@@ -169,6 +194,10 @@ function tickGpuEra(state: GameState, dtMs: number): void {
 
   // API Services
   if (state.apiUnlocked) {
+    if (state.apiAutoPriceEnabled && isApiAutoPricingUnlocked(state.completedResearch)) {
+      autoAdjustApiPrice(state);
+    }
+
     // Demand calculation is centralized in BalanceConfig economics helpers.
     state.apiDemand = toBigInt(getApiDemand(
       state.apiAwareness,
@@ -414,7 +443,167 @@ export function buyDatacenter(state: GameState, tier: number): boolean {
 
 export function setApiPrice(state: GameState, price: number): void {
   // Price is in $, can go from very low to high
-  state.apiPrice = Math.max(0.1, Math.round(price * 10) / 10);
+  state.apiPrice = normalizeApiPrice(price);
+}
+
+function normalizeApiPrice(price: number): number {
+  return Math.max(API_AUTO_PRICE_MIN, Math.round(price));
+}
+
+function getApiRevenuePerMinAtPrice(
+  state: GameState,
+  price: number,
+  effectiveCapacityUsers: number,
+): number {
+  if (effectiveCapacityUsers <= 0) return 0;
+  const demand = getApiDemand(state.apiAwareness, state.intelligence, price);
+  const activeUsers = Math.min(demand, effectiveCapacityUsers);
+  return activeUsers * price;
+}
+
+function autoAdjustApiPrice(state: GameState): void {
+  const infrastructureCapacityUsers = fromBigInt(divB(
+    state.apiReservedPflops,
+    toBigInt(getApiPflopsPerUser(state.apiQuality)),
+  ));
+  const effectiveCapacityUsers = Math.min(
+    infrastructureCapacityUsers,
+    BALANCE.apiDemandCapUsers,
+  );
+  if (effectiveCapacityUsers <= 0) return;
+
+  const currentPrice = normalizeApiPrice(state.apiPrice);
+  const probeSize = Math.max(API_AUTO_PRICE_PROBE_MIN, currentPrice * API_AUTO_PRICE_PROBE_PCT);
+  const leftPrice = normalizeApiPrice(currentPrice - probeSize);
+  const rightPrice = normalizeApiPrice(currentPrice + probeSize);
+  if (rightPrice <= leftPrice) return;
+
+  const currentRevenue = getApiRevenuePerMinAtPrice(state, currentPrice, effectiveCapacityUsers);
+  const leftRevenue = getApiRevenuePerMinAtPrice(state, leftPrice, effectiveCapacityUsers);
+  const rightRevenue = getApiRevenuePerMinAtPrice(state, rightPrice, effectiveCapacityUsers);
+  const gradient = (rightRevenue - leftRevenue) / (rightPrice - leftPrice);
+  if (!Number.isFinite(gradient) || Math.abs(gradient) <= API_AUTO_PRICE_GRADIENT_EPS) return;
+
+  // Scale slope to a dimensionless signal so step sizing behaves similarly across price ranges.
+  const normalizedSlope = currentRevenue > 0
+    ? (gradient * currentPrice) / currentRevenue
+    : (gradient > 0 ? 1 : -1);
+  const direction = normalizedSlope > 0 ? 1 : -1;
+  const stepPct = Math.max(
+    API_AUTO_PRICE_STEP_PCT_MIN,
+    Math.min(API_AUTO_PRICE_STEP_PCT_MAX, Math.abs(normalizedSlope) * 0.2),
+  );
+  const gradientStep = currentPrice * stepPct;
+
+  // Pick the best local candidate so auto-pricing never intentionally walks downhill.
+  const candidates = new Set<number>([
+    currentPrice,
+    normalizeApiPrice(currentPrice - API_AUTO_PRICE_LOCAL_STEP),
+    normalizeApiPrice(currentPrice + API_AUTO_PRICE_LOCAL_STEP),
+    normalizeApiPrice(currentPrice + (direction * gradientStep)),
+    normalizeApiPrice(currentPrice + (direction * gradientStep * 0.5)),
+  ]);
+
+  let bestPrice = currentPrice;
+  let bestRevenue = currentRevenue;
+  for (const price of candidates) {
+    const revenue = getApiRevenuePerMinAtPrice(state, price, effectiveCapacityUsers);
+    if (revenue > bestRevenue) {
+      bestRevenue = revenue;
+      bestPrice = price;
+    }
+  }
+
+  if (bestPrice !== currentPrice) {
+    setApiPrice(state, bestPrice);
+  }
+}
+
+export function setApiAutoPriceEnabled(state: GameState, enabled: boolean): boolean {
+  if (!enabled) {
+    state.apiAutoPriceEnabled = false;
+    return true;
+  }
+
+  if (!isApiAutoPricingUnlocked(state.completedResearch)) return false;
+  state.apiAutoPriceEnabled = true;
+  return true;
+}
+
+function ceilPctOfTotal(requested: bigint, total: bigint): number {
+  if (requested <= 0n) return 0;
+  if (total <= 0n) return 100;
+  const pct = (requested * 100n + total - 1n) / total;
+  if (pct >= 100n) return 100;
+  return Number(pct);
+}
+
+function autoAdjustComputeAllocations(state: GameState): void {
+  const trainingActive = state.currentFineTuneIndex >= 0 || state.ariesModelIndex >= 0;
+  const totalPflops = state.totalPflops;
+  if (totalPflops <= 0n) {
+    const inferencePct = state.apiUnlocked ? COMPUTE_AUTO_INFERENCE_MIN_PCT : 0;
+    const trainingPct = trainingActive ? (100 - inferencePct) : 0;
+    setComputeAllocations(state, trainingPct, inferencePct);
+    return;
+  }
+
+  const assignedAgents = getTotalAssignedAgents(state);
+  let agentsPct = getAgentsRequiredAllocationPct(totalPflops, assignedAgents);
+
+  let inferencePct = 0;
+  if (state.apiUnlocked) {
+    const apiDemandUsers = toBigInt(getApiDemand(state.apiAwareness, state.intelligence, state.apiPrice));
+    const apiNeedPflops = mulB(apiDemandUsers, toBigInt(getApiPflopsPerUser(state.apiQuality)));
+    inferencePct = Math.max(COMPUTE_AUTO_INFERENCE_MIN_PCT, ceilPctOfTotal(apiNeedPflops, totalPflops));
+  }
+
+  const minInference = state.apiUnlocked ? COMPUTE_AUTO_INFERENCE_MIN_PCT : 0;
+  if (!trainingActive) {
+    agentsPct = Math.max(0, Math.min(100, agentsPct));
+    inferencePct = Math.max(minInference, Math.min(100 - agentsPct, inferencePct));
+    const ok = setComputeAllocations(state, 0, inferencePct);
+    if (!ok) {
+      setComputeAllocations(state, 0, minInference);
+    }
+    return;
+  }
+
+  let trainingPct = 100 - agentsPct - inferencePct;
+  if (trainingPct < COMPUTE_AUTO_TRAINING_MIN_PCT) {
+    let shortfall = COMPUTE_AUTO_TRAINING_MIN_PCT - trainingPct;
+
+    const inferenceReducible = Math.max(0, inferencePct - minInference);
+    const inferenceBorrow = Math.min(shortfall, inferenceReducible);
+    inferencePct -= inferenceBorrow;
+    shortfall -= inferenceBorrow;
+
+    if (shortfall > 0) {
+      const agentsBorrow = Math.min(shortfall, Math.max(0, agentsPct));
+      agentsPct -= agentsBorrow;
+      shortfall -= agentsBorrow;
+    }
+  }
+
+  agentsPct = Math.max(0, Math.min(100, agentsPct));
+  inferencePct = Math.max(minInference, Math.min(100 - agentsPct, inferencePct));
+  trainingPct = Math.max(0, 100 - agentsPct - inferencePct);
+
+  const ok = setComputeAllocations(state, trainingPct, inferencePct);
+  if (!ok) {
+    setComputeAllocations(state, 100, 0);
+  }
+}
+
+export function setComputeAutoAllocationEnabled(state: GameState, enabled: boolean): boolean {
+  if (!enabled) {
+    state.computeAutoAllocationEnabled = false;
+    return true;
+  }
+
+  if (!isComputeAutoAllocationUnlocked(state.completedResearch)) return false;
+  state.computeAutoAllocationEnabled = true;
+  return true;
 }
 
 export function buyAds(state: GameState, amount: number = 1): boolean {

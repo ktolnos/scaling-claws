@@ -1,28 +1,19 @@
-import type { GameState, FacilityId, LocationId, SupplyResourceId } from '../../game/GameState.ts';
+import type { GameState, FacilityId, LocationId } from '../../game/GameState.ts';
 import type { Panel } from '../PanelManager.ts';
 import { BALANCE } from '../../game/BalanceConfig.ts';
 import { formatNumber, fromBigInt, toBigInt } from '../../game/utils.ts';
 import { canBuildFacility, isFacilityUnlocked as isFacilityUnlockedForLocation } from '../../game/systems/SupplySystem.ts';
 import { dispatchGameAction } from '../../game/ActionDispatcher.ts';
-import { estimateTransportRockets, getTransportRouteSource } from '../../game/systems/SpaceRules.ts';
 import { BulkBuyGroup } from '../components/BulkBuyGroup.ts';
-import { createPanelDivider, createPanelScaffold } from '../components/PanelScaffold.ts';
-import { emojiHtml, locationLabelHtml, resourceLabelHtml } from '../emoji.ts';
+import { createPanelScaffold } from '../components/PanelScaffold.ts';
+import { emojiHtml, locationLabelHtml } from '../emoji.ts';
 import { setHintTarget } from '../hints/HintUtils.ts';
 import { flashElement } from '../UIUtils.ts';
-
-interface ResourceCellRefs {
-  value: HTMLSpanElement;
-  cap: HTMLSpanElement;
-  rate: HTMLSpanElement;
-  busy: HTMLSpanElement;
-}
 
 interface FacilityCellRefs {
   efficiency?: HTMLSpanElement;
   count: HTMLSpanElement;
   buyGroup?: BulkBuyGroup;
-  locked?: HTMLSpanElement;
 }
 
 interface FacilityDef {
@@ -30,16 +21,6 @@ interface FacilityDef {
   shortLabel: string;
   longLabel: string;
 }
-
-const RESOURCE_ORDER: Array<{ id: SupplyResourceId; shortLabel: string; longLabel: string }> = [
-  { id: 'labor', shortLabel: 'Labor', longLabel: 'Labor' },
-  { id: 'material', shortLabel: 'Material', longLabel: 'Materials' },
-  { id: 'solarPanels', shortLabel: 'Solar', longLabel: 'Solar Panels' },
-  { id: 'robots', shortLabel: 'Robots', longLabel: 'Worker Robots' },
-  { id: 'gpus', shortLabel: 'GPUs', longLabel: 'Compute GPUs' },
-  { id: 'rockets', shortLabel: 'Rockets', longLabel: 'Rockets' },
-  { id: 'gpuSatellites', shortLabel: 'GPU Sats', longLabel: 'Orbital GPU Satellites' },
-];
 
 const FACILITY_ORDER: FacilityDef[] = [
   { id: 'materialMine', shortLabel: 'Mines', longLabel: 'Material Mines' },
@@ -50,16 +31,6 @@ const FACILITY_ORDER: FacilityDef[] = [
   { id: 'gpuSatelliteFactory', shortLabel: 'Sat Fab', longLabel: 'GPU Satellite Factory' },
   { id: 'massDriver', shortLabel: 'Mass Driver', longLabel: 'Mass Driver' },
 ];
-
-const RESOURCE_HINT_ID: Record<SupplyResourceId, string> = {
-  labor: 'resource.labor',
-  material: 'resource.material',
-  solarPanels: 'resource.solarPanels',
-  robots: 'resource.robots',
-  gpus: 'resource.gpus',
-  rockets: 'resource.rockets',
-  gpuSatellites: 'resource.gpuSatellites',
-};
 
 const FACILITY_HINT_ID: Record<FacilityId, string> = {
   materialMine: 'resource.material',
@@ -75,14 +46,11 @@ export class SupplyPanel implements Panel {
   readonly el: HTMLElement;
   private state: GameState;
 
-  private body!: HTMLDivElement;
-  private resourcesSection!: HTMLDivElement;
   private facilitiesSection!: HTMLDivElement;
 
   private layoutKey = '';
   private visibleLocations: LocationId[] = ['earth'];
 
-  private resourceRefs = new Map<string, ResourceCellRefs>();
   private facilityRefs = new Map<string, FacilityCellRefs>();
   private facilityPriceRefs = new Map<FacilityId, HTMLSpanElement>();
   private facilityPauseBtns = new Map<FacilityId, HTMLButtonElement>();
@@ -98,46 +66,19 @@ export class SupplyPanel implements Panel {
   }
 
   private buildBase(): void {
-    this.body = this.el.querySelector('.panel-body') as HTMLDivElement;
-
-    this.resourcesSection = document.createElement('div');
-    this.resourcesSection.className = 'panel-section';
+    const body = this.el.querySelector('.panel-body') as HTMLDivElement;
 
     this.facilitiesSection = document.createElement('div');
     this.facilitiesSection.className = 'panel-section';
     this.facilitiesSection.style.gap = '2px';
 
-    this.body.appendChild(this.resourcesSection);
-    this.body.appendChild(createPanelDivider());
-    this.body.appendChild(this.facilitiesSection);
+    body.appendChild(this.facilitiesSection);
   }
 
   private getVisibleLocations(state: GameState): LocationId[] {
     if (state.completedResearch.includes('payloadToMercury')) return ['earth', 'moon', 'mercury'];
     if (state.completedResearch.includes('payloadToMoon')) return ['earth', 'moon'];
     return ['earth'];
-  }
-
-  private isResourceUnlocked(state: GameState, location: LocationId, resource: SupplyResourceId): boolean {
-    if (resource === 'robots') {
-      if (location === 'earth') return state.completedResearch.includes('robotics1');
-      if (location === 'moon') return state.completedResearch.includes('payloadToMoon') && state.completedResearch.includes('robotics1');
-      return state.completedResearch.includes('payloadToMercury') && state.completedResearch.includes('robotics1');
-    }
-
-    if (resource === 'rockets') {
-      if (location === 'earth') return state.completedResearch.includes('rocketry');
-      if (location === 'moon') return state.completedResearch.includes('moonRocketry');
-      return state.completedResearch.includes('payloadToMercury');
-    }
-
-    if (resource === 'gpuSatellites') {
-      if (location === 'earth') return state.completedResearch.includes('rocketry');
-      if (location === 'moon') return state.completedResearch.includes('moonRocketry');
-      return false;
-    }
-
-    return true;
   }
 
   private makeGridRow(columns: number, labelMinPx: number = 93, labelFr: number = 1.35): HTMLDivElement {
@@ -154,44 +95,6 @@ export class SupplyPanel implements Panel {
     return formatNumber(typeof value === 'number' ? toBigInt(value) : value);
   }
 
-  private getResourceStockpileCap(
-    location: LocationId,
-    resource: SupplyResourceId,
-  ): { cap: bigint; label: string } | null {
-    if (resource === 'rockets' || resource === 'gpus' || resource === 'solarPanels' || resource === 'robots') {
-      return { cap: BALANCE.locationResourceStockpileCap, label: BALANCE.locationResourceStockpileCapLabel };
-    }
-    if (location === 'mercury' && resource === 'material') {
-      return { cap: BALANCE.mercuryMaterialStockpileCap, label: BALANCE.mercuryMaterialStockpileCapLabel };
-    }
-    return null;
-  }
-
-  private hasResourceProductionSetup(state: GameState, location: LocationId, resource: SupplyResourceId): boolean {
-    const facilities = state.locationFacilities[location];
-    if (resource === 'material') {
-      return facilities.materialMine > 0n || facilities.solarFactory > 0n || facilities.robotFactory > 0n || facilities.gpuFactory > 0n || facilities.rocketFactory > 0n;
-    }
-    if (resource === 'labor') {
-      return facilities.materialMine > 0n || facilities.solarFactory > 0n || facilities.robotFactory > 0n || facilities.gpuFactory > 0n || facilities.rocketFactory > 0n;
-    }
-    if (resource === 'solarPanels') {
-      return facilities.solarFactory > 0n || facilities.gpuSatelliteFactory > 0n;
-    }
-    if (resource === 'robots') {
-      return facilities.robotFactory > 0n;
-    }
-    if (resource === 'gpus') {
-      return facilities.gpuFactory > 0n || facilities.gpuSatelliteFactory > 0n;
-    }
-    if (resource === 'rockets') {
-      return facilities.rocketFactory > 0n || facilities.massDriver > 0n;
-    }
-    if (resource === 'gpuSatellites') {
-      return facilities.gpuSatelliteFactory > 0n;
-    }
-    return false;
-  }
 
   private isFacilityPaused(facility: FacilityId): boolean {
     return this.state.pausedFacilities[facility] === true;
@@ -210,26 +113,6 @@ export class SupplyPanel implements Panel {
     btn.style.color = paused ? 'var(--accent-gold)' : 'var(--text-muted)';
   }
 
-  private getBusyRocketsForLocation(state: GameState, location: LocationId): bigint {
-    const reserved = state.logisticsReservedRockets || { earthOrbit: 0n, earthMoon: 0n, moonMercury: 0n, mercurySun: 0n };
-    let busy = 0n;
-    if (location === 'earth') busy += (reserved.earthOrbit || 0n) + (reserved.earthMoon || 0n);
-    if (location === 'moon') busy += (reserved.moonMercury || 0n);
-    if (location === 'mercury') busy += (reserved.mercurySun || 0n);
-
-    const inFlight = state.transportBatches || [];
-    for (const batch of inFlight) {
-      if (getTransportRouteSource(batch.route) !== location) continue;
-      const estimated = estimateTransportRockets(state, batch.route, batch.payload, batch.amount, batch.launchedRockets);
-      busy += toBigInt(estimated);
-    }
-
-    const returns = state.rocketReturnBatches || [];
-    for (const batch of returns) {
-      if (batch.location === location) busy += batch.amount;
-    }
-    return busy;
-  }
 
   private getFacilityInfo(facility: FacilityId): { price: string; output: string } {
     if (facility === 'materialMine') {
@@ -319,101 +202,10 @@ export class SupplyPanel implements Panel {
     const facilityMetaFontSize = dense ? '0.58rem' : '0.62rem';
     const facilityLabelMinPx = dense ? 100 : 108;
     const facilityLabelFr = dense ? 1.45 : 1.5;
-    this.resourceRefs.clear();
     this.facilityRefs.clear();
     this.facilityPriceRefs.clear();
     this.facilityPauseBtns.clear();
-    this.resourcesSection.innerHTML = '';
     this.facilitiesSection.innerHTML = '';
-
-    const resTitle = document.createElement('div');
-    resTitle.className = 'panel-section-title';
-    resTitle.textContent = 'RESOURCES';
-    this.resourcesSection.appendChild(resTitle);
-
-    if (this.visibleLocations.length > 1) {
-      const headerRow = this.makeGridRow(this.visibleLocations.length);
-      const empty = document.createElement('span');
-      headerRow.appendChild(empty);
-
-      for (const location of this.visibleLocations) {
-        const title = document.createElement('span');
-        title.className = 'label';
-        title.style.fontSize = locationHeaderFontSize;
-        title.style.textAlign = 'right';
-        title.style.justifySelf = 'end';
-        title.innerHTML = locationLabelHtml(location, location.toUpperCase());
-        headerRow.appendChild(title);
-      }
-
-      this.resourcesSection.appendChild(headerRow);
-    }
-
-    for (const resource of RESOURCE_ORDER) {
-      const anyUnlocked = this.visibleLocations.some((location) => this.isResourceUnlocked(state, location, resource.id));
-      if (!anyUnlocked) continue;
-
-      const row = this.makeGridRow(this.visibleLocations.length);
-      row.style.marginBottom = '0';
-
-      const label = document.createElement('span');
-      label.className = 'label';
-      label.style.fontSize = '0.74rem';
-      label.style.whiteSpace = 'nowrap';
-      label.style.overflow = 'hidden';
-      label.style.textOverflow = 'ellipsis';
-      label.innerHTML = resourceLabelHtml(resource.id, compact ? resource.shortLabel : resource.longLabel);
-      label.title = resource.longLabel;
-      setHintTarget(label, RESOURCE_HINT_ID[resource.id]);
-      row.appendChild(label);
-
-      for (const location of this.visibleLocations) {
-        const cell = document.createElement('div');
-        cell.style.display = 'flex';
-        cell.style.flexDirection = 'column';
-        cell.style.alignItems = 'flex-end';
-        cell.style.gap = '0';
-
-        const valueLine = document.createElement('div');
-        valueLine.style.display = 'flex';
-        valueLine.style.alignItems = 'baseline';
-        valueLine.style.gap = '2px';
-
-        const value = document.createElement('span');
-        value.className = 'value';
-        value.style.fontSize = '0.76rem';
-        value.style.fontWeight = '600';
-        valueLine.appendChild(value);
-
-        const cap = document.createElement('span');
-        cap.style.fontSize = '0.58rem';
-        cap.style.fontWeight = '600';
-        cap.style.color = 'var(--accent-gold)';
-        valueLine.appendChild(cap);
-        cell.appendChild(valueLine);
-
-        const rate = document.createElement('span');
-        rate.style.fontSize = '0.64rem';
-        rate.style.color = 'var(--text-muted)';
-
-        const busy = document.createElement('span');
-        busy.style.fontSize = '0.62rem';
-        busy.style.color = 'var(--text-muted)';
-
-        cell.appendChild(rate);
-        cell.appendChild(busy);
-
-        this.resourceRefs.set(`${resource.id}:${location}`, { value, cap, rate, busy });
-        row.appendChild(cell);
-      }
-
-      this.resourcesSection.appendChild(row);
-    }
-
-    const facTitle = document.createElement('div');
-    facTitle.className = 'panel-section-title';
-    facTitle.textContent = 'PRODUCTION FACILITIES';
-    this.facilitiesSection.appendChild(facTitle);
 
     if (this.visibleLocations.length > 1) {
       const headerRow = this.makeGridRow(this.visibleLocations.length, facilityLabelMinPx, facilityLabelFr);
@@ -527,7 +319,7 @@ export class SupplyPanel implements Panel {
           locked.style.color = 'var(--text-muted)';
           locked.textContent = unavailableByDesign ? 'n/a' : 'locked';
           cell.appendChild(locked);
-          this.facilityRefs.set(key, { count: document.createElement('span'), locked });
+          this.facilityRefs.set(key, { count: document.createElement('span') });
         } else {
           const countLine = document.createElement('div');
           countLine.style.display = 'flex';
@@ -593,50 +385,6 @@ export class SupplyPanel implements Panel {
     if (layoutKey !== this.layoutKey) {
       this.layoutKey = layoutKey;
       this.rebuildLayout(state);
-    }
-
-    for (const resource of RESOURCE_ORDER) {
-      for (const location of this.visibleLocations) {
-        const refs = this.resourceRefs.get(`${resource.id}:${location}`);
-        if (!refs) continue;
-
-        const stock = state.locationResources[location][resource.id];
-        const income = state.locationProductionPerMin[location][resource.id];
-        const expense = state.locationConsumptionPerMin[location][resource.id];
-        const net = income - expense;
-        const showZeroRate = income === 0n && expense === 0n && this.hasResourceProductionSetup(state, location, resource.id);
-
-        refs.value.textContent = formatNumber(stock);
-        const capInfo = this.getResourceStockpileCap(location, resource.id);
-        if (capInfo) {
-          const atCap = stock >= capInfo.cap;
-          refs.cap.textContent = atCap ? `/${capInfo.label}` : '';
-          refs.value.style.color = atCap ? 'var(--accent-gold)' : '';
-        } else {
-          refs.cap.textContent = '';
-          refs.value.style.color = '';
-        }
-        if (this.visibleLocations.length === 1) {
-          if (income !== 0n || expense !== 0n || showZeroRate) {
-            refs.rate.textContent = `+${formatNumber(income)} / -${formatNumber(expense)} /m`;
-          } else {
-            refs.rate.textContent = '';
-          }
-          refs.rate.style.color = net < 0n ? 'var(--accent-red)' : 'var(--text-muted)';
-        } else {
-          refs.rate.textContent = (net !== 0n || showZeroRate)
-            ? `${net >= 0n ? '+' : ''}${formatNumber(net)}/m`
-            : '';
-          refs.rate.style.color = net < 0n ? 'var(--accent-red)' : 'var(--text-muted)';
-        }
-
-        if (resource.id === 'rockets') {
-          const busy = this.getBusyRocketsForLocation(state, location);
-          refs.busy.textContent = busy > 0n ? `Busy: ${formatNumber(busy)}` : '';
-        } else {
-          refs.busy.textContent = '';
-        }
-      }
     }
 
     for (const facility of FACILITY_ORDER) {

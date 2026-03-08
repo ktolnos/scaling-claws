@@ -16,7 +16,7 @@
  * - No research should be useless, each research should exist to solve some bottleneck. E.g. if the player is never constrained by the data, the synthetic data research would be useless. This should be resolved by adjusting data requirements in such a way that the player is constrained by the data when the research is unlocked. This applies to all research.
  */
 
-import { toBigInt, scaleBigInt, mulB, fromBigInt, scaleB } from './utils.ts';
+import { toBigInt, scaleBigInt, mulB, fromBigInt, scaleB, divB } from './utils.ts';
 
 const USD_PER_MATERIAL = 40; // midpoint of 25-50 USD/ton proxy
 const USD_PER_LABOR = 4_000; // 1 labor = 1 person-month
@@ -114,6 +114,8 @@ export const ResearchIds = {
   algoEfficiency2: 'algoEfficiency2',
   algoEfficiency3: 'algoEfficiency3',
   algoEfficiency4: 'algoEfficiency4',
+  apiAutoPricing: 'apiAutoPricing',
+  computeAutoAllocation: 'computeAutoAllocation',
   synthData1: 'synthData1',
   synthData2: 'synthData2',
   synthData3: 'synthData3',
@@ -419,6 +421,8 @@ export const BALANCE = {
     { id: 'algoEfficiency4', name: 'Algo Efficiency IV',  cost: toBigInt(2000_000_000),  prereqs: ['algoEfficiency3'],  description: 'Training 3x faster', algoEfficiencyMultiplier: ALGO_EFFICIENCY_MULTIPLIER },
 
     { id: 'synthData1', name: 'API Data Generation I',   cost: toBigInt(5),   prereqs: [],             description: 'API users generate training data', apiUserSynthBaseRate: API_USER_SYNTH_BASE_RATE },
+    { id: 'apiAutoPricing', name: 'API Auto Pricing',   cost: toBigInt(2),   prereqs: ['synthData1'], description: 'Unlock automatic API price adjustments' },
+    { id: 'computeAutoAllocation', name: 'Compute Auto Allocation', cost: toBigInt(2), prereqs: ['apiAutoPricing'], description: 'Unlock automatic compute allocation' },
     { id: 'synthData2', name: 'API Data Generation II',  cost: toBigInt(1000),  prereqs: ['synthData1'], description: 'API user data generation x2', apiUserSynthRateMultiplier: API_USER_SYNTH_RATE_MULTIPLIER },
     { id: 'synthData3', name: 'API Data Generation III', cost: toBigInt(10000), prereqs: ['synthData2'], description: 'API user data generation x2', apiUserSynthRateMultiplier: API_USER_SYNTH_RATE_MULTIPLIER },
     { id: 'syntheticData1', name: 'Synthetic Data I',    cost: toBigInt(20000),  prereqs: ['synthData3'], description: 'Unlock AI Data Synthesizer job' },
@@ -856,9 +860,97 @@ export function getApiDemand(
   return Math.max(0, Math.min(cap, saturatedDemand));
 }
 
+function normalizeApiPriceToStep(price: number): number {
+  return Math.max(1, Math.round(price));
+}
+
+function getApiRevenueAtPrice(
+  awareness: number,
+  intelligence: number,
+  capacityUsers: number,
+  price: number,
+): number {
+  const safeCapacity = Math.max(0, capacityUsers);
+  if (safeCapacity <= 0) return 0;
+  const safePrice = normalizeApiPriceToStep(price);
+  const demand = getApiDemand(awareness, intelligence, safePrice);
+  const activeUsers = Math.min(safeCapacity, demand);
+  return activeUsers * safePrice;
+}
+
+/**
+ * Approximate revenue-maximizing API price (USD / user / min) for current market state.
+ * Uses numeric search and returns a value aligned to UI/action $1 price steps.
+ */
+export function getApiOptimalPrice(
+  awareness: number,
+  intelligence: number,
+  capacityUsers: number,
+): number {
+  const safeCapacity = Math.max(0, capacityUsers);
+  if (safeCapacity <= 0) return 1;
+
+  const minPrice = 1;
+  const maxSearchPrice = 1_000_000;
+
+  // Expand upper bound until revenue stops increasing.
+  let right = minPrice;
+  let prevRevenue = getApiRevenueAtPrice(awareness, intelligence, safeCapacity, right);
+  while (right < maxSearchPrice) {
+    const next = right * 2;
+    const nextRevenue = getApiRevenueAtPrice(awareness, intelligence, safeCapacity, next);
+    right = next;
+    if (nextRevenue <= prevRevenue) break;
+    prevRevenue = nextRevenue;
+  }
+
+  let left = minPrice;
+  for (let i = 0; i < 40; i++) {
+    const m1 = left + (right - left) / 3;
+    const m2 = right - (right - left) / 3;
+    const r1 = getApiRevenueAtPrice(awareness, intelligence, safeCapacity, m1);
+    const r2 = getApiRevenueAtPrice(awareness, intelligence, safeCapacity, m2);
+    if (r1 < r2) {
+      left = m1;
+    } else {
+      right = m2;
+    }
+  }
+
+  const center = (left + right) / 2;
+  const base = normalizeApiPriceToStep(center);
+  let bestPrice = base;
+  let bestRevenue = getApiRevenueAtPrice(awareness, intelligence, safeCapacity, base);
+
+  // Check nearby rounded prices to avoid missing the stepped-price optimum.
+  for (let stepOffset = -8; stepOffset <= 8; stepOffset++) {
+    const candidate = normalizeApiPriceToStep(base + stepOffset);
+    const revenue = getApiRevenueAtPrice(awareness, intelligence, safeCapacity, candidate);
+    if (revenue > bestRevenue) {
+      bestRevenue = revenue;
+      bestPrice = candidate;
+    }
+  }
+
+  return bestPrice;
+}
+
 /** Effective inference cost after API optimization (PFLOPS per active user). */
 export function getApiPflopsPerUser(apiEfficiency: number): number {
   return BALANCE.apiPflopsPerUser / apiEfficiency;
+}
+
+/** Minimum whole-percent compute allocation needed to run assigned agents. */
+export function getAgentsRequiredAllocationPct(totalPflops: bigint, assignedAgents: bigint): number {
+  if (assignedAgents <= 0n) return 0;
+  if (totalPflops <= 0n) return 100;
+  const pflopsPerAgent = toBigInt(BALANCE.pflopsPerGpu);
+  for (let pct = 0; pct <= 100; pct++) {
+    const allocatedPflops = mulB(totalPflops, toBigInt(pct)) / 100n;
+    const activeAgentsAtPct = divB(allocatedPflops, pflopsPerAgent);
+    if (activeAgentsAtPct >= assignedAgents) return pct;
+  }
+  return 100;
 }
 
 function getGpuSatelliteOutputDivisor(): bigint {
@@ -1015,6 +1107,14 @@ export function getApiUserSynthRateFromResearch(completedResearch: string[]): bi
   }
   if (baseRate <= 0n) return 0n;
   return baseRate * multiplier;
+}
+
+export function isApiAutoPricingUnlocked(completedResearch: string[]): boolean {
+  return completedResearch.includes(ResearchIds.apiAutoPricing);
+}
+
+export function isComputeAutoAllocationUnlocked(completedResearch: string[]): boolean {
+  return completedResearch.includes(ResearchIds.computeAutoAllocation);
 }
 
 /**

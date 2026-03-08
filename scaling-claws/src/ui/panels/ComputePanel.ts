@@ -1,7 +1,17 @@
 import type { GameState } from '../../game/GameState.ts';
 import { getTotalAssignedAgents } from '../../game/GameState.ts';
 import type { Panel } from '../PanelManager.ts';
-import { BALANCE, getApiPflopsPerUser, getGpuSatellitePflopsPerUnit } from '../../game/BalanceConfig.ts';
+import {
+  BALANCE,
+  getApiOptimalPrice,
+  getApiPflopsPerUser,
+  getAgentsRequiredAllocationPct,
+  getTrainingDataPricePerGB,
+  getTrainingDataPurchaseCost,
+  getTrainingDataRemainingPurchaseCapGB,
+  isApiAutoPricingUnlocked,
+  isComputeAutoAllocationUnlocked,
+} from '../../game/BalanceConfig.ts';
 import { formatNumber, formatMoney, fromBigInt, toBigInt, divB, scaleB, mulB } from '../../game/utils.ts';
 import { dispatchGameAction } from '../../game/ActionDispatcher.ts';
 import { BulkBuyGroup, getVisibleBuyTiers } from '../components/BulkBuyGroup.ts';
@@ -11,6 +21,21 @@ import { UI_EMOJI, emojiHtml, moneyWithEmojiHtml, resourceLabelHtml } from '../e
 import { setHintTarget } from '../hints/HintUtils.ts';
 import { flashElement } from '../UIUtils.ts';
 
+interface TrainingProgressRefs {
+  container: HTMLDivElement;
+  label: HTMLDivElement;
+  barFill: HTMLDivElement;
+  batchBarFill: HTMLDivElement;
+  detail: HTMLDivElement;
+}
+
+interface TrainingNextRefs {
+  container: HTMLDivElement;
+  info: HTMLDivElement;
+  reqs: HTMLDivElement;
+  btn: HTMLButtonElement;
+}
+
 export class ComputePanel implements Panel {
   readonly el: HTMLElement;
   private state: GameState;
@@ -18,9 +43,6 @@ export class ComputePanel implements Panel {
   private modelNameEl!: HTMLSpanElement;
   private gpuStatusEl!: HTMLSpanElement;
   private gpuStockBarFill!: HTMLDivElement;
-  private unassignedCountEl!: HTMLSpanElement;
-  private unassignedLabelEl!: HTMLSpanElement;
-  private agentEfficiencyEl!: HTMLDivElement;
   private computeAllocationWrap!: HTMLDivElement;
   private allocAgentsPctEl!: HTMLSpanElement;
   private allocAgentsNeedEl!: HTMLSpanElement;
@@ -34,6 +56,8 @@ export class ComputePanel implements Panel {
   private allocSegTraining!: HTMLDivElement;
   private allocHandleLeft!: HTMLButtonElement;
   private allocHandleRight!: HTMLButtonElement;
+  private computeAutoAllocRow!: HTMLDivElement;
+  private computeAutoAllocBtn!: HTMLButtonElement;
   private activeAllocHandle: 'left' | 'right' | null = null;
   private readonly onAllocPointerMove = (ev: PointerEvent) => this.handleAllocationPointerMove(ev);
   private readonly onAllocPointerUp = () => this.stopAllocationDrag();
@@ -46,15 +70,21 @@ export class ComputePanel implements Panel {
   private datacenterSection!: HTMLDivElement;
   private datacenterHintEl!: HTMLDivElement;
   private apiDivider!: HTMLHRElement;
+  private trainingSection!: HTMLDivElement;
+  private trainingProgressRefs!: TrainingProgressRefs;
+  private trainingNextRefs!: TrainingNextRefs;
+  private trainingDataInfo!: HTMLSpanElement;
+  private trainingDataControls!: CountBulkBuyControls;
+  private trainingAllocHint!: HTMLDivElement;
+  private nextTrainingType: 'ft' | 'aries' | null = null;
+  private nextTrainingIdx: number = -1;
 
   private upgradeBtn?: HTMLButtonElement;
-  private upgradeBtnText?: HTMLSpanElement;
   private upgradeBtnReq?: HTMLSpanElement;
   private upgradeInfo?: HTMLElement;
   private datacenterRows: {
     row: HTMLElement;
     info: HTMLSpanElement;
-    costInfo: HTMLSpanElement;
     costMoney: HTMLSpanElement;
     costLabor: HTMLSpanElement;
     count: HTMLSpanElement;
@@ -71,6 +101,8 @@ export class ComputePanel implements Panel {
   private priceDecreaseGroup!: BulkBuyGroup;
   private apiPriceVal!: HTMLSpanElement;
   private priceIncreaseGroup!: BulkBuyGroup;
+  private apiAutoPriceRow!: HTMLDivElement;
+  private apiAutoPriceBtn!: HTMLButtonElement;
   
   private apiDemandBar!: HTMLDivElement;
   private apiDemandBarFill!: HTMLDivElement;
@@ -108,40 +140,6 @@ export class ComputePanel implements Panel {
     modelRow.appendChild(modelLabel);
     modelRow.appendChild(this.modelNameEl);
     body.appendChild(modelRow);
-
-    // Unassigned Agents
-    const unassignedRow = document.createElement('div');
-    unassignedRow.className = 'panel-row';
-    this.unassignedLabelEl = document.createElement('span');
-    this.unassignedLabelEl.className = 'label';
-    this.unassignedLabelEl.textContent = 'Unassigned Agents:';
-    setHintTarget(this.unassignedLabelEl, 'mechanic.agentCapacity');
-    this.unassignedCountEl = document.createElement('span');
-    this.unassignedCountEl.className = 'value';
-    this.unassignedCountEl.style.fontWeight = '600';
-    unassignedRow.appendChild(this.unassignedLabelEl);
-    unassignedRow.appendChild(this.unassignedCountEl);
-    body.appendChild(unassignedRow);
-
-    this.agentEfficiencyEl = document.createElement('div');
-    this.agentEfficiencyEl.style.fontSize = '0.72rem';
-    this.agentEfficiencyEl.style.color = 'var(--text-secondary)';
-    this.agentEfficiencyEl.style.marginTop = '-2px';
-    this.agentEfficiencyEl.style.marginBottom = '2px';
-    body.appendChild(this.agentEfficiencyEl);
-
-    // Flash listeners
-    document.addEventListener('flash-unassigned', () => {
-      this.unassignedCountEl.classList.remove('flash-red');
-      void this.unassignedCountEl.offsetWidth; // trigger reflow
-      this.unassignedCountEl.classList.add('flash-red');
-    });
-
-    document.addEventListener('flash-gpu-capacity', () => {
-      this.unassignedCountEl.classList.remove('flash-red');
-      void this.unassignedCountEl.offsetWidth; // trigger reflow
-      this.unassignedCountEl.classList.add('flash-red');
-    });
 
     // Unified compute allocation slider
     this.computeAllocationWrap = document.createElement('div');
@@ -209,6 +207,33 @@ export class ComputePanel implements Panel {
     this.allocSliderTrack.appendChild(this.allocHandleRight);
 
     this.computeAllocationWrap.appendChild(this.allocSliderTrack);
+
+    this.computeAutoAllocRow = document.createElement('div');
+    this.computeAutoAllocRow.className = 'panel-row api-auto-price-row';
+    this.computeAutoAllocRow.style.fontSize = '0.82rem';
+    this.computeAutoAllocRow.style.paddingTop = '2px';
+
+    const autoAllocLabel = document.createElement('span');
+    autoAllocLabel.className = 'label';
+    autoAllocLabel.textContent = 'Auto Allocation:';
+    this.computeAutoAllocRow.appendChild(autoAllocLabel);
+
+    this.computeAutoAllocBtn = document.createElement('button');
+    this.computeAutoAllocBtn.type = 'button';
+    this.computeAutoAllocBtn.className = 'api-auto-price-toggle';
+    this.computeAutoAllocBtn.setAttribute('aria-label', 'Toggle compute auto allocation');
+    this.computeAutoAllocBtn.setAttribute('aria-pressed', 'false');
+    this.computeAutoAllocBtn.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const currentlyPressed = this.computeAutoAllocBtn.getAttribute('aria-pressed') === 'true';
+      dispatchGameAction(this.state, {
+        type: 'setComputeAutoAllocation',
+        enabled: !currentlyPressed,
+      });
+    });
+    this.computeAutoAllocRow.appendChild(this.computeAutoAllocBtn);
+    this.computeAllocationWrap.appendChild(this.computeAutoAllocRow);
     body.appendChild(this.computeAllocationWrap);
 
     this.datacenterDivider = createPanelDivider();
@@ -251,6 +276,10 @@ export class ComputePanel implements Panel {
     gpuStatusRow.appendChild(this.gpuStatusEl);
     body.appendChild(gpuStatusRow);
 
+    document.addEventListener('flash-gpu-capacity', () => {
+      flashElement(this.gpuStatusEl);
+    });
+
     const gpuStockBar = document.createElement('div');
     gpuStockBar.className = 'progress-bar';
     gpuStockBar.style.width = '100%';
@@ -283,9 +312,7 @@ export class ComputePanel implements Panel {
     this.upgradeInfo.className = 'label';
     uRow.appendChild(this.upgradeInfo);
     this.upgradeBtn = document.createElement('button');
-    this.upgradeBtnText = document.createElement('span');
-    this.upgradeBtnText.textContent = 'Upgrade ';
-    this.upgradeBtn.appendChild(this.upgradeBtnText);
+    this.upgradeBtn.appendChild(document.createTextNode('Upgrade '));
     this.upgradeBtnReq = document.createElement('span');
     this.upgradeBtn.appendChild(this.upgradeBtnReq);
 
@@ -340,8 +367,25 @@ export class ComputePanel implements Panel {
 
         row.appendChild(controls.el);
         this.datacenterSection.appendChild(row);
-        this.datacenterRows[i] = { row, info, costInfo, costMoney, costLabor, count: controls.countEl, bulk: controls.bulk };
+        this.datacenterRows[i] = { row, info, costMoney, costLabor, count: controls.countEl, bulk: controls.bulk };
     }
+
+    body.appendChild(createPanelDivider());
+
+    this.trainingSection = document.createElement('div');
+    this.trainingSection.className = 'panel-section hidden';
+
+    const trainingTitle = document.createElement('div');
+    trainingTitle.className = 'panel-section-title';
+    trainingTitle.textContent = 'TRAINING';
+    this.trainingSection.appendChild(trainingTitle);
+
+    this.trainingProgressRefs = this.buildTrainingProgressView(this.trainingSection);
+    this.trainingNextRefs = this.buildTrainingNextView(this.trainingSection);
+    this.buildTrainingDataView(this.trainingSection);
+    this.buildTrainingAllocationHint(this.trainingSection);
+
+    body.appendChild(this.trainingSection);
 
     // API Services section
     this.apiSection = document.createElement('div');
@@ -448,6 +492,33 @@ export class ComputePanel implements Panel {
     priceRow.appendChild(priceControls);
     this.apiUnlockedContainer.appendChild(priceRow);
 
+    this.apiAutoPriceRow = document.createElement('div');
+    this.apiAutoPriceRow.className = 'panel-row';
+    this.apiAutoPriceRow.classList.add('api-auto-price-row');
+    this.apiAutoPriceRow.style.fontSize = '0.82rem';
+
+    const autoPriceLabel = document.createElement('span');
+    autoPriceLabel.className = 'label';
+    autoPriceLabel.textContent = 'Auto Price:';
+    this.apiAutoPriceRow.appendChild(autoPriceLabel);
+
+    this.apiAutoPriceBtn = document.createElement('button');
+    this.apiAutoPriceBtn.type = 'button';
+    this.apiAutoPriceBtn.className = 'api-auto-price-toggle';
+    this.apiAutoPriceBtn.setAttribute('aria-label', 'Toggle API auto pricing');
+    this.apiAutoPriceBtn.setAttribute('aria-pressed', 'false');
+    this.apiAutoPriceBtn.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const currentlyPressed = this.apiAutoPriceBtn.getAttribute('aria-pressed') === 'true';
+      dispatchGameAction(this.state, {
+        type: 'setApiAutoPrice',
+        enabled: !currentlyPressed,
+      });
+    });
+    this.apiAutoPriceRow.appendChild(this.apiAutoPriceBtn);
+    this.apiUnlockedContainer.appendChild(this.apiAutoPriceRow);
+
     // Optimize API
     this.apiImproveRow = document.createElement('div');
     this.apiImproveRow.className = 'panel-row';
@@ -519,6 +590,119 @@ export class ComputePanel implements Panel {
 
   }
 
+  private buildTrainingProgressView(parent: HTMLElement): TrainingProgressRefs {
+    const container = document.createElement('div');
+    container.style.padding = '4px 0';
+    container.style.display = 'none';
+
+    const label = document.createElement('div');
+    label.style.fontSize = '0.82rem';
+    container.appendChild(label);
+
+    const bar = document.createElement('div');
+    bar.className = 'progress-bar';
+    const barFill = document.createElement('div');
+    barFill.className = 'progress-bar-fill';
+    barFill.style.background = 'var(--accent-purple)';
+    bar.appendChild(barFill);
+    container.appendChild(bar);
+
+    const batchBar = document.createElement('div');
+    batchBar.className = 'progress-bar';
+    batchBar.style.height = '4px';
+    batchBar.style.marginTop = '2px';
+    const batchBarFill = document.createElement('div');
+    batchBarFill.className = 'progress-bar-fill';
+    batchBarFill.style.background = 'var(--accent-purple)';
+    batchBarFill.style.opacity = '0.7';
+    batchBar.appendChild(batchBarFill);
+    container.appendChild(batchBar);
+
+    const detail = document.createElement('div');
+    detail.style.fontSize = '0.72rem';
+    detail.style.color = 'var(--text-muted)';
+    container.appendChild(detail);
+
+    parent.appendChild(container);
+    return { container, label, barFill, batchBarFill, detail };
+  }
+
+  private getTrainingProgressHundredths(progress: bigint, required: bigint): number {
+    if (required <= 0n) return 0;
+    const hundredths = Number((progress * 10000n) / required);
+    return Math.max(0, Math.min(10000, hundredths));
+  }
+
+  private updateActiveTrainingProgress(name: string, progress: bigint, required: bigint): void {
+    const totalHundredths = this.getTrainingProgressHundredths(progress, required);
+    const wholePct = Math.floor(totalHundredths / 100);
+    const batchPct = wholePct >= 100 ? 100 : (totalHundredths % 100);
+
+    this.trainingProgressRefs.container.style.display = '';
+    this.trainingNextRefs.container.style.display = 'none';
+    this.trainingProgressRefs.label.textContent = `Training: ${name} ${wholePct}%`;
+    this.trainingProgressRefs.barFill.style.width = `${wholePct}%`;
+    this.trainingProgressRefs.batchBarFill.style.width = `${batchPct}%`;
+    this.trainingProgressRefs.detail.innerHTML =
+      `${formatNumber(progress)} ${emojiHtml('flops')} / ${formatNumber(required)} PFLOPS-hrs`;
+  }
+
+  private buildTrainingNextView(parent: HTMLElement): TrainingNextRefs {
+    const container = document.createElement('div');
+    container.style.fontSize = '0.82rem';
+    container.style.padding = '4px 0';
+    container.style.display = 'none';
+
+    const info = document.createElement('div');
+    container.appendChild(info);
+
+    const reqs = document.createElement('div');
+    reqs.style.color = 'var(--text-secondary)';
+    reqs.style.fontSize = '0.75rem';
+    container.appendChild(reqs);
+
+    const btn = document.createElement('button');
+    btn.className = 'btn-primary';
+    btn.style.marginTop = '4px';
+    btn.addEventListener('click', () => {
+      if (this.nextTrainingType === 'ft') {
+        dispatchGameAction(this.state, { type: 'startFineTune', index: this.nextTrainingIdx });
+      } else if (this.nextTrainingType === 'aries') {
+        dispatchGameAction(this.state, { type: 'startAriesTraining', index: this.nextTrainingIdx });
+      }
+    });
+    container.appendChild(btn);
+
+    parent.appendChild(container);
+    return { container, info, reqs, btn };
+  }
+
+  private buildTrainingDataView(parent: HTMLElement): void {
+    const row = document.createElement('div');
+    row.className = 'panel-row';
+    row.style.fontSize = '0.82rem';
+
+    this.trainingDataInfo = document.createElement('span');
+    this.trainingDataInfo.className = 'label';
+    row.appendChild(this.trainingDataInfo);
+
+    this.trainingDataControls = new CountBulkBuyControls((amount) => {
+      dispatchGameAction(this.state, { type: 'buyTrainingData', amountGB: amount });
+    }, { countPrefix: '', maxedLabel: 'SOLD\nOUT' });
+    row.appendChild(this.trainingDataControls.el);
+
+    parent.appendChild(row);
+  }
+
+  private buildTrainingAllocationHint(parent: HTMLElement): void {
+    this.trainingAllocHint = document.createElement('div');
+    this.trainingAllocHint.className = 'warning-text';
+    this.trainingAllocHint.style.fontSize = '0.72rem';
+    this.trainingAllocHint.style.display = 'none';
+    this.trainingAllocHint.textContent = 'Set training allocation above 0% to train!';
+    parent.appendChild(this.trainingAllocHint);
+  }
+
   private isTrainingAllocationUnlocked(state: GameState): boolean {
     return state.intelligence >= BALANCE.trainingUnlockIntel;
   }
@@ -532,69 +716,7 @@ export class ComputePanel implements Panel {
   }
 
   private getAgentsRequiredPct(state: GameState): number {
-    const assignedAgents = getTotalAssignedAgents(state);
-    if (assignedAgents <= 0n) return 0;
-
-    // Minimum agent allocation needed so assigned agents can run without compute bottleneck.
-    const pflopsPerAgent = toBigInt(BALANCE.pflopsPerGpu);
-    for (let pct = 100; pct >= 0; pct--) {
-      const allocatedPflops = mulB(state.totalPflops, toBigInt(pct)) / 100n;
-      const activeAgentsAtPct = divB(allocatedPflops, pflopsPerAgent);
-      if (activeAgentsAtPct <= assignedAgents) return pct;
-    }
-    return 0;
-  }
-
-  private updateAgentEfficiencyDisplay(state: GameState): void {
-    const hasAnyDatacenter = state.datacenters.some((count) => count > 0n);
-    const showAgentEfficiency = state.apiUnlocked || hasAnyDatacenter;
-    this.agentEfficiencyEl.style.display = showAgentEfficiency ? '' : 'none';
-    if (!showAgentEfficiency) return;
-
-    const efficiencyPct = Math.max(0, Math.round(state.agentEfficiency * 100));
-    const assignedAgents = getTotalAssignedAgents(state);
-    const pflopsNeeded = scaleB(assignedAgents, BALANCE.pflopsPerGpu);
-    const computeAllocPct = pflopsNeeded > 0n
-      ? Math.max(0, Math.min(100, Math.round(fromBigInt(divB(state.freeCompute, pflopsNeeded)) * 100)))
-      : 100;
-    const powerPct = this.getGlobalPowerEfficiencyPct(state);
-    const efficiencyColor = efficiencyPct === 100 ? 'var(--text-primary)' : 'var(--accent-red)';
-    const reasons: Array<{ label: string; pct: number }> = [];
-    if (computeAllocPct < 100) reasons.push({ label: 'Compute Allocation', pct: computeAllocPct });
-    if (powerPct < 100) reasons.push({ label: 'Insufficient⚡', pct: powerPct });
-
-    let breakdown = '';
-    if (reasons.length === 1) {
-      breakdown = ` (${reasons[0].label})`;
-    } else if (reasons.length >= 2) {
-      breakdown = ` (${reasons[0].pct}% ${reasons[0].label} x ${reasons[1].pct}% ${reasons[1].label})`;
-    }
-
-    this.agentEfficiencyEl.innerHTML = `Agents Efficiency: <span style="color:${efficiencyColor}">${efficiencyPct}%</span>${breakdown}`;
-  }
-
-  private getGlobalPowerEfficiencyPct(state: GameState): number {
-    if (!state.isPostGpuTransition) return 100;
-
-    let earthRawPflops = scaleB(state.installedGpuCount, BALANCE.pflopsPerGpu);
-    earthRawPflops = scaleB(earthRawPflops, state.gpuFlopsBonus);
-
-    let moonRawPflops = scaleB(state.locationResources.moon.installedGpus, BALANCE.pflopsPerGpu);
-    moonRawPflops = scaleB(moonRawPflops, state.gpuFlopsBonus);
-
-    const mercuryInstalled = state.locationResources?.mercury?.installedGpus ?? 0n;
-    let mercuryRawPflops = scaleB(mercuryInstalled, BALANCE.pflopsPerGpu);
-    mercuryRawPflops = scaleB(mercuryRawPflops, state.gpuFlopsBonus);
-
-    const orbitalSatellites = state.satellites + state.dysonSwarmSatellites;
-    let orbitalRawPflops = mulB(orbitalSatellites, getGpuSatellitePflopsPerUnit());
-    orbitalRawPflops = scaleB(orbitalRawPflops, state.gpuFlopsBonus);
-
-    const rawTotalPflops = earthRawPflops + moonRawPflops + mercuryRawPflops + orbitalRawPflops;
-    if (rawTotalPflops <= 0n) return 100;
-
-    const powerRatio = fromBigInt(divB(state.totalPflops, rawTotalPflops));
-    return Math.max(0, Math.min(100, Math.round(powerRatio * 100)));
+    return getAgentsRequiredAllocationPct(state.totalPflops, getTotalAssignedAgents(state));
   }
 
   private getLoadRatio(used: bigint, capacity: bigint): number {
@@ -661,9 +783,25 @@ export class ComputePanel implements Panel {
     const dual = trainingUnlocked && inferenceUnlocked;
     this.allocHandleLeft.style.display = '';
     this.allocHandleRight.style.display = dual ? '' : 'none';
+
+    const autoAllocationUnlocked = isComputeAutoAllocationUnlocked(state.completedResearch);
+    this.computeAutoAllocRow.style.display = autoAllocationUnlocked ? '' : 'none';
+    this.computeAutoAllocBtn.classList.toggle('is-on', autoAllocationUnlocked && state.computeAutoAllocationEnabled);
+    this.computeAutoAllocBtn.setAttribute(
+      'aria-pressed',
+      autoAllocationUnlocked && state.computeAutoAllocationEnabled ? 'true' : 'false',
+    );
+
+    const manualAllocationEnabled = !(autoAllocationUnlocked && state.computeAutoAllocationEnabled);
+    this.allocSliderTrack.style.opacity = manualAllocationEnabled ? '' : '0.5';
+    this.allocSliderTrack.style.pointerEvents = manualAllocationEnabled ? '' : 'none';
+    if (!manualAllocationEnabled && this.activeAllocHandle !== null) {
+      this.stopAllocationDrag();
+    }
   }
 
   private startAllocationDrag(handle: 'left' | 'right', ev: PointerEvent): void {
+    if (this.state.computeAutoAllocationEnabled) return;
     const trainingUnlocked = this.isTrainingAllocationUnlocked(this.state);
     const inferenceUnlocked = this.state.apiUnlocked;
     const dual = trainingUnlocked && inferenceUnlocked;
@@ -748,13 +886,143 @@ export class ComputePanel implements Panel {
     }
   }
 
+  private getCurrentModelName(state: GameState): string {
+    if (state.ariesModelIndex >= 0) {
+      return BALANCE.ariesModels[state.ariesModelIndex].name;
+    }
+    if (state.currentFineTuneIndex >= 0) {
+      return BALANCE.fineTunes[state.currentFineTuneIndex].name;
+    }
+    for (let i = BALANCE.ariesModels.length - 1; i >= 0; i--) {
+      if (state.intelligence >= BALANCE.ariesModels[i].intel) {
+        return BALANCE.ariesModels[i].name;
+      }
+    }
+    for (let i = BALANCE.fineTunes.length - 1; i >= 0; i--) {
+      if (state.completedFineTunes.includes(i)) {
+        return BALANCE.fineTunes[i].name;
+      }
+    }
+    return BALANCE.models[state.currentModelIndex].name;
+  }
+
+  private getNextFineTune(state: GameState): number | null {
+    for (let i = 0; i < BALANCE.fineTunes.length; i++) {
+      if (!state.completedFineTunes.includes(i)) return i;
+    }
+    return null;
+  }
+
+  private getNextAries(state: GameState): number | null {
+    for (let i = 0; i < BALANCE.ariesModels.length; i++) {
+      const am = BALANCE.ariesModels[i];
+      if (state.intelligence < am.intel) return i;
+    }
+    return null;
+  }
+
+  private updateTrainingSection(state: GameState): void {
+    const trainingUnlocked = state.intelligence >= BALANCE.trainingUnlockIntel;
+    this.trainingSection.classList.toggle('hidden', !trainingUnlocked);
+    if (!trainingUnlocked) return;
+
+    if (state.currentFineTuneIndex >= 0) {
+      const ft = BALANCE.fineTunes[state.currentFineTuneIndex];
+      this.updateActiveTrainingProgress(ft.name, state.fineTuneProgress, ft.pflopsHrs);
+    } else if (state.ariesModelIndex >= 0) {
+      const am = BALANCE.ariesModels[state.ariesModelIndex];
+      this.updateActiveTrainingProgress(am.name, state.ariesProgress, am.pflopsHrs);
+    } else {
+      this.trainingProgressRefs.container.style.display = 'none';
+      const nextFT = this.getNextFineTune(state);
+      if (nextFT !== null) {
+        const ft = BALANCE.fineTunes[nextFT];
+        this.trainingNextRefs.container.style.display = '';
+        this.trainingNextRefs.info.innerHTML = `${ft.name} (${resourceLabelHtml('intel')} ${ft.intel})`;
+        this.trainingNextRefs.info.style.color = 'var(--accent-green)';
+        this.trainingNextRefs.info.style.fontWeight = 'bold';
+
+        const dataBlocking = state.trainingData < ft.dataGB;
+        const dataStr = `<span style="${dataBlocking ? 'color: var(--accent-red);' : ''}">${formatNumber(ft.dataGB)} ${emojiHtml('data')} GB data</span>`;
+        let reqHtml = `${formatNumber(ft.pflopsHrs)} ${emojiHtml('flops')} PFLOPS-hrs + ${dataStr}`;
+        if (ft.codeReq > 0n) {
+          const codeBlocking = state.code < ft.codeReq;
+          reqHtml += ` + <span style="${codeBlocking ? 'color: var(--accent-red);' : ''}">${formatNumber(ft.codeReq)} ${emojiHtml('code')} Code</span>`;
+        }
+        if (ft.scienceReq > 0n) {
+          const scienceBlocking = state.science < ft.scienceReq;
+          reqHtml += ` + <span style="${scienceBlocking ? 'color: var(--accent-red);' : ''}">${formatNumber(ft.scienceReq)} ${emojiHtml('science')} Science</span>`;
+        }
+        this.trainingNextRefs.reqs.innerHTML = reqHtml;
+        this.trainingNextRefs.btn.textContent = 'Start Fine-tune';
+        this.nextTrainingType = 'ft';
+        this.nextTrainingIdx = nextFT;
+        this.trainingNextRefs.btn.disabled = state.trainingData < ft.dataGB ||
+          (ft.codeReq > 0n && state.code < ft.codeReq) ||
+          (ft.scienceReq > 0n && state.science < ft.scienceReq);
+      } else {
+        const nextAries = this.getNextAries(state);
+        if (nextAries !== null) {
+          const am = BALANCE.ariesModels[nextAries];
+          this.trainingNextRefs.container.style.display = '';
+          this.trainingNextRefs.info.innerHTML = `${am.name} (${resourceLabelHtml('intel')} ~${am.intel})`;
+          this.trainingNextRefs.info.style.color = 'var(--accent-purple)';
+          this.trainingNextRefs.info.style.fontWeight = 'bold';
+
+          const dataBlocking = state.trainingData < am.dataGB;
+          const dataStr = `<span style="${dataBlocking ? 'color: var(--accent-red);' : ''}">${formatNumber(am.dataGB)} ${emojiHtml('data')} GB data</span>`;
+          let reqHtml = `${formatNumber(am.pflopsHrs)} ${emojiHtml('flops')} PFLOPS-hrs + ${dataStr}`;
+          if (am.codeReq > 0n) {
+            const codeBlocking = state.code < am.codeReq;
+            reqHtml += ` + <span style="${codeBlocking ? 'color: var(--accent-red);' : ''}">${formatNumber(am.codeReq)} ${emojiHtml('code')} Code</span>`;
+          }
+          if (am.scienceReq > 0n) {
+            const scienceBlocking = state.science < am.scienceReq;
+            reqHtml += ` + <span style="${scienceBlocking ? 'color: var(--accent-red);' : ''}">${formatNumber(am.scienceReq)} ${emojiHtml('science')} Science</span>`;
+          }
+          this.trainingNextRefs.reqs.innerHTML = reqHtml;
+          this.trainingNextRefs.btn.textContent = 'Start Training';
+          this.nextTrainingType = 'aries';
+          this.nextTrainingIdx = nextAries;
+          this.trainingNextRefs.btn.disabled = state.trainingData < am.dataGB ||
+            (am.codeReq > 0n && state.code < am.codeReq) ||
+            (am.scienceReq > 0n && state.science < am.scienceReq);
+        } else {
+          this.trainingNextRefs.container.style.display = 'none';
+          this.nextTrainingType = null;
+        }
+      }
+    }
+
+    const pricePerGB = getTrainingDataPricePerGB();
+    const purchasedGB = Math.max(0, Math.floor(state.trainingDataPurchases));
+    const remainingCapGB = getTrainingDataRemainingPurchaseCapGB(purchasedGB);
+    let dataText = `${resourceLabelHtml('data', 'Data')} (GB)`;
+    if (state.synthDataRate > 0n) {
+      dataText += ` +${formatNumber(state.synthDataRate)} GB/m`;
+    }
+    dataText += ` <span style="color:var(--text-muted)">${formatMoney(pricePerGB)}/GB</span>`;
+    this.trainingDataInfo.innerHTML = dataText;
+    this.trainingDataControls.setCount(state.trainingData);
+    this.trainingDataControls.bulk.update(
+      purchasedGB,
+      (amount) => amount <= remainingCapGB && state.funds >= getTrainingDataPurchaseCost(amount),
+      BALANCE.dataPurchaseLimitGB,
+      () => {
+        flashElement(this.trainingDataInfo);
+      },
+    );
+
+    const runActive = state.currentFineTuneIndex >= 0 || state.ariesModelIndex >= 0;
+    const stalledByAllocation = runActive && state.trainingAllocationPct === 0;
+    this.trainingAllocHint.style.display = stalledByAllocation ? '' : 'none';
+  }
+
   update(state: GameState): void {
     this.state = state;
     const earthGpuCount = state.locationResources.earth.gpus;
-
-    const model = BALANCE.models[state.currentModelIndex];
-
-    this.modelNameEl.innerHTML = `${model.name} (${resourceLabelHtml('intel')} ${(Math.round(model.intel * 10) / 10).toString()})`;
+    const modelName = this.getCurrentModelName(state);
+    this.modelNameEl.innerHTML = `${modelName} (${resourceLabelHtml('intel')} ${(Math.round(state.intelligence * 10) / 10).toString()})`;
     this.buyGpuControls.setCount(earthGpuCount);
     this.gpuPricePart.textContent = `Cost: ${formatMoney(state.gpuMarketPrice)} each`;
 
@@ -775,16 +1043,6 @@ export class ComputePanel implements Panel {
       `Installed ${formatNumber(shownInstalled)} (` +
       `<span style="color:${installedPctColor}">${installedPct}%</span>)`;
 
-    this.unassignedLabelEl.textContent = 'Unassigned Agents:';
-    const unassignedCount = state.agentPools['unassigned'].totalCount;
-    this.unassignedCountEl.textContent = formatNumber(unassignedCount);
-    if (unassignedCount > 0n) {
-      this.unassignedCountEl.style.color = 'var(--accent-green)';
-    } else {
-      this.unassignedCountEl.style.color = '';
-    }
-
-    this.updateAgentEfficiencyDisplay(state);
     this.updateUnifiedAllocationUi(state);
 
     this.buyGpuControls.bulk.update(
@@ -909,6 +1167,7 @@ export class ComputePanel implements Panel {
 
 
     // API Services selling
+    this.updateTrainingSection(state);
     this.updateApiServices(state);
   }
 
@@ -966,8 +1225,15 @@ export class ComputePanel implements Panel {
     // Demand Bar
     const pflopsPerUser = getApiPflopsPerUser(state.apiQuality);
     const capacity = divB(state.apiReservedPflops, toBigInt(pflopsPerUser));
+    const effectiveCapacityUsers = Math.min(fromBigInt(capacity), BALANCE.apiDemandCapUsers);
+    const optimalPrice = getApiOptimalPrice(
+      state.apiAwareness,
+      state.intelligence,
+      effectiveCapacityUsers,
+    );
+    const nearOptimalPrice = Math.abs(state.apiPrice - optimalPrice) <= Math.max(0.1, optimalPrice) * 0.1;
     const demandLoadRatio = this.getLoadRatio(state.apiDemand, capacity);
-    const demandColor = this.getLoadColor(demandLoadRatio);
+    const demandColor = nearOptimalPrice ? 'var(--accent-green)' : this.getLoadColor(demandLoadRatio);
     const demandPctColor = demandLoadRatio > 1 ? demandColor : 'var(--text-secondary)';
     this.apiDemandText.innerHTML =
       `Demand: ${formatNumber(state.apiDemand)} / ${resourceLabelHtml('users', 'Capacity')}: ${formatNumber(capacity)} Users ` +
@@ -978,12 +1244,24 @@ export class ComputePanel implements Panel {
 
     // Price
     this.apiPriceVal.innerHTML = moneyWithEmojiHtml(state.apiPrice, 'funds');
-    this.priceDecreaseGroup.update(state.apiPrice, (amt) => state.apiPrice - amt >= 0.1, null, () => {
+    const autoPricingUnlocked = isApiAutoPricingUnlocked(state.completedResearch);
+    const autoPricingEnabled = autoPricingUnlocked && state.apiAutoPriceEnabled;
+    const manualPriceEnabled = !autoPricingEnabled;
+    this.priceDecreaseGroup.el.style.opacity = manualPriceEnabled ? '' : '0.45';
+    this.priceDecreaseGroup.el.style.pointerEvents = manualPriceEnabled ? '' : 'none';
+    this.priceIncreaseGroup.el.style.opacity = manualPriceEnabled ? '' : '0.45';
+    this.priceIncreaseGroup.el.style.pointerEvents = manualPriceEnabled ? '' : 'none';
+
+    this.priceDecreaseGroup.update(state.apiPrice, (amt) => manualPriceEnabled && state.apiPrice - amt >= 1, null, () => {
       flashElement(this.apiPriceVal);
     });
-    this.priceIncreaseGroup.update(state.apiPrice, () => true, null, () => {
+    this.priceIncreaseGroup.update(state.apiPrice, () => manualPriceEnabled, null, () => {
       flashElement(this.apiPriceVal);
     });
+
+    this.apiAutoPriceRow.style.display = autoPricingUnlocked ? '' : 'none';
+    this.apiAutoPriceBtn.classList.toggle('is-on', autoPricingEnabled);
+    this.apiAutoPriceBtn.setAttribute('aria-pressed', autoPricingEnabled ? 'true' : 'false');
 
     // Ads
     this.apiAdInfo.innerHTML = `Awareness: ${formatNumber(state.apiAwareness)}`;

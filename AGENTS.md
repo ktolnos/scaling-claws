@@ -14,14 +14,15 @@ scaling-claws/src/
 │   ├── utils.ts             # formatNumber, formatMoney, etc.
 │   └── systems/             # Each system: tickX(state, dt) → mutates state
 ├── ui/                      # DOM rendering, reads GameState
-│   ├── TopBar.ts            # Resource display header
-│   ├── PanelManager.ts      # 5-slot panel layout manager
+│   ├── TopBar.ts            # Legacy resource header (currently hidden)
+│   ├── WorkspaceLayout.ts   # 3-column workspace layout (left resources / center visual / right tabs)
+│   ├── PanelManager.ts      # Tab/static-region panel manager
 │   ├── panels/              # One file per game panel
 │   ├── components/          # Reusable: Button, ProgressBar, BulkBuyGroup, etc.
-│   └── visuals/             # 4 decorative visual panels
+│   └── visuals/             # 3 decorative visual panels
 ├── assets/sprites/          # SVG files (imported with ?raw)
 ├── assets/sprites.ts        # Barrel file for all SVG imports
-└── styles/                  # theme.css, panels.css, visuals.css
+└── styles/                  # theme.css, panels.css, visuals.css, dev-overlay.css
 ```
 
 ## Architecture Rules
@@ -63,7 +64,7 @@ The UI refreshes every 500ms. Destroying and recreating DOM nodes inside `update
 - SVGs already contain `<animate>` elements for LEDs, cursors, etc.
 
 ## Design Doc
-Full game spec is in `/DESIGN.md` (938 lines). Covers all 10 game phases, UI layouts, balance tables, visual panel specs, and implementation notes.
+Full game spec is in `/DESIGN.md` (661 lines). Covers all 10 game phases, UI layouts, balance tables, visual panel specs, and implementation notes.
 
 ## Build & Run
 ```bash
@@ -85,4 +86,3 @@ Quick environment check from PowerShell:
 ```powershell
 wsl.exe bash -lc "node -v && npm -v"
 ```
-

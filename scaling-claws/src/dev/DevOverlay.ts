@@ -57,6 +57,8 @@ const GAME_ACTION_TYPES = new Set([
   'upgradeModel',
   'buyDatacenter',
   'setApiPrice',
+  'setApiAutoPrice',
+  'setComputeAutoAllocation',
   'buyAds',
   'setComputeAllocations',
   'improveApi',

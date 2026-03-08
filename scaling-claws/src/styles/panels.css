@@ -210,21 +210,52 @@
 
 /* Visual Area */
 #visual-area {
-  height: 120px;
   position: relative;
+  width: 100%;
+  height: 100%;
   overflow: hidden;
-  background: var(--bg-primary);
-  border-bottom: 1px solid var(--border-subtle);
-  flex-shrink: 0;
+  background: radial-gradient(circle at top, rgba(30, 50, 88, 0.35), rgba(8, 10, 18, 0.9));
+  border: 1px solid var(--border-panel);
+  border-radius: var(--panel-radius);
 }
 
-/* Panel Grid */
+/* Workspace Layout */
 #panels {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(304px, 1fr));
-  gap: var(--spacing-sm);
-  padding: 6px 0;
+  --workspace-left-width: 300px;
+  --workspace-right-width: 500px;
+  display: block;
   flex: 1;
+  min-height: 0;
+  padding: 6px 0;
+}
+
+#panels.workspace-layout {
+  display: grid;
+  grid-template-columns: var(--workspace-left-width) minmax(0, 1fr) var(--workspace-right-width);
+  gap: var(--spacing-sm);
+  min-height: 0;
+  height: 100%;
+}
+
+.workspace-left-region,
+.workspace-visual-region,
+.workspace-tabs-region {
+  min-height: 0;
+}
+
+.workspace-left-region,
+.workspace-tabs-region {
+  display: flex;
+  align-items: stretch;
+}
+
+.workspace-left-region > .panel,
+.workspace-tabs-region > .tabbed-panel-shell {
+  width: 100%;
+}
+
+.workspace-visual-region {
+  min-width: 0;
 }
 
 /* Individual Panel */
@@ -257,6 +288,173 @@
   flex-direction: column;
   gap: 6px;
   flex: 1;
+  min-height: 0;
+}
+
+/* Tabbed Panel */
+.tabbed-panel-shell {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-panel);
+  border-radius: var(--panel-radius);
+  min-height: 0;
+}
+
+.tab-selector {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-panel);
+  background: linear-gradient(180deg, rgba(26, 26, 46, 0.95), rgba(18, 18, 30, 0.95));
+  flex-wrap: wrap;
+}
+
+.tab-selector-btn {
+  width: 32px;
+  height: 30px;
+  padding: 0;
+  font-size: 1rem;
+  border-radius: 6px;
+  border-color: var(--border-subtle);
+  background: rgba(10, 14, 28, 0.75);
+}
+
+.tab-selector-btn.is-selected {
+  border-color: var(--accent-green);
+  box-shadow: 0 0 0 1px rgba(78, 204, 163, 0.35);
+  background: rgba(22, 36, 54, 0.95);
+}
+
+.tab-selected-title {
+  padding: 6px 10px;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-subtle);
+  min-height: 31px;
+}
+
+.tab-content {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.panel-tab-view {
+  height: 100%;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+}
+
+.panel-tab-view .panel-header {
+  display: none;
+}
+
+/* Resources Panel */
+.resources-panel .panel-body {
+  overflow: auto;
+}
+
+.resource-line {
+  min-height: 24px;
+}
+
+.resource-line .label {
+  font-size: 0.78rem;
+}
+
+.resource-line-value {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  font-size: 0.76rem;
+}
+
+.resource-primary-value {
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+}
+
+.resource-rate-inline {
+  font-size: 0.66rem;
+  color: var(--text-muted);
+}
+
+.resource-table-wrap {
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  padding: 4px;
+  max-height: 240px;
+  overflow: auto;
+}
+
+.resource-table {
+  display: grid;
+  gap: 2px;
+}
+
+.resource-table-row {
+  display: grid;
+  grid-template-columns: minmax(72px, 1.1fr) repeat(var(--resource-table-cols, 1), minmax(0, 1fr));
+  gap: 4px;
+  align-items: center;
+}
+
+.resource-table-row > .label {
+  font-size: 0.68rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.resource-table-header .label {
+  color: var(--text-muted);
+}
+
+.resource-table-col-head {
+  text-align: right;
+  font-size: 0.62rem;
+  color: var(--text-muted);
+}
+
+.resource-table-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  line-height: 1.1;
+}
+
+.resource-table-value {
+  font-size: 0.66rem;
+  color: var(--text-primary);
+}
+
+.resource-table-rate {
+  font-size: 0.58rem;
+  color: var(--text-muted);
+}
+
+.resources-controls {
+  margin-top: auto;
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 6px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+@media (max-width: 1100px) {
+  #panels.workspace-layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(240px, 42vh) minmax(320px, 1fr);
+  }
+
+  .workspace-left-region > .panel,
+  .workspace-tabs-region > .tabbed-panel-shell {
+    min-height: 0;
+  }
 }
 
 .panel-body-tight {
@@ -558,6 +756,67 @@ body.compute-allocation-dragging,
 body.compute-allocation-dragging * {
   cursor: ew-resize !important;
   user-select: none;
+}
+
+.api-auto-price-row {
+  align-items: center;
+}
+
+.api-auto-price-toggle {
+  position: relative;
+  width: 52px;
+  height: 26px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid var(--border-subtle);
+  background: rgba(12, 18, 34, 0.9);
+  transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.api-auto-price-toggle::before {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #8e96ac;
+  transition: left 0.15s ease, background-color 0.15s ease;
+}
+
+.api-auto-price-toggle::after {
+  content: 'OFF';
+  position: absolute;
+  right: 7px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.api-auto-price-toggle:hover:not(:disabled) {
+  border-color: var(--accent-green);
+  background: rgba(16, 24, 44, 0.95);
+}
+
+.api-auto-price-toggle.is-on {
+  border-color: var(--accent-green);
+  background: linear-gradient(180deg, rgba(78, 204, 163, 0.35), rgba(43, 134, 104, 0.55));
+}
+
+.api-auto-price-toggle.is-on::before {
+  left: 28px;
+  background: #dbffe8;
+}
+
+.api-auto-price-toggle.is-on::after {
+  content: 'ON';
+  left: 8px;
+  right: auto;
+  color: #d5ffea;
 }
 
 @keyframes logistics-rocket-fly-outbound {

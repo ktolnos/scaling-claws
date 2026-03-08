@@ -21,6 +21,7 @@ interface PlantRowRefs {
 const POWER_PLANT_UNLOCK_GRID_KW = toBigInt(1_000_000);
 
 type LogisticsRoute = 'earthOrbit' | 'earthMoon' | 'moonOrbit' | 'moonMercury' | 'mercurySun';
+type SpaceEnergyPanelMode = 'combined' | 'energy' | 'space';
 
 interface LogisticsRowRefs {
   row: HTMLDivElement;
@@ -38,8 +39,11 @@ interface RouteLaneRefs {
 export class SpaceEnergyPanel implements Panel {
   readonly el: HTMLElement;
   private state: GameState;
+  private readonly mode: SpaceEnergyPanelMode;
   private panelHeaderEl!: HTMLDivElement;
   private earthEnergyTitleEl!: HTMLDivElement;
+  private energySection!: HTMLDivElement;
+  private spaceSection!: HTMLDivElement;
 
   // Earth energy
   private demandEl!: HTMLSpanElement;
@@ -88,8 +92,9 @@ export class SpaceEnergyPanel implements Panel {
   private mercuryPieEl!: HTMLDivElement;
   private probeBtn!: HTMLButtonElement;
 
-  constructor(state: GameState) {
+  constructor(state: GameState, mode: SpaceEnergyPanelMode = 'combined') {
     this.state = state;
+    this.mode = mode;
     const { panel } = createPanelScaffold('SPACE & ENERGY', {
       panelClassName: 'panel space-energy-panel',
       bodyClassName: 'panel-body panel-body-tight',
@@ -102,11 +107,18 @@ export class SpaceEnergyPanel implements Panel {
   private build(): void {
     const body = this.el.querySelector('.panel-body') as HTMLDivElement;
 
-    this.buildEarthEnergy(body);
-    body.appendChild(createPanelDivider());
-    this.buildLogistics(body);
-    this.buildMoon(body);
-    this.buildMercury(body);
+    this.energySection = document.createElement('div');
+    this.energySection.className = 'space-energy-mode-energy';
+    this.buildEarthEnergy(this.energySection);
+    body.appendChild(this.energySection);
+
+    this.spaceSection = document.createElement('div');
+    this.spaceSection.className = 'space-energy-mode-space';
+    this.spaceSection.appendChild(createPanelDivider());
+    this.buildLogistics(this.spaceSection);
+    this.buildMoon(this.spaceSection);
+    this.buildMercury(this.spaceSection);
+    body.appendChild(this.spaceSection);
   }
 
   private buildEarthEnergy(parent: HTMLElement): void {
@@ -835,111 +847,126 @@ export class SpaceEnergyPanel implements Panel {
     }
     this.el.style.display = '';
 
+    const showEnergy = this.mode !== 'space';
+    const showSpace = this.mode !== 'energy';
+    this.energySection.style.display = showEnergy ? '' : 'none';
+    this.spaceSection.style.display = showSpace ? '' : 'none';
+
     const spaceUnlocked = state.spaceUnlocked || state.completedResearch.includes('rocketry');
-    this.panelHeaderEl.textContent = spaceUnlocked ? 'SPACE & ENERGY' : 'ENERGY';
-    this.earthEnergyTitleEl.style.display = spaceUnlocked ? '' : 'none';
-
-    this.demandEl.textContent = formatMW(state.powerDemandMW);
-    this.supplyEl.textContent = formatMW(state.powerSupplyMW);
-    this.supplyEl.style.color = state.powerSupplyMW >= state.powerDemandMW ? 'var(--accent-green)' : 'var(--accent-red)';
-
-    // Grid
-    this.gridRow.style.display = '';
-    this.gridEl.textContent = formatMW(state.gridPowerKW / 1000n);
-    const gridOwned = Math.floor(fromBigInt(state.gridPowerKW));
-    const visibleGridTiers = getVisibleBuyTiers(gridOwned, BALANCE.gridPowerKWLimit);
-    const smallestGridTier = visibleGridTiers[0] ?? 0;
-    const gridCostNeeded = smallestGridTier > 0
-      ? mulB(toBigInt(smallestGridTier), toBigInt(BALANCE.gridPowerKWCost))
-      : 0n;
-    const gridCostColor = state.funds >= gridCostNeeded ? 'var(--text-muted)' : 'var(--accent-red)';
-    this.gridCostEl.innerHTML = `Cost: <span style="color:${gridCostColor}">${moneyWithEmojiHtml(toBigInt(BALANCE.gridPowerKWCost), 'money')}</span>/kW`;
-    this.gridBuyGroup.update(
-      gridOwned,
-      (amt) => state.funds >= mulB(toBigInt(amt), toBigInt(BALANCE.gridPowerKWCost)),
-      BALANCE.gridPowerKWLimit,
-      () => {
-        flashElement(this.gridEl);
-      },
-    );
-    this.gridSellGroup.update(gridOwned, (amt) => gridOwned >= amt, null, () => {
-      flashElement(this.gridEl);
-    });
-
-    const powerPlantsUnlocked = state.gridPowerKW >= POWER_PLANT_UNLOCK_GRID_KW;
-    this.gasRefs.row.style.display = powerPlantsUnlocked ? '' : 'none';
-    this.nuclearRefs.row.style.display = powerPlantsUnlocked ? '' : 'none';
-
-    if (powerPlantsUnlocked) {
-      this.updatePlant(
-        this.gasRefs,
-        state.gasPlants,
-        BALANCE.powerPlants.gas.outputMW,
-        BALANCE.powerPlants.gas.cost,
-        BALANCE.powerPlants.gas.laborCost,
-        (amt) => {
-          return state.funds >= mulB(toBigInt(amt), BALANCE.powerPlants.gas.cost) && state.locationResources.earth.labor >= mulB(toBigInt(amt), BALANCE.powerPlants.gas.laborCost);
-        },
-        BALANCE.powerPlants.gas.limit ?? null,
-      );
-
-      this.updatePlant(
-        this.nuclearRefs,
-        state.nuclearPlants,
-        BALANCE.powerPlants.nuclear.outputMW,
-        BALANCE.powerPlants.nuclear.cost,
-        BALANCE.powerPlants.nuclear.laborCost,
-        (amt) => {
-          return state.funds >= mulB(toBigInt(amt), BALANCE.powerPlants.nuclear.cost) && state.locationResources.earth.labor >= mulB(toBigInt(amt), BALANCE.powerPlants.nuclear.laborCost);
-        },
-        BALANCE.powerPlants.nuclear.limit ?? null,
-      );
+    if (this.mode === 'energy') {
+      this.panelHeaderEl.textContent = 'ENERGY';
+      this.earthEnergyTitleEl.style.display = 'none';
+    } else if (this.mode === 'space') {
+      this.panelHeaderEl.textContent = 'SPACE';
+    } else {
+      this.panelHeaderEl.textContent = spaceUnlocked ? 'SPACE & ENERGY' : 'ENERGY';
+      this.earthEnergyTitleEl.style.display = spaceUnlocked ? '' : 'none';
     }
 
-    // Earth solar install
-    const earthSolarUnlocked = state.completedResearch.includes('solarTechnology');
-    this.earthSolarRow.style.display = earthSolarUnlocked ? '' : 'none';
-    const earth = state.locationResources.earth;
-    const earthSolarProduction = mulB(earth.installedSolarPanels, toBigInt(getSolarPanelPowerMW('earth', state.completedResearch)));
-    this.earthSolarLabelEl.textContent = 'Solar Panels';
-    this.earthSolarProductionEl.textContent = formatMW(earthSolarProduction);
-    this.earthSolarStatusEl.innerHTML =
-      `Stock ${formatNumber(earth.solarPanels)} | Installed ${formatNumber(earth.installedSolarPanels)}`;
-    const earthLaborOk = earth.labor >= BALANCE.earthSolarInstallLaborCost;
-    const earthSolarOk = earth.solarPanels >= toBigInt(1);
-    this.earthSolarCostEl.innerHTML =
-      `<span style="color:${earthLaborOk ? 'var(--text-muted)' : 'var(--accent-red)'}">${formatNumber(BALANCE.earthSolarInstallLaborCost)} ${emojiHtml('labor')} labor</span>` +
-      ` + ` +
-      `<span style="color:${earthSolarOk ? 'var(--text-muted)' : 'var(--accent-red)'}">1 ${emojiHtml('solarPanels')} solar</span>`;
-    this.earthSolarBulk.update(Math.floor(fromBigInt(earth.installedSolarPanels)), (amt) => {
-      const a = toBigInt(amt);
-      const laborCost = mulB(a, BALANCE.earthSolarInstallLaborCost);
-      return earth.solarPanels >= a && earth.labor >= laborCost;
-    }, Math.floor(fromBigInt(BALANCE.earthSolarInstallLimit)), () => {
-      flashElement(this.earthSolarStatusEl);
-    });
+    if (showEnergy) {
+      this.demandEl.textContent = formatMW(state.powerDemandMW);
+      this.supplyEl.textContent = formatMW(state.powerSupplyMW);
+      this.supplyEl.style.color = state.powerSupplyMW >= state.powerDemandMW ? 'var(--accent-green)' : 'var(--accent-red)';
 
-    const gasLimit = BALANCE.powerPlants.gas.limit ?? 0;
-    const nuclearLimit = BALANCE.powerPlants.nuclear.limit ?? 0;
-    const gasAtLimit = gasLimit > 0 && state.gasPlants >= toBigInt(gasLimit);
-    const nuclearAtLimit = nuclearLimit > 0 && state.nuclearPlants >= toBigInt(nuclearLimit);
-    const solarAtLimit = !earthSolarUnlocked || earth.installedSolarPanels >= BALANCE.earthSolarInstallLimit;
-    const gridAtLimit = state.gridPowerKW >= toBigInt(BALANCE.gridPowerKWLimit);
-    const allEarthPowerOptionsMaxed = gasAtLimit && nuclearAtLimit && solarAtLimit && gridAtLimit;
-    const showThrottleWarning = state.powerThrottle < 1 && !allEarthPowerOptionsMaxed;
+      this.gridRow.style.display = '';
+      this.gridEl.textContent = formatMW(state.gridPowerKW / 1000n);
+      const gridOwned = Math.floor(fromBigInt(state.gridPowerKW));
+      const visibleGridTiers = getVisibleBuyTiers(gridOwned, BALANCE.gridPowerKWLimit);
+      const smallestGridTier = visibleGridTiers[0] ?? 0;
+      const gridCostNeeded = smallestGridTier > 0
+        ? mulB(toBigInt(smallestGridTier), toBigInt(BALANCE.gridPowerKWCost))
+        : 0n;
+      const gridCostColor = state.funds >= gridCostNeeded ? 'var(--text-muted)' : 'var(--accent-red)';
+      this.gridCostEl.innerHTML = `Cost: <span style="color:${gridCostColor}">${moneyWithEmojiHtml(toBigInt(BALANCE.gridPowerKWCost), 'money')}</span>/kW`;
+      this.gridBuyGroup.update(
+        gridOwned,
+        (amt) => state.funds >= mulB(toBigInt(amt), toBigInt(BALANCE.gridPowerKWCost)),
+        BALANCE.gridPowerKWLimit,
+        () => {
+          flashElement(this.gridEl);
+        },
+      );
+      this.gridSellGroup.update(gridOwned, (amt) => gridOwned >= amt, null, () => {
+        flashElement(this.gridEl);
+      });
 
-    if (showThrottleWarning) {
-      this.throttleEl.style.visibility = 'visible';
-      this.throttleEl.innerHTML = `${emojiHtml('gpus')} GPUs throttled to ${Math.round(state.powerThrottle * 100)}% - add ${resourceLabelHtml('energy', 'power')}`;
-    } else {
-      this.throttleEl.style.visibility = 'hidden';
-      this.throttleEl.textContent = '\u00a0';
+      const powerPlantsUnlocked = state.gridPowerKW >= POWER_PLANT_UNLOCK_GRID_KW;
+      this.gasRefs.row.style.display = powerPlantsUnlocked ? '' : 'none';
+      this.nuclearRefs.row.style.display = powerPlantsUnlocked ? '' : 'none';
+
+      if (powerPlantsUnlocked) {
+        this.updatePlant(
+          this.gasRefs,
+          state.gasPlants,
+          BALANCE.powerPlants.gas.outputMW,
+          BALANCE.powerPlants.gas.cost,
+          BALANCE.powerPlants.gas.laborCost,
+          (amt) => {
+            return state.funds >= mulB(toBigInt(amt), BALANCE.powerPlants.gas.cost) && state.locationResources.earth.labor >= mulB(toBigInt(amt), BALANCE.powerPlants.gas.laborCost);
+          },
+          BALANCE.powerPlants.gas.limit ?? null,
+        );
+
+        this.updatePlant(
+          this.nuclearRefs,
+          state.nuclearPlants,
+          BALANCE.powerPlants.nuclear.outputMW,
+          BALANCE.powerPlants.nuclear.cost,
+          BALANCE.powerPlants.nuclear.laborCost,
+          (amt) => {
+            return state.funds >= mulB(toBigInt(amt), BALANCE.powerPlants.nuclear.cost) && state.locationResources.earth.labor >= mulB(toBigInt(amt), BALANCE.powerPlants.nuclear.laborCost);
+          },
+          BALANCE.powerPlants.nuclear.limit ?? null,
+        );
+      }
+
+      const earthSolarUnlocked = state.completedResearch.includes('solarTechnology');
+      this.earthSolarRow.style.display = earthSolarUnlocked ? '' : 'none';
+      const earth = state.locationResources.earth;
+      const earthSolarProduction = mulB(earth.installedSolarPanels, toBigInt(getSolarPanelPowerMW('earth', state.completedResearch)));
+      this.earthSolarLabelEl.textContent = 'Solar Panels';
+      this.earthSolarProductionEl.textContent = formatMW(earthSolarProduction);
+      this.earthSolarStatusEl.innerHTML =
+        `Stock ${formatNumber(earth.solarPanels)} | Installed ${formatNumber(earth.installedSolarPanels)}`;
+      const earthLaborOk = earth.labor >= BALANCE.earthSolarInstallLaborCost;
+      const earthSolarOk = earth.solarPanels >= toBigInt(1);
+      this.earthSolarCostEl.innerHTML =
+        `<span style="color:${earthLaborOk ? 'var(--text-muted)' : 'var(--accent-red)'}">${formatNumber(BALANCE.earthSolarInstallLaborCost)} ${emojiHtml('labor')} labor</span>` +
+        ` + ` +
+        `<span style="color:${earthSolarOk ? 'var(--text-muted)' : 'var(--accent-red)'}">1 ${emojiHtml('solarPanels')} solar</span>`;
+      this.earthSolarBulk.update(Math.floor(fromBigInt(earth.installedSolarPanels)), (amt) => {
+        const a = toBigInt(amt);
+        const laborCost = mulB(a, BALANCE.earthSolarInstallLaborCost);
+        return earth.solarPanels >= a && earth.labor >= laborCost;
+      }, Math.floor(fromBigInt(BALANCE.earthSolarInstallLimit)), () => {
+        flashElement(this.earthSolarStatusEl);
+      });
+
+      const gasLimit = BALANCE.powerPlants.gas.limit ?? 0;
+      const nuclearLimit = BALANCE.powerPlants.nuclear.limit ?? 0;
+      const gasAtLimit = gasLimit > 0 && state.gasPlants >= toBigInt(gasLimit);
+      const nuclearAtLimit = nuclearLimit > 0 && state.nuclearPlants >= toBigInt(nuclearLimit);
+      const solarAtLimit = !earthSolarUnlocked || earth.installedSolarPanels >= BALANCE.earthSolarInstallLimit;
+      const gridAtLimit = state.gridPowerKW >= toBigInt(BALANCE.gridPowerKWLimit);
+      const allEarthPowerOptionsMaxed = gasAtLimit && nuclearAtLimit && solarAtLimit && gridAtLimit;
+      const showThrottleWarning = state.powerThrottle < 1 && !allEarthPowerOptionsMaxed;
+
+      if (showThrottleWarning) {
+        this.throttleEl.style.visibility = 'visible';
+        this.throttleEl.innerHTML = `${emojiHtml('gpus')} GPUs throttled to ${Math.round(state.powerThrottle * 100)}% - add ${resourceLabelHtml('energy', 'power')}`;
+      } else {
+        this.throttleEl.style.visibility = 'hidden';
+        this.throttleEl.textContent = '\u00a0';
+      }
+    }
+
+    if (!showSpace) {
+      return;
     }
 
     const logisticsUnlocked = state.completedResearch.includes('rocketry');
     this.logisticsSection.style.display = logisticsUnlocked ? '' : 'none';
 
-    // Orbit
     this.orbitSatEl.innerHTML = `${resourceLabelHtml('gpuSatellites', 'GPU Sats in Orbit')}: ${formatNumber(state.satellites)}`;
     this.orbitPowerEl.innerHTML = `${resourceLabelHtml('energy', 'Power')} ${formatMW(state.orbitalPowerMW)}`;
 
@@ -1009,7 +1036,6 @@ export class SpaceEnergyPanel implements Panel {
       this.syncLogisticsRockets(route, refs.lane, outboundCount, returningCount);
     }
 
-    // Moon installation
     const moonUnlocked = state.completedResearch.includes('payloadToMoon');
     this.moonSection.style.display = moonUnlocked ? '' : 'none';
     if (moonUnlocked) {
@@ -1055,7 +1081,6 @@ export class SpaceEnergyPanel implements Panel {
       });
     }
 
-    // Mercury and endgame
     const mercuryUnlocked = state.completedResearch.includes('payloadToMercury');
     this.mercurySection.style.display = mercuryUnlocked ? '' : 'none';
     if (mercuryUnlocked) {

@@ -10,6 +10,8 @@ import {
   upgradeModel,
   buyDatacenter,
   setApiPrice,
+  setApiAutoPriceEnabled,
+  setComputeAutoAllocationEnabled,
   buyAds,
   setComputeAllocations,
   improveApi,
@@ -64,6 +66,8 @@ export type GameAction =
   | { type: 'upgradeModel'; modelIndex: number }
   | { type: 'buyDatacenter'; tier: number; amount?: number }
   | { type: 'setApiPrice'; price: number }
+  | { type: 'setApiAutoPrice'; enabled: boolean }
+  | { type: 'setComputeAutoAllocation'; enabled: boolean }
   | { type: 'buyAds'; amount?: number }
   | { type: 'setComputeAllocations'; trainingPct: number; inferencePct: number }
   | { type: 'improveApi'; amount?: number }
@@ -209,6 +213,24 @@ function dispatchGameActionCore(state: GameState, action: GameAction): ActionDis
       const before = state.apiPrice;
       setApiPrice(state, action.price);
       return result(true, { before, after: state.apiPrice });
+    }
+    case 'setApiAutoPrice': {
+      const before = state.apiAutoPriceEnabled;
+      const ok = setApiAutoPriceEnabled(state, action.enabled);
+      return result(ok, {
+        before,
+        after: state.apiAutoPriceEnabled,
+        reason: ok ? undefined : 'research_not_unlocked',
+      });
+    }
+    case 'setComputeAutoAllocation': {
+      const before = state.computeAutoAllocationEnabled;
+      const ok = setComputeAutoAllocationEnabled(state, action.enabled);
+      return result(ok, {
+        before,
+        after: state.computeAutoAllocationEnabled,
+        reason: ok ? undefined : 'research_not_unlocked',
+      });
     }
     case 'buyAds': {
       const amount = getRequestedAmount(action.amount ?? 1);

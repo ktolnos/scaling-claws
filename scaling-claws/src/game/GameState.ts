@@ -200,6 +200,8 @@ export interface GameState {
   apiUnlocked: boolean;
   apiUserCount: bigint;
   apiPrice: number;
+  apiAutoPriceEnabled: boolean;
+  computeAutoAllocationEnabled: boolean;
   apiDemand: bigint;
   apiAwareness: number;
   apiReservedPflops: bigint;
@@ -488,6 +490,8 @@ export function createInitialState(): GameState {
     apiUnlocked: false,
     apiUserCount: 0n,
     apiPrice: BALANCE.apiStartingPrice,
+    apiAutoPriceEnabled: false,
+    computeAutoAllocationEnabled: false,
     apiDemand: 0n,
     apiAwareness: 0,
     apiReservedPflops: 0n,
