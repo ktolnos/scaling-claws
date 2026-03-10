@@ -1,5 +1,5 @@
 import type { GameState } from '../GameState.ts';
-import { BALANCE, getTrainingDataPurchaseCost, getTrainingDataRemainingPurchaseCapGB } from '../BalanceConfig.ts';
+import { BALANCE } from '../BalanceConfig.ts';
 import { toBigInt, divB, scaleB, mulB } from '../utils.ts';
 
 export function tickTraining(state: GameState, dtMs: number): void {
@@ -44,25 +44,6 @@ export function tickTraining(state: GameState, dtMs: number): void {
       );
     }
   }
-}
-
-export function buyTrainingData(state: GameState, amountGB: number): boolean {
-  const requestedGB = Math.max(0, Math.floor(amountGB));
-  if (requestedGB <= 0) return false;
-
-  const remainingCapGB = getTrainingDataRemainingPurchaseCapGB(state.trainingDataPurchases);
-  if (remainingCapGB <= 0) return false;
-
-  const purchasableGB = Math.min(requestedGB, remainingCapGB);
-  const amountGBB = toBigInt(purchasableGB);
-
-  const cost = getTrainingDataPurchaseCost(purchasableGB);
-  if (state.funds < cost) return false;
-
-  state.funds -= cost;
-  state.trainingData += amountGBB;
-  state.trainingDataPurchases += purchasableGB;
-  return true;
 }
 
 export function startFineTune(state: GameState, index: number): boolean {

@@ -1,22 +1,62 @@
-import type { GameState, FacilityId, LocationId, LocationRateState } from '../GameState.ts';
+import type { FacilityProductionId } from '../BalanceConfig.ts';
 import { BALANCE, getFacilityProductionMultiplier } from '../BalanceConfig.ts';
-import { toBigInt, mulB, divB, scaleBigInt, fromBigInt } from '../utils.ts';
+import type { FacilityId, GameState, LocationId, LocationRateState } from '../GameState.ts';
+import { divB, mulB, scaleBigInt, toBigInt } from '../utils.ts';
 import { reconcileEarthGpuInstallation } from './GpuState.ts';
 import { getRobotLaborPerMin } from './JobRules.ts';
+
+type RateResourceId = keyof LocationRateState;
+type FactoryInput = { resource: RateResourceId; reqPerFactoryPerMin: bigint };
+
+interface FacilityOperation {
+  facility: FacilityId;
+  productionId: FacilityProductionId;
+  outputResource: RateResourceId;
+  outputPerFactoryPerMin: number | bigint;
+  inputA?: FactoryInput;
+  inputB?: FactoryInput;
+}
+
+interface PlannedOperation {
+  facility: FacilityId;
+  outputResource: RateResourceId;
+  count: bigint;
+  maxOutputPerMin: bigint;
+  potentialOutput: bigint;
+  consumeA: bigint;
+  consumeB: bigint;
+  capEffScaled: bigint;
+  inputA?: FactoryInput;
+  inputB?: FactoryInput;
+}
+
+const UNIT_SCALED = scaleBigInt(1n);
 
 function toScaled(value: number | bigint): bigint {
   if (typeof value === 'bigint') return value;
   return toBigInt(value);
 }
 
+function clampUnitScaled(ratio: bigint): bigint {
+  if (ratio < 0n) return 0n;
+  if (ratio > UNIT_SCALED) return UNIT_SCALED;
+  return ratio;
+}
+
+function getFacilityLocation(facility: FacilityId): LocationId {
+  if (facility.startsWith('earth')) return 'earth';
+  if (facility.startsWith('moon')) return 'moon';
+  return 'mercury';
+}
+
 function getFacilityOutputPerMin(
   state: GameState,
-  facility: FacilityId,
+  productionId: FacilityProductionId,
   baseOutputPerMin: number | bigint,
 ): bigint {
   return mulB(
     toScaled(baseOutputPerMin),
-    toBigInt(getFacilityProductionMultiplier(state.completedResearch, facility)),
+    toBigInt(getFacilityProductionMultiplier(state.completedResearch, productionId)),
   );
 }
 
@@ -51,59 +91,34 @@ function ensureLocationState(state: GameState): void {
 }
 
 export function isFacilityUnlocked(state: GameState, location: LocationId, facility: FacilityId): boolean {
+  if (getFacilityLocation(facility) !== location) return false;
+
   if (location === 'earth') {
-    if (facility === 'materialMine') return true;
-    if (facility === 'solarFactory') return state.completedResearch.includes('solarTechnology');
-    if (facility === 'robotFactory') return state.completedResearch.includes('robotFactoryEngineering1');
-    if (facility === 'gpuFactory') return state.completedResearch.includes('chipManufacturing');
-    if (facility === 'rocketFactory') return state.completedResearch.includes('rocketry');
-    if (facility === 'gpuSatelliteFactory') return state.completedResearch.includes('rocketry');
+    if (facility === 'earthMaterialMine') return true;
+    if (facility === 'earthSolarFactory') return state.completedResearch.includes('solarTechnology');
+    if (facility === 'earthRobotFactory') return state.completedResearch.includes('robotFactoryEngineering1');
+    if (facility === 'earthGpuFactory') return state.completedResearch.includes('chipManufacturing');
+    if (facility === 'earthRocketFactory') return state.completedResearch.includes('rocketry');
+    if (facility === 'earthGpuSatelliteFactory') return state.completedResearch.includes('rocketry');
     return false;
   }
 
   if (location === 'moon') {
     if (!state.completedResearch.includes('payloadToMoon')) return false;
-    if (facility === 'materialMine') return state.completedResearch.includes('moonMineEngineering');
-    if (facility === 'solarFactory') return state.completedResearch.includes('moonSolarManufacturing');
-    if (facility === 'gpuFactory') return state.completedResearch.includes('moonChipManufacturing');
-    if (facility === 'gpuSatelliteFactory') return state.completedResearch.includes('moonRocketry');
-    if (facility === 'rocketFactory') return state.completedResearch.includes('moonRocketry');
-    if (facility === 'massDriver') return state.completedResearch.includes('moonMassDrivers');
-    if (facility === 'robotFactory') return state.completedResearch.includes('moonRobotics');
+    if (facility === 'moonMaterialMine') return state.completedResearch.includes('moonMineEngineering');
+    if (facility === 'moonSolarFactory') return state.completedResearch.includes('moonMineEngineering');
+    if (facility === 'moonRobotFactory') return state.completedResearch.includes('moonRobotics');
+    if (facility === 'moonGpuFactory') return state.completedResearch.includes('moonChipManufacturing');
+    if (facility === 'moonGpuSatelliteFactory') return state.completedResearch.includes('moonMassDrivers');
+    if (facility === 'moonMassDriver') return state.completedResearch.includes('moonMassDrivers');
     return false;
   }
 
   if (!state.completedResearch.includes('payloadToMercury')) return false;
-  if (facility === 'robotFactory') return state.completedResearch.includes('mercuryRobotics');
-  return true;
-}
-
-type RateResourceId = keyof LocationRateState;
-type FactoryInput = { resource: RateResourceId; reqPerFactoryPerMin: bigint };
-
-interface FacilityOperation {
-  facility: FacilityId;
-  outputResource: RateResourceId;
-  outputPerFactoryPerMin: bigint;
-  inputA?: FactoryInput;
-  inputB?: FactoryInput;
-}
-
-interface PlannedOperation extends FacilityOperation {
-  count: bigint;
-  maxOutputPerMin: bigint;
-  potentialOutput: bigint;
-  consumeA: bigint;
-  consumeB: bigint;
-  capEffScaled: bigint;
-}
-
-const UNIT_SCALED = scaleBigInt(1n);
-
-function clampUnitScaled(ratio: bigint): bigint {
-  if (ratio < 0n) return 0n;
-  if (ratio > UNIT_SCALED) return UNIT_SCALED;
-  return ratio;
+  if (facility === 'mercuryMaterialMine') return true;
+  if (facility === 'mercuryRobotFactory') return state.completedResearch.includes('mercuryRobotics');
+  if (facility === 'mercuryDysonSwarmFacility') return true;
+  return false;
 }
 
 function getOutputStockpileCap(location: LocationId, resource: RateResourceId): bigint | null {
@@ -128,18 +143,22 @@ function planOperation(
   if (count <= 0n || dtMs <= 0) return null;
 
   const resources = state.locationResources[location];
-  const maxOutputPerMin = mulB(count, op.outputPerFactoryPerMin);
+  const perFactoryOutput = getFacilityOutputPerMin(state, op.productionId, op.outputPerFactoryPerMin);
+  const maxOutputPerMin = mulB(count, perFactoryOutput);
   const potentialOutput = (maxOutputPerMin * BigInt(dtMs)) / 60000n;
 
   if (potentialOutput <= 0n) {
     return {
-      ...op,
+      facility: op.facility,
+      outputResource: op.outputResource,
       count,
       maxOutputPerMin,
       potentialOutput,
       consumeA: 0n,
       consumeB: 0n,
       capEffScaled: 0n,
+      inputA: op.inputA,
+      inputB: op.inputB,
     };
   }
 
@@ -159,13 +178,16 @@ function planOperation(
   const consumeB = op.inputB ? ((mulB(count, op.inputB.reqPerFactoryPerMin) * BigInt(dtMs)) / 60000n) : 0n;
 
   return {
-    ...op,
+    facility: op.facility,
+    outputResource: op.outputResource,
     count,
     maxOutputPerMin,
     potentialOutput,
     consumeA,
     consumeB,
     capEffScaled,
+    inputA: op.inputA,
+    inputB: op.inputB,
   };
 }
 
@@ -254,11 +276,209 @@ function runOperationsProportionally(
   }
 }
 
+function buildOperationsForLocation(state: GameState, location: LocationId): FacilityOperation[] {
+  const ops: FacilityOperation[] = [];
+
+  if (location === 'earth') {
+    if (isFacilityUnlocked(state, location, 'earthMaterialMine') && !state.pausedFacilities.earthMaterialMine) {
+      ops.push({
+        facility: 'earthMaterialMine',
+        productionId: 'materialMine',
+        outputResource: 'material',
+        outputPerFactoryPerMin: BALANCE.materialMineOutput,
+        inputA: { resource: 'labor', reqPerFactoryPerMin: BALANCE.materialMineLaborReq },
+      });
+    } else if (state.pausedFacilities.earthMaterialMine) {
+      decayFacilityRate(state, location, 'earthMaterialMine');
+    }
+
+    if (isFacilityUnlocked(state, location, 'earthSolarFactory') && !state.pausedFacilities.earthSolarFactory) {
+      ops.push({
+        facility: 'earthSolarFactory',
+        productionId: 'solarFactory',
+        outputResource: 'solarPanels',
+        outputPerFactoryPerMin: BALANCE.solarFactoryOutput,
+        inputA: { resource: 'material', reqPerFactoryPerMin: BALANCE.solarFactoryMaterialReq },
+        inputB: { resource: 'labor', reqPerFactoryPerMin: BALANCE.solarFactoryLaborCost },
+      });
+    } else if (state.pausedFacilities.earthSolarFactory) {
+      decayFacilityRate(state, location, 'earthSolarFactory');
+    }
+
+    if (isFacilityUnlocked(state, location, 'earthRobotFactory') && !state.pausedFacilities.earthRobotFactory) {
+      ops.push({
+        facility: 'earthRobotFactory',
+        productionId: 'robotFactory',
+        outputResource: 'robots',
+        outputPerFactoryPerMin: BALANCE.robotFactoryOutput,
+        inputA: { resource: 'material', reqPerFactoryPerMin: BALANCE.robotFactoryMaterialReq },
+        inputB: { resource: 'labor', reqPerFactoryPerMin: BALANCE.robotFactoryLaborCost },
+      });
+    } else if (state.pausedFacilities.earthRobotFactory) {
+      decayFacilityRate(state, location, 'earthRobotFactory');
+    }
+
+    if (isFacilityUnlocked(state, location, 'earthGpuFactory') && !state.pausedFacilities.earthGpuFactory) {
+      ops.push({
+        facility: 'earthGpuFactory',
+        productionId: 'gpuFactory',
+        outputResource: 'gpus',
+        outputPerFactoryPerMin: BALANCE.gpuFactoryOutput,
+        inputA: { resource: 'material', reqPerFactoryPerMin: BALANCE.gpuFactoryMaterialReq },
+        inputB: { resource: 'labor', reqPerFactoryPerMin: BALANCE.gpuFactoryLaborCost },
+      });
+    } else if (state.pausedFacilities.earthGpuFactory) {
+      decayFacilityRate(state, location, 'earthGpuFactory');
+    }
+
+    if (isFacilityUnlocked(state, location, 'earthRocketFactory') && !state.pausedFacilities.earthRocketFactory) {
+      ops.push({
+        facility: 'earthRocketFactory',
+        productionId: 'rocketFactory',
+        outputResource: 'rockets',
+        outputPerFactoryPerMin: BALANCE.rocketFactoryOutput,
+        inputA: { resource: 'material', reqPerFactoryPerMin: BALANCE.rocketFactoryMaterialReq },
+        inputB: { resource: 'labor', reqPerFactoryPerMin: BALANCE.rocketFactoryLaborCost },
+      });
+    } else if (state.pausedFacilities.earthRocketFactory) {
+      decayFacilityRate(state, location, 'earthRocketFactory');
+    }
+
+    if (isFacilityUnlocked(state, location, 'earthGpuSatelliteFactory') && !state.pausedFacilities.earthGpuSatelliteFactory) {
+      ops.push({
+        facility: 'earthGpuSatelliteFactory',
+        productionId: 'gpuSatelliteFactory',
+        outputResource: 'gpuSatellites',
+        outputPerFactoryPerMin: BALANCE.gpuSatelliteFactoryOutput,
+        inputA: { resource: 'solarPanels', reqPerFactoryPerMin: BALANCE.gpuSatelliteFactorySolarPanelReq },
+        inputB: { resource: 'gpus', reqPerFactoryPerMin: BALANCE.gpuSatelliteFactoryGpuReq },
+      });
+    } else if (state.pausedFacilities.earthGpuSatelliteFactory) {
+      decayFacilityRate(state, location, 'earthGpuSatelliteFactory');
+    }
+    return ops;
+  }
+
+  if (location === 'moon') {
+    if (isFacilityUnlocked(state, location, 'moonMaterialMine') && !state.pausedFacilities.moonMaterialMine) {
+      ops.push({
+        facility: 'moonMaterialMine',
+        productionId: 'materialMine',
+        outputResource: 'material',
+        outputPerFactoryPerMin: BALANCE.materialMineOutput,
+        inputA: { resource: 'labor', reqPerFactoryPerMin: BALANCE.materialMineLaborReq },
+      });
+    } else if (state.pausedFacilities.moonMaterialMine) {
+      decayFacilityRate(state, location, 'moonMaterialMine');
+    }
+
+    if (isFacilityUnlocked(state, location, 'moonSolarFactory') && !state.pausedFacilities.moonSolarFactory) {
+      ops.push({
+        facility: 'moonSolarFactory',
+        productionId: 'solarFactory',
+        outputResource: 'solarPanels',
+        outputPerFactoryPerMin: BALANCE.solarFactoryOutput,
+        inputA: { resource: 'material', reqPerFactoryPerMin: BALANCE.solarFactoryMaterialReq },
+        inputB: { resource: 'labor', reqPerFactoryPerMin: BALANCE.solarFactoryLaborCost },
+      });
+    } else if (state.pausedFacilities.moonSolarFactory) {
+      decayFacilityRate(state, location, 'moonSolarFactory');
+    }
+
+    if (isFacilityUnlocked(state, location, 'moonRobotFactory') && !state.pausedFacilities.moonRobotFactory) {
+      ops.push({
+        facility: 'moonRobotFactory',
+        productionId: 'robotFactory',
+        outputResource: 'robots',
+        outputPerFactoryPerMin: BALANCE.robotFactoryOutput,
+        inputA: { resource: 'material', reqPerFactoryPerMin: BALANCE.robotFactoryMaterialReq },
+        inputB: { resource: 'labor', reqPerFactoryPerMin: BALANCE.robotFactoryLaborCost },
+      });
+    } else if (state.pausedFacilities.moonRobotFactory) {
+      decayFacilityRate(state, location, 'moonRobotFactory');
+    }
+
+    if (isFacilityUnlocked(state, location, 'moonGpuFactory') && !state.pausedFacilities.moonGpuFactory) {
+      ops.push({
+        facility: 'moonGpuFactory',
+        productionId: 'gpuFactory',
+        outputResource: 'gpus',
+        outputPerFactoryPerMin: BALANCE.gpuFactoryOutput,
+        inputA: { resource: 'material', reqPerFactoryPerMin: BALANCE.gpuFactoryMaterialReq },
+        inputB: { resource: 'labor', reqPerFactoryPerMin: BALANCE.gpuFactoryLaborCost },
+      });
+    } else if (state.pausedFacilities.moonGpuFactory) {
+      decayFacilityRate(state, location, 'moonGpuFactory');
+    }
+
+    if (isFacilityUnlocked(state, location, 'moonGpuSatelliteFactory') && !state.pausedFacilities.moonGpuSatelliteFactory) {
+      ops.push({
+        facility: 'moonGpuSatelliteFactory',
+        productionId: 'gpuSatelliteFactory',
+        outputResource: 'gpuSatellites',
+        outputPerFactoryPerMin: BALANCE.gpuSatelliteFactoryOutput,
+        inputA: { resource: 'solarPanels', reqPerFactoryPerMin: BALANCE.gpuSatelliteFactorySolarPanelReq },
+        inputB: { resource: 'gpus', reqPerFactoryPerMin: BALANCE.gpuSatelliteFactoryGpuReq },
+      });
+    } else if (state.pausedFacilities.moonGpuSatelliteFactory) {
+      decayFacilityRate(state, location, 'moonGpuSatelliteFactory');
+    }
+
+    if (state.pausedFacilities.moonMassDriver) {
+      decayFacilityRate(state, location, 'moonMassDriver');
+    } else if (state.locationFacilities.moon.moonMassDriver > 0n) {
+      state.locationFacilityRates.moon.moonMassDriver = (state.locationFacilityRates.moon.moonMassDriver * 0.95) + 0.05;
+    } else {
+      decayFacilityRate(state, location, 'moonMassDriver');
+    }
+    return ops;
+  }
+
+  if (isFacilityUnlocked(state, location, 'mercuryMaterialMine') && !state.pausedFacilities.mercuryMaterialMine) {
+    ops.push({
+      facility: 'mercuryMaterialMine',
+      productionId: 'materialMine',
+      outputResource: 'material',
+      outputPerFactoryPerMin: BALANCE.materialMineOutput,
+      inputA: { resource: 'labor', reqPerFactoryPerMin: BALANCE.materialMineLaborReq },
+    });
+  } else if (state.pausedFacilities.mercuryMaterialMine) {
+    decayFacilityRate(state, location, 'mercuryMaterialMine');
+  }
+
+  if (isFacilityUnlocked(state, location, 'mercuryRobotFactory') && !state.pausedFacilities.mercuryRobotFactory) {
+    ops.push({
+      facility: 'mercuryRobotFactory',
+      productionId: 'robotFactory',
+      outputResource: 'robots',
+      outputPerFactoryPerMin: BALANCE.robotFactoryOutput,
+      inputA: { resource: 'material', reqPerFactoryPerMin: BALANCE.robotFactoryMaterialReq },
+      inputB: { resource: 'labor', reqPerFactoryPerMin: BALANCE.robotFactoryLaborCost },
+    });
+  } else if (state.pausedFacilities.mercuryRobotFactory) {
+    decayFacilityRate(state, location, 'mercuryRobotFactory');
+  }
+
+  if (isFacilityUnlocked(state, location, 'mercuryDysonSwarmFacility') && !state.pausedFacilities.mercuryDysonSwarmFacility) {
+    ops.push({
+      facility: 'mercuryDysonSwarmFacility',
+      productionId: 'dysonSwarmFacility',
+      outputResource: 'gpuSatellites',
+      outputPerFactoryPerMin: BALANCE.dysonSwarmFacilityOutput,
+      inputA: { resource: 'material', reqPerFactoryPerMin: BALANCE.dysonSwarmFacilityMaterialReq },
+      inputB: { resource: 'labor', reqPerFactoryPerMin: BALANCE.dysonSwarmFacilityLaborReq },
+    });
+  } else if (state.pausedFacilities.mercuryDysonSwarmFacility) {
+    decayFacilityRate(state, location, 'mercuryDysonSwarmFacility');
+  }
+
+  return ops;
+}
+
 export function tickSupply(state: GameState, dtMs: number): void {
   ensureLocationState(state);
   resetLocationRates(state);
 
-  // Robot labor generation at each location
   const robotLaborPerMin = getRobotLaborPerMin(state);
   const locations: LocationId[] = ['earth', 'moon', 'mercury'];
   for (const location of locations) {
@@ -278,144 +498,102 @@ export function tickSupply(state: GameState, dtMs: number): void {
     }
   }
 
-  // Facility simulation by location
   for (const location of locations) {
-    const mineOps: FacilityOperation[] = [];
-    if (isFacilityUnlocked(state, location, 'materialMine') && !state.pausedFacilities.materialMine) {
-      mineOps.push({
-        facility: 'materialMine',
-        outputResource: 'material',
-        outputPerFactoryPerMin: getFacilityOutputPerMin(state, 'materialMine', BALANCE.materialMineOutput),
-        inputA: { resource: 'labor', reqPerFactoryPerMin: BALANCE.materialMineLaborReq },
-      });
-    } else if (state.pausedFacilities.materialMine) {
-      decayFacilityRate(state, location, 'materialMine');
-    }
-    runOperationsProportionally(state, location, mineOps, dtMs);
-
-    const factoryOps: FacilityOperation[] = [];
-    if (isFacilityUnlocked(state, location, 'solarFactory') && !state.pausedFacilities.solarFactory) {
-      factoryOps.push({
-        facility: 'solarFactory',
-        outputResource: 'solarPanels',
-        outputPerFactoryPerMin: getFacilityOutputPerMin(state, 'solarFactory', BALANCE.solarFactoryOutput),
-        inputA: { resource: 'material', reqPerFactoryPerMin: BALANCE.solarFactoryMaterialReq },
-        inputB: { resource: 'labor', reqPerFactoryPerMin: BALANCE.solarFactoryLaborCost },
-      });
-    } else if (state.pausedFacilities.solarFactory) {
-      decayFacilityRate(state, location, 'solarFactory');
-    }
-    if (isFacilityUnlocked(state, location, 'robotFactory') && !state.pausedFacilities.robotFactory) {
-      factoryOps.push({
-        facility: 'robotFactory',
-        outputResource: 'robots',
-        outputPerFactoryPerMin: getFacilityOutputPerMin(state, 'robotFactory', BALANCE.robotFactoryOutput),
-        inputA: { resource: 'material', reqPerFactoryPerMin: BALANCE.robotFactoryMaterialReq },
-        inputB: { resource: 'labor', reqPerFactoryPerMin: BALANCE.robotFactoryLaborCost },
-      });
-    } else if (state.pausedFacilities.robotFactory) {
-      decayFacilityRate(state, location, 'robotFactory');
-    }
-    if (isFacilityUnlocked(state, location, 'gpuFactory') && !state.pausedFacilities.gpuFactory) {
-      factoryOps.push({
-        facility: 'gpuFactory',
-        outputResource: 'gpus',
-        outputPerFactoryPerMin: getFacilityOutputPerMin(state, 'gpuFactory', BALANCE.gpuFactoryOutput),
-        inputA: { resource: 'material', reqPerFactoryPerMin: BALANCE.gpuFactoryMaterialReq },
-        inputB: { resource: 'labor', reqPerFactoryPerMin: BALANCE.gpuFactoryLaborCost },
-      });
-    } else if (state.pausedFacilities.gpuFactory) {
-      decayFacilityRate(state, location, 'gpuFactory');
-    }
-    if (isFacilityUnlocked(state, location, 'rocketFactory') && !state.pausedFacilities.rocketFactory) {
-      factoryOps.push({
-        facility: 'rocketFactory',
-        outputResource: 'rockets',
-        outputPerFactoryPerMin: getFacilityOutputPerMin(state, 'rocketFactory', BALANCE.rocketFactoryOutput),
-        inputA: { resource: 'material', reqPerFactoryPerMin: BALANCE.rocketFactoryMaterialReq },
-        inputB: { resource: 'labor', reqPerFactoryPerMin: BALANCE.rocketFactoryLaborCost },
-      });
-    } else if (state.pausedFacilities.rocketFactory) {
-      decayFacilityRate(state, location, 'rocketFactory');
-    }
-    if (isFacilityUnlocked(state, location, 'gpuSatelliteFactory') && !state.pausedFacilities.gpuSatelliteFactory) {
-      factoryOps.push({
-        facility: 'gpuSatelliteFactory',
-        outputResource: 'gpuSatellites',
-        outputPerFactoryPerMin: getFacilityOutputPerMin(state, 'gpuSatelliteFactory', BALANCE.gpuSatelliteFactoryOutput),
-        inputA: { resource: 'solarPanels', reqPerFactoryPerMin: BALANCE.gpuSatelliteFactorySolarPanelReq },
-        inputB: { resource: 'gpus', reqPerFactoryPerMin: BALANCE.gpuSatelliteFactoryGpuReq },
-      });
-    } else if (state.pausedFacilities.gpuSatelliteFactory) {
-      decayFacilityRate(state, location, 'gpuSatelliteFactory');
-    }
-    runOperationsProportionally(state, location, factoryOps, dtMs);
-
-    // Mass driver just has an operational rate used by logistics.
-    const md = state.locationFacilities[location].massDriver;
-    if (state.pausedFacilities.massDriver) {
-      state.locationFacilityRates[location].massDriver *= 0.95;
-    } else if (md > 0n) {
-      state.locationFacilityRates[location].massDriver = (state.locationFacilityRates[location].massDriver * 0.95) + 0.05;
-    } else {
-      state.locationFacilityRates[location].massDriver *= 0.95;
-    }
+    runOperationsProportionally(state, location, buildOperationsForLocation(state, location), dtMs);
   }
 
   reconcileEarthGpuInstallation(state);
 }
 
 function getEarthLimit(type: FacilityId): number {
-  if (type === 'materialMine') return BALANCE.materialMineLimit;
-  if (type === 'solarFactory') return BALANCE.solarFactoryLimit;
-  if (type === 'robotFactory') return BALANCE.robotFactoryLimit;
-  if (type === 'gpuFactory') return BALANCE.gpuFactoryLimit;
-  if (type === 'rocketFactory') return BALANCE.rocketFactoryLimit;
-  if (type === 'gpuSatelliteFactory') return BALANCE.gpuSatelliteFactoryLimit;
+  if (type === 'earthMaterialMine') return BALANCE.materialMineLimit;
+  if (type === 'earthSolarFactory') return BALANCE.solarFactoryLimit;
+  if (type === 'earthRobotFactory') return BALANCE.robotFactoryLimit;
+  if (type === 'earthGpuFactory') return BALANCE.gpuFactoryLimit;
+  if (type === 'earthRocketFactory') return BALANCE.rocketFactoryLimit;
+  if (type === 'earthGpuSatelliteFactory') return BALANCE.gpuSatelliteFactoryLimit;
   return 0;
 }
 
-function getMercuryMassDriverLimit(): number {
-  const rocketsCap = fromBigInt(BALANCE.locationResourceStockpileCap);
-  const launchesPerMin = Math.max(1, BALANCE.massDriverLaunchesPerMin);
-  return Math.max(1, Math.ceil(rocketsCap / launchesPerMin));
+function getMoonBaseLimit(type: FacilityId): number {
+  if (type === 'moonMaterialMine') return BALANCE.materialMineLimit;
+  if (type === 'moonSolarFactory') return BALANCE.solarFactoryLimit;
+  if (type === 'moonRobotFactory') return BALANCE.robotFactoryLimit;
+  if (type === 'moonGpuFactory') return BALANCE.gpuFactoryLimit;
+  if (type === 'moonGpuSatelliteFactory') return BALANCE.gpuSatelliteFactoryLimit;
+  return 0;
 }
 
-function getMoonFacilityLimit(type: FacilityId): number {
-  if (type === 'massDriver') return BALANCE.moonMassDriverLimit;
-  const earthLimit = getEarthLimit(type);
-  if (earthLimit <= 0) return 0;
-  const multiplier = (BALANCE.moonFacilityLimits as Record<string, number>)[type] ?? 0;
-  return Math.floor(earthLimit * multiplier);
-}
-
-function getMercuryFacilityLimit(type: FacilityId): number | null {
-  if (type === 'massDriver') return getMercuryMassDriverLimit();
-  const earthLimit = getEarthLimit(type);
-  if (earthLimit <= 0) return 0;
-  const multiplier = (BALANCE.mercuryFacilityLimits as Record<string, number>)[type] ?? 0;
-  return Math.floor(earthLimit * multiplier);
+function getMercuryBaseLimit(type: FacilityId): number {
+  if (type === 'mercuryMaterialMine') return BALANCE.materialMineLimit;
+  if (type === 'mercuryRobotFactory') return BALANCE.robotFactoryLimit;
+  if (type === 'mercuryDysonSwarmFacility') return BALANCE.dysonSwarmFacilityLimit;
+  return 0;
 }
 
 function getFacilityLimitByLocation(location: LocationId, type: FacilityId): number | null {
   if (location === 'earth') return getEarthLimit(type);
-  if (location === 'moon') return getMoonFacilityLimit(type);
-  return getMercuryFacilityLimit(type);
+  if (location === 'moon') {
+    if (type === 'moonMassDriver') return BALANCE.moonMassDriverLimit;
+    const baseLimit = getMoonBaseLimit(type);
+    if (baseLimit <= 0) return 0;
+    const multipliers = BALANCE.moonFacilityLimits as Record<string, number>;
+    const multiplier = multipliers[type] ?? 0;
+    return Math.floor(baseLimit * multiplier);
+  }
+
+  const baseLimit = getMercuryBaseLimit(type);
+  if (baseLimit <= 0) return 0;
+  const multipliers = BALANCE.mercuryFacilityLimits as Record<string, number>;
+  const multiplier = multipliers[type] ?? 0;
+  return Math.floor(baseLimit * multiplier);
 }
 
 function getFacilityBaseCost(type: FacilityId): { material: bigint; labor: bigint } {
-  if (type === 'materialMine') return { material: BALANCE.materialMineBuildMaterialCost, labor: BALANCE.materialMineBuildLaborCost };
-  if (type === 'solarFactory') return { material: BALANCE.solarFactoryBuildMaterialCost, labor: 0n };
-  if (type === 'robotFactory') return { material: BALANCE.robotFactoryBuildMaterialCost, labor: 0n };
-  if (type === 'gpuFactory') return { material: BALANCE.gpuFactoryBuildMaterialCost, labor: 0n };
-  if (type === 'rocketFactory') return { material: BALANCE.rocketFactoryBuildMaterialCost, labor: 0n };
-  if (type === 'gpuSatelliteFactory') return { material: BALANCE.gpuSatelliteFactoryBuildMaterialCost, labor: 0n };
-  // Mass driver uses rocket factory-scale economics
+  if (type === 'earthMaterialMine' || type === 'moonMaterialMine' || type === 'mercuryMaterialMine') {
+    return { material: BALANCE.materialMineBuildMaterialCost, labor: BALANCE.materialMineBuildLaborCost };
+  }
+  if (type === 'earthSolarFactory' || type === 'moonSolarFactory') {
+    return { material: BALANCE.solarFactoryBuildMaterialCost, labor: 0n };
+  }
+  if (type === 'earthRobotFactory' || type === 'moonRobotFactory' || type === 'mercuryRobotFactory') {
+    return { material: BALANCE.robotFactoryBuildMaterialCost, labor: 0n };
+  }
+  if (type === 'earthGpuFactory' || type === 'moonGpuFactory') {
+    return { material: BALANCE.gpuFactoryBuildMaterialCost, labor: 0n };
+  }
+  if (type === 'earthRocketFactory') {
+    return { material: BALANCE.rocketFactoryBuildMaterialCost, labor: 0n };
+  }
+  if (type === 'earthGpuSatelliteFactory' || type === 'moonGpuSatelliteFactory') {
+    return { material: BALANCE.gpuSatelliteFactoryBuildMaterialCost, labor: 0n };
+  }
+  if (type === 'mercuryDysonSwarmFacility') {
+    return { material: BALANCE.dysonSwarmFacilityBuildMaterialCost, labor: 0n };
+  }
+  // Mass driver uses rocket-factory scale capex.
   return { material: BALANCE.rocketFactoryBuildMaterialCost, labor: 0n };
+}
+
+function getLocationCostMultipliers(location: LocationId): { material: bigint; labor: bigint } {
+  if (location === 'moon') {
+    return {
+      material: toBigInt(BALANCE.moonFacilityCostMultiplier),
+      labor: toBigInt(BALANCE.moonFacilityLaborMultiplier),
+    };
+  }
+  if (location === 'mercury') {
+    return {
+      material: toBigInt(BALANCE.mercuryFacilityCostMultiplier),
+      labor: toBigInt(BALANCE.mercuryFacilityLaborMultiplier),
+    };
+  }
+  return { material: toBigInt(1), labor: toBigInt(1) };
 }
 
 export function canBuildFacility(state: GameState, location: LocationId, type: FacilityId, amount: number): boolean {
   ensureLocationState(state);
+  if (getFacilityLocation(type) !== location) return false;
   if (!isFacilityUnlocked(state, location, type)) return false;
 
   const amountB = toBigInt(amount);
@@ -424,25 +602,14 @@ export function canBuildFacility(state: GameState, location: LocationId, type: F
   if (limit !== null && limit > 0 && current + amountB > toBigInt(limit)) return false;
 
   const base = getFacilityBaseCost(type);
-  let materialEach = base.material;
-  let laborEach = base.labor;
-
-  if (location === 'moon') {
-    materialEach = mulB(base.material, toBigInt(BALANCE.moonFacilityCostMultiplier));
-    laborEach = mulB(base.labor, toBigInt(BALANCE.moonFacilityLaborMultiplier));
-  } else if (location === 'mercury') {
-    materialEach = mulB(base.material, toBigInt(BALANCE.mercuryFacilityCostMultiplier));
-    laborEach = mulB(base.labor, toBigInt(BALANCE.mercuryFacilityLaborMultiplier));
-  }
-
+  const multipliers = getLocationCostMultipliers(location);
+  const materialEach = mulB(base.material, multipliers.material);
+  const laborEach = mulB(base.labor, multipliers.labor);
   const totalMaterial = mulB(toBigInt(amount), materialEach);
   const totalLabor = mulB(toBigInt(amount), laborEach);
 
-  const materialPool = state.locationResources[location].material;
-  const laborPool = state.locationResources[location].labor;
-  if (materialPool < totalMaterial) return false;
-  if (laborPool < totalLabor) return false;
-
+  if (state.locationResources[location].material < totalMaterial) return false;
+  if (state.locationResources[location].labor < totalLabor) return false;
   return true;
 }
 
@@ -455,17 +622,9 @@ export function buildFacility(
   if (!canBuildFacility(state, location, type, amount)) return false;
 
   const base = getFacilityBaseCost(type);
-  let materialEach = base.material;
-  let laborEach = base.labor;
-
-  if (location === 'moon') {
-    materialEach = mulB(base.material, toBigInt(BALANCE.moonFacilityCostMultiplier));
-    laborEach = mulB(base.labor, toBigInt(BALANCE.moonFacilityLaborMultiplier));
-  } else if (location === 'mercury') {
-    materialEach = mulB(base.material, toBigInt(BALANCE.mercuryFacilityCostMultiplier));
-    laborEach = mulB(base.labor, toBigInt(BALANCE.mercuryFacilityLaborMultiplier));
-  }
-
+  const multipliers = getLocationCostMultipliers(location);
+  const materialEach = mulB(base.material, multipliers.material);
+  const laborEach = mulB(base.labor, multipliers.labor);
   const totalMaterial = mulB(toBigInt(amount), materialEach);
   const totalLabor = mulB(toBigInt(amount), laborEach);
 

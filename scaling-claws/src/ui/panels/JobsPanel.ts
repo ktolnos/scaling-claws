@@ -9,15 +9,16 @@ import {
   getNextTier,
 } from '../../game/BalanceConfig.ts';
 import type { HumanJobType, JobType } from '../../game/BalanceConfig.ts';
-import { formatNumber, fromBigInt, scaleBigInt, mulB, divB, scaleB, toBigInt } from '../../game/utils.ts';
+import { formatNumber, formatMoney, fromBigInt, scaleBigInt, mulB, divB, scaleB, toBigInt } from '../../game/utils.ts';
 import { ProgressBar } from '../components/ProgressBar.ts';
 import { BulkBuyGroup } from '../components/BulkBuyGroup.ts';
 import { CountBulkBuyControls } from '../components/CountBulkBuyControls.ts';
 import { createPanelDivider, createPanelScaffold } from '../components/PanelScaffold.ts';
 import { flashElement } from '../UIUtils.ts';
-import { moneyWithEmojiHtml, resourceLabelHtml, emojiHtml } from '../emoji.ts';
+import { UI_EMOJI, moneyWithEmojiHtml, resourceLabelHtml, emojiHtml } from '../emoji.ts';
 import { setHintTarget } from '../hints/HintUtils.ts';
 import { getJobOutputAmount, getRobotLaborPerMin } from '../../game/systems/JobRules.ts';
+import { canHireHumanWorkersWithoutIncomeDeficit } from '../../game/systems/JobSystem.ts';
 import { dispatchGameAction } from '../../game/ActionDispatcher.ts';
 
 const MAX_PROGRESS_BARS = 4;
@@ -67,6 +68,9 @@ export class JobsPanel implements Panel {
   private legacyControlsSection!: HTMLDivElement;
   private subTierNameEl!: HTMLDivElement;
   private upgradeBtn!: HTMLButtonElement;
+  private upgradeBtnTitleEl!: HTMLDivElement;
+  private upgradeBtnIntelEl!: HTMLDivElement;
+  private agentHireRow!: HTMLDivElement;
   private agentHireControls!: CountBulkBuyControls;
   private agentCostEl!: HTMLDivElement;
   private coresRow!: HTMLDivElement;
@@ -169,11 +173,6 @@ export class JobsPanel implements Panel {
     this.legacyControlsSection.className = 'panel-section';
     this.legacyControlsSection.style.marginTop = '4px';
 
-    const subTitle = document.createElement('div');
-    subTitle.className = 'panel-section-title';
-    subTitle.textContent = 'SUBSCRIPTION ERA';
-    this.legacyControlsSection.appendChild(subTitle);
-
     const tierRow = document.createElement('div');
     tierRow.className = 'panel-row';
     const tierLabel = document.createElement('span');
@@ -189,15 +188,26 @@ export class JobsPanel implements Panel {
     this.upgradeBtn = document.createElement('button');
     this.upgradeBtn.style.width = '100%';
     this.upgradeBtn.style.marginTop = '4px';
+    this.upgradeBtnTitleEl = document.createElement('div');
+    this.upgradeBtnIntelEl = document.createElement('div');
+    this.upgradeBtnIntelEl.style.fontSize = '0.82em';
+    this.upgradeBtnIntelEl.style.opacity = '0.9';
+    this.upgradeBtn.appendChild(this.upgradeBtnTitleEl);
+    this.upgradeBtn.appendChild(this.upgradeBtnIntelEl);
     this.upgradeBtn.addEventListener('click', () => {
       const next = getNextTier(this.state.subscriptionTier);
-      if (next) dispatchGameAction(this.state, { type: 'upgradeTier', tier: next });
+      if (!next) return;
+
+      const actionResult = dispatchGameAction(this.state, { type: 'upgradeTier', tier: next });
+      if (!actionResult.ok) {
+        flashElement(this.upgradeBtn);
+      }
     });
     this.legacyControlsSection.appendChild(this.upgradeBtn);
 
-    const hireRow = document.createElement('div');
-    hireRow.className = 'panel-row';
-    hireRow.style.marginTop = '6px';
+    this.agentHireRow = document.createElement('div');
+    this.agentHireRow.className = 'panel-row';
+    this.agentHireRow.style.marginTop = '6px';
     const hireLabel = document.createElement('span');
     hireLabel.className = 'label';
     hireLabel.textContent = 'Active Agents';
@@ -209,9 +219,9 @@ export class JobsPanel implements Panel {
         flashElement(this.coresEl);
       }
     }, { prefix: '+' });
-    hireRow.appendChild(hireLabel);
-    hireRow.appendChild(this.agentHireControls.el);
-    this.legacyControlsSection.appendChild(hireRow);
+    this.agentHireRow.appendChild(hireLabel);
+    this.agentHireRow.appendChild(this.agentHireControls.el);
+    this.legacyControlsSection.appendChild(this.agentHireRow);
 
     this.agentCostEl = document.createElement('div');
     this.agentCostEl.style.textAlign = 'right';
@@ -316,9 +326,9 @@ export class JobsPanel implements Panel {
     row.style.borderRadius = '6px';
     row.style.gap = '6px';
 
-    // Left block: title + reward + requirements (fixed width reduced)
+    // Left block: title + reward + requirements
     const infoBlock = document.createElement('div');
-    infoBlock.style.flex = '0 0 115px';
+    infoBlock.style.flex = '0 0 132px';
     infoBlock.style.display = 'flex';
     infoBlock.style.flexDirection = 'column';
     infoBlock.style.overflow = 'hidden';
@@ -420,7 +430,11 @@ export class JobsPanel implements Panel {
         if (isRobotWorker) {
           dispatchGameAction(this.state, { type: 'buyRobotWorkers', amount });
         } else if (isHuman) {
-          dispatchGameAction(this.state, { type: 'hireHumanWorkers', jobType, amount });
+          const actionResult = dispatchGameAction(this.state, { type: 'hireHumanWorkers', jobType, amount });
+          const performed = typeof actionResult.info.performed === 'number' ? actionResult.info.performed : 0;
+          if (performed < amount && actionResult.info.salary_capped === true) {
+            document.dispatchEvent(new CustomEvent('flash-income'));
+          }
         } else {
           const actionResult = dispatchGameAction(this.state, { type: 'assignAgentsToJob', jobType, amount });
           const assigned = typeof actionResult.info.performed === 'number' ? actionResult.info.performed : 0;
@@ -521,6 +535,13 @@ export class JobsPanel implements Panel {
     this.summaryUnassignedCountEl.textContent = formatNumber(unassignedCount);
     this.summaryUnassignedCountEl.style.color = unassignedCount > 0n ? 'var(--accent-green)' : '';
 
+    if (!state.isPostGpuTransition) {
+      this.summaryAgentEfficiencyEl.style.display = 'none';
+      this.summaryAgentEfficiencyEl.textContent = '';
+      return;
+    }
+    this.summaryAgentEfficiencyEl.style.display = '';
+
     const efficiencyPct = Math.max(0, Math.round(state.agentEfficiency * 100));
     const efficiencyColor = efficiencyPct === 100 ? 'var(--text-primary)' : 'var(--accent-red)';
     const assignedAgents = getTotalAssignedAgents(state);
@@ -531,7 +552,7 @@ export class JobsPanel implements Panel {
     const powerPct = this.getGlobalPowerEfficiencyPct(state);
     const reasons: Array<{ label: string; pct: number }> = [];
     if (computeAllocPct < 100) reasons.push({ label: 'Compute Allocation', pct: computeAllocPct });
-    if (powerPct < 100) reasons.push({ label: 'Insufficient⚡', pct: powerPct });
+    if (powerPct < 100) reasons.push({ label: `Insufficient ${emojiHtml('energy')}`, pct: powerPct });
 
     let breakdown = '';
     if (reasons.length === 1) {
@@ -561,9 +582,8 @@ export class JobsPanel implements Panel {
       const currentIntel = (Math.round(currentTier.intel * 10) / 10).toString();
       const nextIntel = (Math.round(nextTier.intel * 10) / 10).toString();
       this.upgradeBtn.style.display = '';
-      this.upgradeBtn.innerHTML =
-        `<div>Upgrade to ${nextTier.displayName} (${moneyWithEmojiHtml(upgradeCost, 'funds')})</div>` +
-        `<div style="font-size:0.82em;opacity:0.9">${emojiHtml('intel')}Intel ${currentIntel} ${emojiHtml('route')} ${nextIntel}</div>`;
+      this.upgradeBtnTitleEl.textContent = `Upgrade to ${nextTier.displayName} (${formatMoney(upgradeCost)})`;
+      this.upgradeBtnIntelEl.textContent = `${UI_EMOJI.intel} Intel ${currentIntel} ${UI_EMOJI.route} ${nextIntel}`;
       this.upgradeBtn.disabled = deltaCostPerAgent <= 0n || state.funds < upgradeCost;
     } else {
       this.upgradeBtn.style.display = 'none';
@@ -577,7 +597,7 @@ export class JobsPanel implements Panel {
     const cpuLimitReached = mulB(nextAgent, coresPerAgent) > state.cpuCoresTotal;
     const showMicMiniControls = showAgentControls && (cpuLimitReached || state.micMiniCount > 0n);
 
-    this.agentHireControls.el.style.display = showAgentControls ? '' : 'none';
+    this.agentHireRow.style.display = showAgentControls ? '' : 'none';
     this.agentCostEl.style.display = showAgentControls ? '' : 'none';
     this.coresRow.style.display = showCpuCores ? '' : 'none';
     this.micMiniRow.style.display = showMicMiniControls ? '' : 'none';
@@ -822,8 +842,28 @@ export class JobsPanel implements Panel {
 
           const hireCost = config.hireCost ?? 0n;
           const totalHireCost = mulB(amountB, hireCost);
-          return state.funds >= totalHireCost;
-        }, Math.max(countNum, maxForThisRowNum), () => {
+          if (state.funds < totalHireCost) return false;
+          return canHireHumanWorkersWithoutIncomeDeficit(state, jobType, amount);
+        }, Math.max(countNum, maxForThisRowNum), (amount) => {
+          if (amount <= 0 || state.intelligence < config.unlockAtIntel || remainingWorkforce <= 0n) {
+            flashElement(refs.countEl);
+            return;
+          }
+          const amountB = toBigInt(amount);
+          if (amountB > remainingWorkforce) {
+            flashElement(refs.countEl);
+            return;
+          }
+          const hireCost = config.hireCost ?? 0n;
+          const totalHireCost = mulB(amountB, hireCost);
+          if (state.funds < totalHireCost) {
+            flashElement(refs.countEl);
+            return;
+          }
+          if (!canHireHumanWorkersWithoutIncomeDeficit(state, jobType, amount)) {
+            document.dispatchEvent(new CustomEvent('flash-income'));
+            return;
+          }
           flashElement(refs.countEl);
         });
         refs.removeGroup?.update(countNum, (amount) => countNum >= amount, null, () => {

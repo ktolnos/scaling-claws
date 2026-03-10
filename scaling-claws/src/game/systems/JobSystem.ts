@@ -38,6 +38,52 @@ function getTotalPaidHumans(state: GameState): bigint {
   return total;
 }
 
+function getProjectedHumanSalaryPerMin(
+  state: GameState,
+  targetJobType: JobType | null = null,
+  additionalHiresRaw: number = 0,
+): bigint {
+  const extraWorkers = additionalHiresRaw > 0 ? scaleBigInt(BigInt(Math.floor(additionalHiresRaw))) : 0n;
+  let projectedTotalHumans = 0n;
+  let projectedSalary = 0n;
+
+  for (const jobType of JOB_ORDER) {
+    const config = BALANCE.jobs[jobType];
+    if (config.workerType !== 'human' || !config.salaryPerMin) continue;
+    const pool = state.humanPools[jobType];
+    if (!pool) continue;
+
+    const roleWorkers = pool.totalCount + (jobType === targetJobType ? extraWorkers : 0n);
+    projectedTotalHumans += roleWorkers;
+  }
+
+  if (projectedTotalHumans <= 0n) return 0n;
+
+  for (const jobType of JOB_ORDER) {
+    const config = BALANCE.jobs[jobType];
+    if (config.workerType !== 'human' || !config.salaryPerMin) continue;
+    const pool = state.humanPools[jobType];
+    if (!pool) continue;
+
+    const roleWorkers = pool.totalCount + (jobType === targetJobType ? extraWorkers : 0n);
+    if (roleWorkers <= 0n) continue;
+    projectedSalary += getHumanSalaryPerMin(jobType as HumanJobType, roleWorkers, projectedTotalHumans);
+  }
+
+  return projectedSalary;
+}
+
+export function canHireHumanWorkersWithoutIncomeDeficit(
+  state: GameState,
+  jobType: JobType,
+  count: number,
+): boolean {
+  if (count <= 0) return true;
+  const jobConfig = BALANCE.jobs[jobType];
+  if (jobConfig.workerType !== 'human') return false;
+  return getProjectedHumanSalaryPerMin(state, jobType, count) <= state.incomePerMin;
+}
+
 /** Unstick stuck agents in bulk. */
 function nudgeAgents(state: GameState, count: bigint): void {
   let remaining = count;
@@ -114,9 +160,9 @@ export function tickJobs(state: GameState, dtMs: number): void {
   const unlocked: JobType[] = ['unassigned'];
   for (const jobType of JOB_ORDER) {
     const jobConfig = BALANCE.jobs[jobType];
-    
+
     const isObsolete = jobConfig.obsoleteAtIntel !== undefined && intel >= jobConfig.obsoleteAtIntel;
-    
+
     if (isObsolete) {
       if (!state.automatedJobs.includes(jobType)) {
         state.automatedJobs.push(jobType);
@@ -603,7 +649,22 @@ export function hireHumanWorkers(state: GameState, jobType: JobType, count: numb
   // Calculate how many we can afford
   const affordable = hireCost > 0n ? state.funds / hireCost : countB;
   const toHireByFunds = countB < affordable ? countB : affordable;
-  const toHire = toHireByFunds < remainingWorkforce ? toHireByFunds : remainingWorkforce;
+  const toHireCap = toHireByFunds < remainingWorkforce ? toHireByFunds : remainingWorkforce;
+
+  let toHire = toHireCap;
+  if (toHire > 0n && !canHireHumanWorkersWithoutIncomeDeficit(state, jobType, Number(toHire))) {
+    let lo = 0;
+    let hi = Number(toHire);
+    while (lo < hi) {
+      const mid = Math.floor((lo + hi + 1) / 2);
+      if (canHireHumanWorkersWithoutIncomeDeficit(state, jobType, mid)) {
+        lo = mid;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    toHire = BigInt(lo);
+  }
 
   if (toHire <= 0n) return 0;
 

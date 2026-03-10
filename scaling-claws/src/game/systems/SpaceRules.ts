@@ -4,8 +4,13 @@ import { fromBigInt } from '../utils.ts';
 
 export function isTransportRouteUnlocked(state: GameState, route: TransportRouteId): boolean {
   if (route === 'earthOrbit') return state.completedResearch.includes('rocketry');
-  if (route === 'moonOrbit') return state.completedResearch.includes('rocketry') && state.completedResearch.includes('payloadToMoon');
+  if (route === 'moonOrbit') {
+    return state.completedResearch.includes('rocketry')
+      && state.completedResearch.includes('payloadToMoon')
+      && state.completedResearch.includes('moonMassDrivers');
+  }
   if (route === 'earthMoon') return state.completedResearch.includes('payloadToMoon');
+  if (route === 'moonMercury') return state.completedResearch.includes('payloadToMercury') && state.completedResearch.includes('moonMassDrivers');
   return state.completedResearch.includes('payloadToMercury');
 }
 
@@ -23,27 +28,13 @@ export function getTransportPayloadWeight(payload: TransportPayloadId): number {
   return BALANCE.gpuSatelliteWeight;
 }
 
-function isMassDriverPaused(state: GameState): boolean {
-  return state.pausedFacilities.massDriver === true;
-}
-
 export function getTransportRouteCapacityKg(state: GameState, route: TransportRouteId): number {
+  void state;
   if (route === 'earthOrbit') return BALANCE.rocketCapacityLowOrbit;
   if (route === 'earthMoon') return BALANCE.rocketCapacityLunar;
-
-  const paused = isMassDriverPaused(state);
-  if (route === 'moonOrbit') {
-    const massDrivers = paused ? 0 : fromBigInt(state.locationFacilities.moon.massDriver);
-    return BALANCE.rocketCapacityMoonMercury * (1 + (massDrivers * BALANCE.massDriverCapacityMultiplier));
-  }
-
-  if (route === 'mercurySun') {
-    const massDrivers = paused ? 0 : fromBigInt(state.locationFacilities.mercury.massDriver);
-    return BALANCE.rocketCapacityLowOrbit * (1 + (massDrivers * BALANCE.massDriverCapacityMultiplier));
-  }
-
-  const massDrivers = paused ? 0 : fromBigInt(state.locationFacilities.moon.massDriver);
-  return BALANCE.rocketCapacityMoonMercury * (1 + (massDrivers * BALANCE.massDriverCapacityMultiplier));
+  if (route === 'moonOrbit') return BALANCE.rocketCapacityMoonMercury;
+  if (route === 'moonMercury') return BALANCE.rocketCapacityMoonMercury;
+  return BALANCE.rocketCapacityLowOrbit;
 }
 
 export function estimateTransportRockets(
@@ -53,6 +44,7 @@ export function estimateTransportRockets(
   amount: bigint,
   launchedRockets?: bigint,
 ): number {
+  // Legacy helper name: this now estimates launches rather than literal rocket units.
   if (launchedRockets !== undefined) return Math.max(0, Math.floor(fromBigInt(launchedRockets)));
 
   const capacityKg = getTransportRouteCapacityKg(state, route);

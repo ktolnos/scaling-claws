@@ -1,13 +1,13 @@
 import type { GameState } from '../../game/GameState.ts';
 import type { Panel } from '../PanelManager.ts';
 import { BALANCE, getNextTier } from '../../game/BalanceConfig.ts';
-import { formatNumber, mulB, fromBigInt, toBigInt, divB } from '../../game/utils.ts';
+import { formatNumber, formatMoney, mulB, fromBigInt, toBigInt, divB } from '../../game/utils.ts';
 import { dispatchGameAction } from '../../game/ActionDispatcher.ts';
 import { flashElement } from '../UIUtils.ts';
 import { createPanelDivider, createPanelScaffold } from '../components/PanelScaffold.ts';
 import { BulkBuyGroup } from '../components/BulkBuyGroup.ts';
 import { CountBulkBuyControls } from '../components/CountBulkBuyControls.ts';
-import { emojiHtml, moneyWithEmojiHtml } from '../emoji.ts';
+import { UI_EMOJI, emojiHtml, moneyWithEmojiHtml } from '../emoji.ts';
 import { setHintTarget } from '../hints/HintUtils.ts';
 
 export class AgentsPanel implements Panel {
@@ -18,6 +18,8 @@ export class AgentsPanel implements Panel {
   // Subscription Tier Elements
   private subTierNameEl!: HTMLSpanElement;
   private upgradeBtn!: HTMLButtonElement;
+  private upgradeBtnTitleEl!: HTMLDivElement;
+  private upgradeBtnIntelEl!: HTMLDivElement;
 
   // Agent Controls
   private agentSection!: HTMLDivElement;
@@ -82,9 +84,20 @@ export class AgentsPanel implements Panel {
     this.upgradeBtn.className = 'btn-buy';
     this.upgradeBtn.style.width = '100%';
     this.upgradeBtn.style.marginTop = '8px';
+    this.upgradeBtnTitleEl = document.createElement('div');
+    this.upgradeBtnIntelEl = document.createElement('div');
+    this.upgradeBtnIntelEl.style.fontSize = '0.82em';
+    this.upgradeBtnIntelEl.style.opacity = '0.9';
+    this.upgradeBtn.appendChild(this.upgradeBtnTitleEl);
+    this.upgradeBtn.appendChild(this.upgradeBtnIntelEl);
     this.upgradeBtn.addEventListener('click', () => {
       const next = getNextTier(this.state.subscriptionTier);
-      if (next) dispatchGameAction(this.state, { type: 'upgradeTier', tier: next });
+      if (!next) return;
+
+      const actionResult = dispatchGameAction(this.state, { type: 'upgradeTier', tier: next });
+      if (!actionResult.ok) {
+        flashElement(this.upgradeBtn);
+      }
     });
 
     tierSection.appendChild(this.upgradeBtn);
@@ -276,9 +289,8 @@ export class AgentsPanel implements Panel {
       const upgradeCost = mulB(deltaCostPerAgent, agentCount);
       const currentIntel = (Math.round(currentTier.intel * 10) / 10).toString();
       const nextIntel = (Math.round(nextTier.intel * 10) / 10).toString();
-      this.upgradeBtn.innerHTML =
-        `<div>Upgrade to ${nextTier.displayName} (${moneyWithEmojiHtml(upgradeCost, 'funds')})</div>` +
-        `<div style="font-size:0.82em;opacity:0.9">${emojiHtml('intel')}Intel ${currentIntel} ${emojiHtml('route')} ${nextIntel}</div>`;
+      this.upgradeBtnTitleEl.textContent = `Upgrade to ${nextTier.displayName} (${formatMoney(upgradeCost)})`;
+      this.upgradeBtnIntelEl.textContent = `${UI_EMOJI.intel} Intel ${currentIntel} ${UI_EMOJI.route} ${nextIntel}`;
       
       this.upgradeBtn.disabled = deltaCostPerAgent <= 0n || state.funds < upgradeCost;
       

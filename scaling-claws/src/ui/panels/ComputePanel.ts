@@ -6,13 +6,10 @@ import {
   getApiOptimalPrice,
   getApiPflopsPerUser,
   getAgentsRequiredAllocationPct,
-  getTrainingDataPricePerGB,
-  getTrainingDataPurchaseCost,
-  getTrainingDataRemainingPurchaseCapGB,
   isApiAutoPricingUnlocked,
   isComputeAutoAllocationUnlocked,
 } from '../../game/BalanceConfig.ts';
-import { formatNumber, formatMoney, fromBigInt, toBigInt, divB, scaleB, mulB } from '../../game/utils.ts';
+import { formatNumber, formatMoney, fromBigInt, toBigInt, divB, scaleB, mulB, scaleBigInt } from '../../game/utils.ts';
 import { dispatchGameAction } from '../../game/ActionDispatcher.ts';
 import { BulkBuyGroup, getVisibleBuyTiers } from '../components/BulkBuyGroup.ts';
 import { CountBulkBuyControls } from '../components/CountBulkBuyControls.ts';
@@ -73,9 +70,9 @@ export class ComputePanel implements Panel {
   private trainingSection!: HTMLDivElement;
   private trainingProgressRefs!: TrainingProgressRefs;
   private trainingNextRefs!: TrainingNextRefs;
-  private trainingDataInfo!: HTMLSpanElement;
-  private trainingDataControls!: CountBulkBuyControls;
   private trainingAllocHint!: HTMLDivElement;
+  private trainingAllocHintMsg!: HTMLSpanElement;
+  private trainingAllocHintBtn!: HTMLButtonElement;
   private nextTrainingType: 'ft' | 'aries' | null = null;
   private nextTrainingIdx: number = -1;
 
@@ -98,6 +95,7 @@ export class ComputePanel implements Panel {
   private apiUnlockBtnReq!: HTMLSpanElement;
   private apiUnlockedContainer!: HTMLDivElement;
   private apiInfoEl!: HTMLSpanElement;
+  private apiDataInfoEl!: HTMLSpanElement;
   private priceDecreaseGroup!: BulkBuyGroup;
   private apiPriceVal!: HTMLSpanElement;
   private priceIncreaseGroup!: BulkBuyGroup;
@@ -263,7 +261,7 @@ export class ComputePanel implements Panel {
 
     this.buyGpuControls = new CountBulkBuyControls((amt) => {
       dispatchGameAction(this.state, { type: 'buyGpu', amount: amt });
-    }, { prefix: '+', maxedLabel: 'SOLD\nOUT' });
+    }, { prefix: '+', maxedLabel: 'NO SPACE' });
     this.buyGpuRow.appendChild(this.buyGpuControls.el);
     body.appendChild(this.buyGpuRow);
 
@@ -382,7 +380,6 @@ export class ComputePanel implements Panel {
 
     this.trainingProgressRefs = this.buildTrainingProgressView(this.trainingSection);
     this.trainingNextRefs = this.buildTrainingNextView(this.trainingSection);
-    this.buildTrainingDataView(this.trainingSection);
     this.buildTrainingAllocationHint(this.trainingSection);
 
     body.appendChild(this.trainingSection);
@@ -437,6 +434,14 @@ export class ComputePanel implements Panel {
     this.apiInfoEl.className = 'label';
     userRow.appendChild(this.apiInfoEl);
     this.apiUnlockedContainer.appendChild(userRow);
+
+    const dataRow = document.createElement('div');
+    dataRow.className = 'panel-row';
+    dataRow.style.fontSize = '0.82rem';
+    this.apiDataInfoEl = document.createElement('span');
+    this.apiDataInfoEl.className = 'label';
+    dataRow.appendChild(this.apiDataInfoEl);
+    this.apiUnlockedContainer.appendChild(dataRow);
 
     // Demand Progress Bar
     const demandContainer = document.createElement('div');
@@ -677,29 +682,33 @@ export class ComputePanel implements Panel {
     return { container, info, reqs, btn };
   }
 
-  private buildTrainingDataView(parent: HTMLElement): void {
-    const row = document.createElement('div');
-    row.className = 'panel-row';
-    row.style.fontSize = '0.82rem';
-
-    this.trainingDataInfo = document.createElement('span');
-    this.trainingDataInfo.className = 'label';
-    row.appendChild(this.trainingDataInfo);
-
-    this.trainingDataControls = new CountBulkBuyControls((amount) => {
-      dispatchGameAction(this.state, { type: 'buyTrainingData', amountGB: amount });
-    }, { countPrefix: '', maxedLabel: 'SOLD\nOUT' });
-    row.appendChild(this.trainingDataControls.el);
-
-    parent.appendChild(row);
-  }
-
   private buildTrainingAllocationHint(parent: HTMLElement): void {
     this.trainingAllocHint = document.createElement('div');
     this.trainingAllocHint.className = 'warning-text';
     this.trainingAllocHint.style.fontSize = '0.72rem';
     this.trainingAllocHint.style.display = 'none';
-    this.trainingAllocHint.textContent = 'Set training allocation above 0% to train!';
+    this.trainingAllocHint.style.alignItems = 'center';
+    this.trainingAllocHint.style.gap = '8px';
+
+    this.trainingAllocHintMsg = document.createElement('span');
+    this.trainingAllocHintMsg.textContent = 'Set training allocation above 0% to train!';
+    this.trainingAllocHint.appendChild(this.trainingAllocHintMsg);
+
+    this.trainingAllocHintBtn = document.createElement('button');
+    this.trainingAllocHintBtn.type = 'button';
+    this.trainingAllocHintBtn.className = 'btn-primary';
+    this.trainingAllocHintBtn.style.fontSize = '0.68rem';
+    this.trainingAllocHintBtn.style.padding = '1px 6px';
+    this.trainingAllocHintBtn.textContent = 'Set 10%';
+    this.trainingAllocHintBtn.addEventListener('click', () => {
+      const currentInference = this.state.apiUnlocked ? this.state.apiInferenceAllocationPct : 0;
+      const targetTraining = Math.max(1, Math.min(10, 100 - currentInference));
+      const targetInference = Math.max(0, Math.min(currentInference, 100 - targetTraining));
+      this.setUnifiedAllocations(targetTraining, targetInference);
+      this.updateUnifiedAllocationUi(this.state);
+    });
+    this.trainingAllocHint.appendChild(this.trainingAllocHintBtn);
+
     parent.appendChild(this.trainingAllocHint);
   }
 
@@ -735,6 +744,18 @@ export class ComputePanel implements Panel {
   private getLoadPctLabel(ratio: number): string {
     if (!Number.isFinite(ratio)) return 'inf%';
     return `${Math.round(ratio * 100)}%`;
+  }
+
+  private getDataUnitForValue(valueGb: bigint): 'MB' | 'GB' | 'TB' {
+    if (valueGb < scaleBigInt(1n)) return 'MB';
+    if (valueGb >= scaleBigInt(1000n)) return 'TB';
+    return 'GB';
+  }
+
+  private toDataUnitFromGb(valueGb: bigint, unit: 'MB' | 'GB' | 'TB'): bigint {
+    if (unit === 'MB') return mulB(valueGb, toBigInt(1000));
+    if (unit === 'TB') return divB(valueGb, toBigInt(1000));
+    return valueGb;
   }
 
   private setUnifiedAllocations(trainingPct: number, inferencePct: number): void {
@@ -994,28 +1015,9 @@ export class ComputePanel implements Panel {
       }
     }
 
-    const pricePerGB = getTrainingDataPricePerGB();
-    const purchasedGB = Math.max(0, Math.floor(state.trainingDataPurchases));
-    const remainingCapGB = getTrainingDataRemainingPurchaseCapGB(purchasedGB);
-    let dataText = `${resourceLabelHtml('data', 'Data')} (GB)`;
-    if (state.synthDataRate > 0n) {
-      dataText += ` +${formatNumber(state.synthDataRate)} GB/m`;
-    }
-    dataText += ` <span style="color:var(--text-muted)">${formatMoney(pricePerGB)}/GB</span>`;
-    this.trainingDataInfo.innerHTML = dataText;
-    this.trainingDataControls.setCount(state.trainingData);
-    this.trainingDataControls.bulk.update(
-      purchasedGB,
-      (amount) => amount <= remainingCapGB && state.funds >= getTrainingDataPurchaseCost(amount),
-      BALANCE.dataPurchaseLimitGB,
-      () => {
-        flashElement(this.trainingDataInfo);
-      },
-    );
-
     const runActive = state.currentFineTuneIndex >= 0 || state.ariesModelIndex >= 0;
     const stalledByAllocation = runActive && state.trainingAllocationPct === 0;
-    this.trainingAllocHint.style.display = stalledByAllocation ? '' : 'none';
+    this.trainingAllocHint.style.display = stalledByAllocation ? 'flex' : 'none';
   }
 
   update(state: GameState): void {
@@ -1037,18 +1039,27 @@ export class ComputePanel implements Panel {
     const installedPctColor = installedPctLow ? 'var(--accent-red)' : '';
     this.gpuStockBarFill.style.width = `${Math.min(100, Math.max(0, stockLoadRatio * 100))}%`;
     this.gpuStockBarFill.style.background = stockColor;
+    const installedSegment = installedPct >= 100
+      ? ''
+      : ` | Installed ${formatNumber(shownInstalled)} (` +
+        `<span style="color:${installedPctColor}">${installedPct}%</span>)`;
     this.gpuStatusEl.innerHTML =
       `Stock ${formatNumber(earthGpuCount)} / Capacity ${formatNumber(state.gpuCapacity)} ` +
-      `(<span style="color:${stockPctColor}">${stockPct}</span>) | ` +
-      `Installed ${formatNumber(shownInstalled)} (` +
-      `<span style="color:${installedPctColor}">${installedPct}%</span>)`;
+      `(<span style="color:${stockPctColor}">${stockPct}</span>)${installedSegment}`;
 
     this.updateUnifiedAllocationUi(state);
 
+    const gpuOwned = Math.floor(fromBigInt(earthGpuCount));
+    const gpuSpaceLimit = Math.floor(fromBigInt(state.gpuCapacity));
     this.buyGpuControls.bulk.update(
-      Math.floor(fromBigInt(earthGpuCount)),
-      (amt) => state.funds >= BigInt(amt) * state.gpuMarketPrice,
-      BALANCE.gpuBuyLimit,
+      gpuOwned,
+      (amt) => {
+        if (amt <= 0) return false;
+        const amountB = toBigInt(amt);
+        if (earthGpuCount + amountB > state.gpuCapacity) return false;
+        return state.funds >= BigInt(amt) * state.gpuMarketPrice;
+      },
+      gpuSpaceLimit,
       () => {
         flashElement(this.buyGpuControls.countEl);
       },
@@ -1221,6 +1232,24 @@ export class ComputePanel implements Panel {
     // Active Users & Income
     this.apiInfoEl.innerHTML = `${resourceLabelHtml('users', 'Active Users')}: ${formatNumber(state.apiUserCount)} ` +
       `@ ${moneyWithEmojiHtml(state.apiPrice, 'funds')}/min = ${moneyWithEmojiHtml(state.apiIncomePerMin, 'funds')}/min`;
+
+    const apiDataPerMin = mulB(state.apiUserCount, state.apiUserSynthRate);
+    const aiSynthDataPerMin = state.synthDataRate > apiDataPerMin
+      ? state.synthDataRate - apiDataPerMin
+      : 0n;
+    const dataQtyUnit = this.getDataUnitForValue(state.trainingData);
+    const dataQty = this.toDataUnitFromGb(state.trainingData, dataQtyUnit);
+    const dataPerMinUnit = this.getDataUnitForValue(apiDataPerMin);
+    const dataPerMin = this.toDataUnitFromGb(apiDataPerMin, dataPerMinUnit);
+    const dataPerUserUnit = this.getDataUnitForValue(state.apiUserSynthRate);
+    const dataPerUser = this.toDataUnitFromGb(state.apiUserSynthRate, dataPerUserUnit);
+    const aiSynthDataPerMinUnit = this.getDataUnitForValue(aiSynthDataPerMin);
+    const aiSynthDataPerMinDisplay = this.toDataUnitFromGb(aiSynthDataPerMin, aiSynthDataPerMinUnit);
+    this.apiDataInfoEl.innerHTML =
+      `${emojiHtml('data')} Data <b>${formatNumber(dataQty)}</b> ${dataQtyUnit} ` +
+      `+${formatNumber(dataPerMin)} ${dataPerMinUnit} / m ` +
+      `(${formatNumber(state.apiUserCount)} Users x ${formatNumber(dataPerUser)} ${dataPerUserUnit}/m` +
+      ` + ${formatNumber(aiSynthDataPerMinDisplay)} ${aiSynthDataPerMinUnit}/m AI Data Synthesizers)`;
 
     // Demand Bar
     const pflopsPerUser = getApiPflopsPerUser(state.apiQuality);

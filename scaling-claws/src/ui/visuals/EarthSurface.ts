@@ -1,5 +1,6 @@
 import type { GameState } from '../../game/GameState.ts';
-import { fromBigInt } from '../../game/utils.ts';
+import { BALANCE } from '../../game/BalanceConfig.ts';
+import { fromBigInt, toBigInt } from '../../game/utils.ts';
 import {
   datacenterBuildingSvg, gasPlantSvg, nuclearPlantSvg, solarFarmSvg,
   rocketSiloSvg, robotFactorySvg, siliconMineSvg, waferFabSvg,
@@ -90,17 +91,18 @@ export class EarthSurface {
     this.syncBuildings('datacenter', totalDCs, datacenterBuildingSvg);
     this.syncBuildings('gas', Math.floor(fromBigInt(state.gasPlants)), gasPlantSvg);
     this.syncBuildings('nuclear', Math.floor(fromBigInt(state.nuclearPlants)), nuclearPlantSvg);
-    this.syncBuildings('solar', Math.floor(fromBigInt(state.locationResources.earth.installedSolarPanels)), solarFarmSvg);
+    const earthSolarFarms = state.locationResources.earth.installedSolarPanels / toBigInt(BALANCE.solarFarmPanelsPerFarm);
+    this.syncBuildings('solar', Number(earthSolarFarms), solarFarmSvg);
     
     // Use Rocket Factory count? Or Rockets? Usually Silos = Rockets. 
     // But rockets are inventory now. Let's show Rocket Factories.
     // Or keep Rockets as Silos? "Rocket factory makes rockets". 
     // I'll show Rocket Factories as "rocketSilo".
-    this.syncBuildings('rocket', Math.floor(fromBigInt(state.locationFacilities.earth.rocketFactory)), rocketSiloSvg);
+    this.syncBuildings('rocket', Math.floor(fromBigInt(state.locationFacilities.earth.earthRocketFactory)), rocketSiloSvg);
     
-    this.syncBuildings('robotFactory', Math.floor(fromBigInt(state.locationFacilities.earth.robotFactory)), robotFactorySvg);
-    this.syncBuildings('mine', Math.floor(fromBigInt(state.locationFacilities.earth.materialMine)), siliconMineSvg);
-    this.syncBuildings('gpuFactory', Math.floor(fromBigInt(state.locationFacilities.earth.gpuFactory)), waferFabSvg);
+    this.syncBuildings('robotFactory', Math.floor(fromBigInt(state.locationFacilities.earth.earthRobotFactory)), robotFactorySvg);
+    this.syncBuildings('mine', Math.floor(fromBigInt(state.locationFacilities.earth.earthMaterialMine)), siliconMineSvg);
+    this.syncBuildings('gpuFactory', Math.floor(fromBigInt(state.locationFacilities.earth.earthGpuFactory)), waferFabSvg);
 
     // Update zoom level based on total building count
     const totalBuildings = this.buildings.length;

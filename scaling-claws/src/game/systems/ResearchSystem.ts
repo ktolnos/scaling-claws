@@ -6,7 +6,8 @@ import {
   getGpuFlopsResearchMultiplier,
   getRocketLossPctFromResearch,
 } from '../BalanceConfig.ts';
-import type { ResearchId, ResearchConfig } from '../BalanceConfig.ts';
+import type { ResearchId, ResearchConfig, ResearchCostResource } from '../BalanceConfig.ts';
+import { scaleB } from '../utils.ts';
 
 export function tickResearch(state: GameState, _dtMs: number): void {
   computeResearchBonuses(state);
@@ -31,13 +32,76 @@ function getResearchConfig(id: ResearchId): ResearchConfig | undefined {
   return BALANCE.research.find(r => r.id === id);
 }
 
-export function canPurchaseResearch(state: GameState, id: ResearchId): boolean {
-  if (state.completedResearch.includes(id)) return false;
+function getResearchPurchaseCount(state: GameState, id: ResearchId): number {
+  let count = 0;
+  for (const completedId of state.completedResearch) {
+    if (completedId === id) count++;
+  }
+  return count;
+}
 
+function getCostResource(config: ResearchConfig): ResearchCostResource {
+  return config.costResource ?? 'science';
+}
+
+function isSyntheticData1LockedByIntel(state: GameState, id: ResearchId): boolean {
+  if (id !== 'syntheticData1') return false;
+  return state.intelligence <= BALANCE.jobs.aiDataSynthesizer.unlockAtIntel;
+}
+
+function getResearchCostForPurchases(config: ResearchConfig, purchaseCount: number): bigint {
+  if (!config.infinite) return config.cost;
+
+  const internalLevel = Math.max(0, config.infinite.initialLevel + purchaseCount);
+  const growth = Math.pow(config.infinite.priceExponentPerLevel, internalLevel);
+  const safeGrowth = Number.isFinite(growth) ? growth : Number.MAX_SAFE_INTEGER;
+  return scaleB(config.cost, safeGrowth);
+}
+
+export function getResearchCurrentCost(state: GameState, id: ResearchId): bigint {
+  const config = getResearchConfig(id);
+  if (!config) return 0n;
+  const purchaseCount = getResearchPurchaseCount(state, id);
+  return getResearchCostForPurchases(config, purchaseCount);
+}
+
+export interface ResearchQuantityPreview {
+  label: string;
+  emoji: 'code' | 'science' | 'labor' | 'data' | 'flops' | 'energy' | 'rockets';
+  unit: string;
+  current: number;
+  next: number;
+}
+
+export function getResearchQuantityPreview(state: GameState, id: ResearchId): ResearchQuantityPreview | null {
+  const config = getResearchConfig(id);
+  if (!config?.infinite) return null;
+
+  const purchaseCount = getResearchPurchaseCount(state, id);
+  const internalLevel = Math.max(0, config.infinite.initialLevel + purchaseCount);
+  const current = config.infinite.quantityBase * Math.pow(config.infinite.quantityMultiplierPerLevel, internalLevel);
+  const next = config.infinite.quantityBase * Math.pow(config.infinite.quantityMultiplierPerLevel, internalLevel + 1);
+  return {
+    label: config.infinite.quantityLabel,
+    emoji: config.infinite.quantityEmoji,
+    unit: config.infinite.quantityUnit ?? '',
+    current,
+    next,
+  };
+}
+
+export function canPurchaseResearch(state: GameState, id: ResearchId): boolean {
   const config = getResearchConfig(id);
   if (!config) return false;
+  if (isSyntheticData1LockedByIntel(state, id)) return false;
 
-  if (state.science < config.cost) return false;
+  const alreadyPurchased = state.completedResearch.includes(id);
+  if (alreadyPurchased && !config.infinite) return false;
+
+  const purchaseCount = getResearchPurchaseCount(state, id);
+  const cost = getResearchCostForPurchases(config, purchaseCount);
+  const costResource = getCostResource(config);
+  if (state[costResource] < cost) return false;
 
   for (const prereq of config.prereqs) {
     if (!state.completedResearch.includes(prereq)) return false;
@@ -50,27 +114,32 @@ export function purchaseResearch(state: GameState, id: ResearchId): boolean {
   if (!canPurchaseResearch(state, id)) return false;
 
   const config = getResearchConfig(id)!;
-  state.science -= config.cost;
+  const purchaseCount = getResearchPurchaseCount(state, id);
+  const cost = getResearchCostForPurchases(config, purchaseCount);
+  const costResource = getCostResource(config);
+  state[costResource] -= cost;
   state.completedResearch.push(id);
 
+  const firstPurchase = purchaseCount === 0;
+
   // Flavor text highlights
-  if (id === 'robotics1') {
+  if (firstPurchase && id === 'robotics1') {
     state.pendingFlavorTexts.push('"Robot workers unlocked. Automated labor now scales with robotics tech."');
-  } else if (id === 'robotFactoryEngineering1') {
+  } else if (firstPurchase && id === 'robotFactoryEngineering1') {
     state.pendingFlavorTexts.push('"Earth robot factories unlocked."');
-  } else if (id === 'moonRobotics') {
+  } else if (firstPurchase && id === 'moonRobotics') {
     state.pendingFlavorTexts.push('"Moon robot factories unlocked."');
-  } else if (id === 'mercuryRobotics') {
+  } else if (firstPurchase && id === 'mercuryRobotics') {
     state.pendingFlavorTexts.push('"Mercury robot factories unlocked."');
-  } else if (id === 'syntheticData1') {
+  } else if (firstPurchase && id === 'syntheticData1') {
     state.pendingFlavorTexts.push('"AI Data Synthesizer unlocked. Agents can now generate training data directly."');
-  } else if (id === 'payloadToMoon') {
+  } else if (firstPurchase && id === 'payloadToMoon') {
     state.pendingFlavorTexts.push('"Lunar logistics online. Earth no longer runs alone."');
-  } else if (id === 'payloadToMercury') {
+  } else if (firstPurchase && id === 'payloadToMercury') {
     state.pendingFlavorTexts.push('"Mercury corridor unlocked. The Dyson route is open."');
-  } else if (id === 'moonMassDrivers') {
-    state.pendingFlavorTexts.push('"Mass drivers active. Payload throughput surges."');
-  } else if (id === 'vonNeumannProbes') {
+  } else if (firstPurchase && id === 'moonMassDrivers') {
+    state.pendingFlavorTexts.push('"Mass drivers and lunar sat fabs online. Payload throughput surges."');
+  } else if (firstPurchase && id === 'vonNeumannProbes') {
     state.pendingFlavorTexts.push('"Probe architecture complete. You can now trigger the endgame launch."');
   }
 
@@ -79,7 +148,8 @@ export function purchaseResearch(state: GameState, id: ResearchId): boolean {
 
 export function getAvailableResearch(state: GameState): ResearchConfig[] {
   return BALANCE.research.filter(r => {
-    if (state.completedResearch.includes(r.id)) return false;
+    if (!r.infinite && state.completedResearch.includes(r.id)) return false;
+    if (isSyntheticData1LockedByIntel(state, r.id)) return false;
     for (const prereq of r.prereqs) {
       if (!state.completedResearch.includes(prereq)) return false;
     }

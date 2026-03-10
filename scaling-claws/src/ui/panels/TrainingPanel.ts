@@ -4,7 +4,12 @@ import { BALANCE } from '../../game/BalanceConfig.ts';
 import type { ResearchId } from '../../game/BalanceConfig.ts';
 import { formatNumber } from '../../game/utils.ts';
 import { dispatchGameAction } from '../../game/ActionDispatcher.ts';
-import { getAvailableResearch, canPurchaseResearch } from '../../game/systems/ResearchSystem.ts';
+import {
+  getAvailableResearch,
+  canPurchaseResearch,
+  getResearchCurrentCost,
+  getResearchQuantityPreview,
+} from '../../game/systems/ResearchSystem.ts';
 import { createPanelScaffold } from '../components/PanelScaffold.ts';
 import { emojiHtml } from '../emoji.ts';
 import { setHintTarget } from '../hints/HintUtils.ts';
@@ -17,7 +22,12 @@ export class TrainingPanel implements Panel {
   private unlockHintEl!: HTMLDivElement;
   private researchSection!: HTMLDivElement;
   private researchListEl!: HTMLDivElement;
-  private researchRows: Map<ResearchId, { row: HTMLDivElement; btn: HTMLButtonElement }> = new Map();
+  private researchRows: Map<ResearchId, {
+    row: HTMLDivElement;
+    btn: HTMLButtonElement;
+    descEl: HTMLDivElement;
+    metricEl: HTMLDivElement;
+  }> = new Map();
 
   constructor(state: GameState) {
     this.state = state;
@@ -66,8 +76,10 @@ export class TrainingPanel implements Panel {
 
     const available = getAvailableResearch(state)
       .sort((a, b) => {
-        if (a.cost < b.cost) return -1;
-        if (a.cost > b.cost) return 1;
+        const costA = getResearchCurrentCost(state, a.id);
+        const costB = getResearchCurrentCost(state, b.id);
+        if (costA < costB) return -1;
+        if (costA > costB) return 1;
         return a.name.localeCompare(b.name);
       })
       .slice(0, 9);
@@ -109,8 +121,14 @@ export class TrainingPanel implements Panel {
         descEl.style.color = 'var(--text-secondary)';
         descEl.style.lineHeight = '1.25';
         descEl.textContent = r.description;
+        const metricEl = document.createElement('div');
+        metricEl.style.fontSize = '0.7rem';
+        metricEl.style.color = 'var(--text-muted)';
+        metricEl.style.lineHeight = '1.2';
+        metricEl.style.marginTop = '2px';
         info.appendChild(nameEl);
         info.appendChild(descEl);
+        info.appendChild(metricEl);
         row.appendChild(info);
 
         const btn = document.createElement('button');
@@ -123,11 +141,27 @@ export class TrainingPanel implements Panel {
         row.appendChild(btn);
 
         this.researchListEl.appendChild(row);
-        refs = { row, btn };
+        refs = { row, btn, descEl, metricEl };
         this.researchRows.set(r.id, refs);
       }
 
-      refs.btn.innerHTML = `${formatNumber(r.cost)} ${emojiHtml('science')} Science`;
+      refs.descEl.textContent = r.description;
+      const quantityPreview = getResearchQuantityPreview(state, r.id);
+      if (quantityPreview) {
+        refs.metricEl.style.display = '';
+        refs.metricEl.innerHTML =
+          `${quantityPreview.label}: ` +
+          `${emojiHtml(quantityPreview.emoji)} ${formatNumber(quantityPreview.current)}${quantityPreview.unit} ` +
+          `-> ${emojiHtml(quantityPreview.emoji)} ${formatNumber(quantityPreview.next)}${quantityPreview.unit}`;
+      } else {
+        refs.metricEl.style.display = 'none';
+        refs.metricEl.innerHTML = '';
+      }
+
+      const currentCost = getResearchCurrentCost(state, r.id);
+      const costResource = r.costResource ?? 'science';
+      const costLabel = costResource === 'code' ? 'Code' : 'Science';
+      refs.btn.innerHTML = `${formatNumber(currentCost)} ${emojiHtml(costResource)} ${costLabel}`;
       const rowBtn = refs.btn;
       refs.btn.onclick = () => {
         const actionResult = dispatchGameAction(this.state, { type: 'purchaseResearch', id: r.id });

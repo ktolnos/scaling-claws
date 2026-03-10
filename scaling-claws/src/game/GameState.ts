@@ -36,7 +36,22 @@ export interface HumanPool {
 
 export type LocationId = 'earth' | 'moon' | 'mercury';
 export type SupplyResourceId = 'material' | 'solarPanels' | 'robots' | 'gpus' | 'rockets' | 'gpuSatellites' | 'labor';
-export type FacilityId = 'materialMine' | 'solarFactory' | 'robotFactory' | 'gpuFactory' | 'rocketFactory' | 'gpuSatelliteFactory' | 'massDriver';
+export type FacilityId =
+  | 'earthMaterialMine'
+  | 'earthSolarFactory'
+  | 'earthRobotFactory'
+  | 'earthGpuFactory'
+  | 'earthRocketFactory'
+  | 'earthGpuSatelliteFactory'
+  | 'moonMaterialMine'
+  | 'moonSolarFactory'
+  | 'moonRobotFactory'
+  | 'moonGpuFactory'
+  | 'moonGpuSatelliteFactory'
+  | 'moonMassDriver'
+  | 'mercuryMaterialMine'
+  | 'mercuryRobotFactory'
+  | 'mercuryDysonSwarmFacility';
 export type TransportRouteId = 'earthOrbit' | 'earthMoon' | 'moonOrbit' | 'moonMercury' | 'mercurySun';
 export type TransportPayloadId = 'gpuSatellites' | 'gpus' | 'solarPanels' | 'robots';
 
@@ -63,40 +78,46 @@ export interface LocationRateState {
 }
 
 export interface LocationFacilityState {
-  materialMine: bigint;
-  solarFactory: bigint;
-  robotFactory: bigint;
-  gpuFactory: bigint;
-  rocketFactory: bigint;
-  gpuSatelliteFactory: bigint;
-  massDriver: bigint;
+  earthMaterialMine: bigint;
+  earthSolarFactory: bigint;
+  earthRobotFactory: bigint;
+  earthGpuFactory: bigint;
+  earthRocketFactory: bigint;
+  earthGpuSatelliteFactory: bigint;
+  moonMaterialMine: bigint;
+  moonSolarFactory: bigint;
+  moonRobotFactory: bigint;
+  moonGpuFactory: bigint;
+  moonGpuSatelliteFactory: bigint;
+  moonMassDriver: bigint;
+  mercuryMaterialMine: bigint;
+  mercuryRobotFactory: bigint;
+  mercuryDysonSwarmFacility: bigint;
 }
 
 export interface LocationFacilityRateState {
-  materialMine: number;
-  solarFactory: number;
-  robotFactory: number;
-  gpuFactory: number;
-  rocketFactory: number;
-  gpuSatelliteFactory: number;
-  massDriver: number;
+  earthMaterialMine: number;
+  earthSolarFactory: number;
+  earthRobotFactory: number;
+  earthGpuFactory: number;
+  earthRocketFactory: number;
+  earthGpuSatelliteFactory: number;
+  moonMaterialMine: number;
+  moonSolarFactory: number;
+  moonRobotFactory: number;
+  moonGpuFactory: number;
+  moonGpuSatelliteFactory: number;
+  moonMassDriver: number;
+  mercuryMaterialMine: number;
+  mercuryRobotFactory: number;
+  mercuryDysonSwarmFacility: number;
 }
 
 export interface TransportBatch {
   route: TransportRouteId;
   payload: TransportPayloadId;
   amount: bigint;
-  launchedRockets?: bigint;
   deliveredAt: number;
-  rocketReturnAt: number;
-  rocketReturnsTo: 'earth' | 'moon' | 'mercury';
-  returningRockets: bigint;
-}
-
-export interface RocketReturnBatch {
-  returnAt: number;
-  location: 'earth' | 'moon' | 'mercury';
-  amount: bigint;
 }
 
 export interface GameState {
@@ -188,9 +209,8 @@ export interface GameState {
   logisticsOrders: Record<string, bigint>;
   logisticsSent: Record<string, bigint>;
   logisticsInTransit: Record<string, bigint>;
-  logisticsReservedRockets: Record<TransportRouteId, bigint>;
+  logisticsAutoQueue: Record<string, boolean>;
   transportBatches: TransportBatch[];
-  rocketReturnBatches: RocketReturnBatch[];
   earthLaunchCarry: number;
   moonLaunchCarry: number;
   mercuryLaunchCarry: number;
@@ -257,6 +277,12 @@ export interface GameState {
   // Flavor text
   pendingFlavorTexts: string[];
   shownFlavorTexts: string[];
+
+  // UI state - GameState is the single source of truth for UI persistence.
+  // Do not mirror this state in separate UI manager fields.
+  openedTabs: Record<string, boolean>;
+  tabAlerts: Record<string, boolean>;
+  selectedTabId: string | null;
 }
 
 function createEmptyLocationResources(): LocationResourceState {
@@ -287,25 +313,41 @@ function createEmptyLocationRates(): LocationRateState {
 
 function createEmptyLocationFacilities(): LocationFacilityState {
   return {
-    materialMine: 0n,
-    solarFactory: 0n,
-    robotFactory: 0n,
-    gpuFactory: 0n,
-    rocketFactory: 0n,
-    gpuSatelliteFactory: 0n,
-    massDriver: 0n,
+    earthMaterialMine: 0n,
+    earthSolarFactory: 0n,
+    earthRobotFactory: 0n,
+    earthGpuFactory: 0n,
+    earthRocketFactory: 0n,
+    earthGpuSatelliteFactory: 0n,
+    moonMaterialMine: 0n,
+    moonSolarFactory: 0n,
+    moonRobotFactory: 0n,
+    moonGpuFactory: 0n,
+    moonGpuSatelliteFactory: 0n,
+    moonMassDriver: 0n,
+    mercuryMaterialMine: 0n,
+    mercuryRobotFactory: 0n,
+    mercuryDysonSwarmFacility: 0n,
   };
 }
 
 function createEmptyFacilityRates(): LocationFacilityRateState {
   return {
-    materialMine: 0,
-    solarFactory: 0,
-    robotFactory: 0,
-    gpuFactory: 0,
-    rocketFactory: 0,
-    gpuSatelliteFactory: 0,
-    massDriver: 0,
+    earthMaterialMine: 0,
+    earthSolarFactory: 0,
+    earthRobotFactory: 0,
+    earthGpuFactory: 0,
+    earthRocketFactory: 0,
+    earthGpuSatelliteFactory: 0,
+    moonMaterialMine: 0,
+    moonSolarFactory: 0,
+    moonRobotFactory: 0,
+    moonGpuFactory: 0,
+    moonGpuSatelliteFactory: 0,
+    moonMassDriver: 0,
+    mercuryMaterialMine: 0,
+    mercuryRobotFactory: 0,
+    mercuryDysonSwarmFacility: 0,
   };
 }
 
@@ -321,25 +363,36 @@ function createInitialLogisticsMap(): Record<string, bigint> {
   };
 }
 
-function createInitialReservedRocketMap(): Record<TransportRouteId, bigint> {
+function createInitialLogisticsAutoQueueMap(): Record<string, boolean> {
   return {
-    earthOrbit: 0n,
-    earthMoon: 0n,
-    moonOrbit: 0n,
-    moonMercury: 0n,
-    mercurySun: 0n,
+    'earthOrbit:gpuSatellites': false,
+    'earthMoon:gpus': false,
+    'earthMoon:solarPanels': false,
+    'earthMoon:robots': false,
+    'moonOrbit:gpuSatellites': false,
+    'moonMercury:robots': false,
+    // Preserve existing behavior where Mercury-produced satellites auto-flow to the Sun route.
+    'mercurySun:gpuSatellites': true,
   };
 }
 
 function createInitialPausedFacilities(): Record<FacilityId, boolean> {
   return {
-    materialMine: false,
-    solarFactory: false,
-    robotFactory: false,
-    gpuFactory: false,
-    rocketFactory: false,
-    gpuSatelliteFactory: false,
-    massDriver: false,
+    earthMaterialMine: false,
+    earthSolarFactory: false,
+    earthRobotFactory: false,
+    earthGpuFactory: false,
+    earthRocketFactory: false,
+    earthGpuSatelliteFactory: false,
+    moonMaterialMine: false,
+    moonSolarFactory: false,
+    moonRobotFactory: false,
+    moonGpuFactory: false,
+    moonGpuSatelliteFactory: false,
+    moonMassDriver: false,
+    mercuryMaterialMine: false,
+    mercuryRobotFactory: false,
+    mercuryDysonSwarmFacility: false,
   };
 }
 
@@ -458,9 +511,8 @@ export function createInitialState(): GameState {
     logisticsOrders: createInitialLogisticsMap(),
     logisticsSent: createInitialLogisticsMap(),
     logisticsInTransit: createInitialLogisticsMap(),
-    logisticsReservedRockets: createInitialReservedRocketMap(),
+    logisticsAutoQueue: createInitialLogisticsAutoQueueMap(),
     transportBatches: [],
-    rocketReturnBatches: [],
     earthLaunchCarry: 0,
     moonLaunchCarry: 0,
     mercuryLaunchCarry: 0,
@@ -521,6 +573,9 @@ export function createInitialState(): GameState {
 
     pendingFlavorTexts: [],
     shownFlavorTexts: [],
+    openedTabs: {},
+    tabAlerts: {},
+    selectedTabId: null,
 
     // Agent pools (new structure)
     agentPools: initializeAgentPools(),

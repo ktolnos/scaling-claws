@@ -1,9 +1,8 @@
-import type { GameState, LocationId, TransportPayloadId, TransportRouteId } from '../GameState.ts';
 import { BALANCE, getGpuSatellitePowerMWPerUnit } from '../BalanceConfig.ts';
-import { toBigInt, mulB, fromBigInt } from '../utils.ts';
+import type { GameState, TransportPayloadId, TransportRouteId } from '../GameState.ts';
+import { fromBigInt, mulB, SCALE, toBigInt } from '../utils.ts';
 import { reconcileEarthGpuInstallation } from './GpuState.ts';
 import {
-  estimateTransportRockets,
   getTransportPayloadWeight,
   getTransportRouteCapacityKg,
   getTransportRouteSource,
@@ -14,27 +13,48 @@ function orderKey(route: TransportRouteId, payload: TransportPayloadId): string 
   return `${route}:${payload}`;
 }
 
+function toWholeUnits(value: bigint): bigint {
+  if (value <= 0n) return 0n;
+  return (value / SCALE) * SCALE;
+}
+
 function ensureLogisticsState(state: GameState): void {
   if (
-    !state.logisticsReservedRockets ||
     !state.logisticsOrders ||
     !state.logisticsSent ||
     !state.logisticsInTransit ||
-    !state.transportBatches ||
-    !state.rocketReturnBatches
+    !state.transportBatches
   ) {
     throw new Error('Logistics state is missing. Start from a fresh save.');
   }
+  const defaults: Record<string, boolean> = {
+    'earthOrbit:gpuSatellites': false,
+    'earthMoon:gpus': false,
+    'earthMoon:solarPanels': false,
+    'earthMoon:robots': false,
+    'moonOrbit:gpuSatellites': false,
+    'moonMercury:robots': false,
+    'mercurySun:gpuSatellites': true,
+  };
+  state.logisticsAutoQueue = {
+    ...defaults,
+    ...(state.logisticsAutoQueue ?? {}),
+  };
 }
 
-function getRocketPool(state: GameState, route: TransportRouteId): bigint {
-  const source = getTransportRouteSource(route);
-  return state.locationResources[source].rockets;
-}
-
-function setRocketPool(state: GameState, route: TransportRouteId, value: bigint): void {
-  const source = getTransportRouteSource(route);
-  state.locationResources[source].rockets = value;
+function normalizeLogisticsQuantities(state: GameState): void {
+  for (const key of Object.keys(state.logisticsOrders)) {
+    state.logisticsOrders[key] = toWholeUnits(state.logisticsOrders[key] || 0n);
+  }
+  for (const key of Object.keys(state.logisticsSent)) {
+    state.logisticsSent[key] = toWholeUnits(state.logisticsSent[key] || 0n);
+  }
+  for (const key of Object.keys(state.logisticsInTransit)) {
+    state.logisticsInTransit[key] = toWholeUnits(state.logisticsInTransit[key] || 0n);
+  }
+  state.transportBatches = state.transportBatches
+    .map((batch) => ({ ...batch, amount: toWholeUnits(batch.amount) }))
+    .filter((batch) => batch.amount > 0n);
 }
 
 function addToDestination(state: GameState, route: TransportRouteId, payload: TransportPayloadId, amount: bigint): void {
@@ -60,8 +80,8 @@ function addToDestination(state: GameState, route: TransportRouteId, payload: Tr
     return;
   }
 
-  if (route === 'moonMercury') {
-    if (payload === 'robots') state.locationResources.mercury.robots += amount;
+  if (route === 'moonMercury' && payload === 'robots') {
+    state.locationResources.mercury.robots += amount;
   }
 }
 
@@ -73,104 +93,20 @@ function getTransitMs(route: TransportRouteId): number {
   return BALANCE.routeMoonMercuryTransitMs;
 }
 
-function getReturnMs(route: TransportRouteId): number {
-  if (route === 'moonOrbit') return BALANCE.moonRocketReturnMs;
-  if (route === 'moonMercury') return BALANCE.moonRocketReturnMs;
-  if (route === 'mercurySun') return BALANCE.moonRocketReturnMs;
-  return BALANCE.earthRocketReturnMs;
-}
-
-function routeMatchesSource(route: TransportRouteId, source: LocationId): boolean {
-  if (source === 'earth') return route === 'earthOrbit' || route === 'earthMoon';
-  if (source === 'moon') return route === 'moonOrbit' || route === 'moonMercury';
-  return route === 'mercurySun';
-}
-
-function getBatchRocketCount(
-  state: GameState,
-  route: TransportRouteId,
-  payload: TransportPayloadId,
-  amount: bigint,
-  launchedRockets?: bigint,
-): number {
-  return estimateTransportRockets(state, route, payload, amount, launchedRockets);
-}
-
-function getSourceRocketFleetCount(state: GameState, source: LocationId): number {
-  let total = Math.floor(fromBigInt(state.locationResources[source].rockets));
-
-  const reserved = state.logisticsReservedRockets;
-  if (source === 'earth') total += Math.floor(fromBigInt((reserved.earthOrbit || 0n) + (reserved.earthMoon || 0n)));
-  if (source === 'moon') total += Math.floor(fromBigInt((reserved.moonOrbit || 0n) + (reserved.moonMercury || 0n)));
-  if (source === 'mercury') total += Math.floor(fromBigInt(reserved.mercurySun || 0n));
-
-  for (const batch of state.transportBatches) {
-    if (!routeMatchesSource(batch.route, source)) continue;
-    total += getBatchRocketCount(state, batch.route, batch.payload, batch.amount, batch.launchedRockets);
-  }
-
-  for (const batch of state.rocketReturnBatches) {
-    if (batch.location !== source) continue;
-    total += Math.max(0, Math.floor(fromBigInt(batch.amount)));
-  }
-
-  return Math.max(0, total);
-}
-
-function getMassDriverLaunchBoostPerMin(state: GameState, route: TransportRouteId): number {
-  if (state.pausedFacilities.massDriver) return 0;
-
-  if (route === 'moonOrbit') {
-    return fromBigInt(state.locationFacilities.moon.massDriver) * BALANCE.massDriverLaunchesPerMin;
-  }
-
-  if (route === 'moonMercury') {
-    return fromBigInt(state.locationFacilities.moon.massDriver) * BALANCE.massDriverLaunchesPerMin;
-  }
-
-  if (route === 'mercurySun') {
-    return fromBigInt(state.locationFacilities.mercury.massDriver) * BALANCE.massDriverLaunchesPerMin;
-  }
-
-  return 0;
-}
-
 function getRouteLaunchesPerMin(state: GameState, route: TransportRouteId): number {
-  const source = getTransportRouteSource(route);
-  const rockets = getSourceRocketFleetCount(state, source);
-  const baseLaunches = Math.max(10, rockets * 2);
-  return baseLaunches + getMassDriverLaunchBoostPerMin(state, route);
-}
-
-function scheduleRocketReturns(state: GameState, route: TransportRouteId, rocketsUsed: number, now: number): void {
-  if (rocketsUsed <= 0) return;
-  const recoveredPct = Math.max(0, 1 - state.rocketLossPct);
-  const recoverCount = Math.floor(rocketsUsed * recoveredPct);
-  if (recoverCount <= 0) return;
-
-  const location = route === 'moonMercury'
-    ? 'moon'
-    : route === 'mercurySun'
-      ? 'mercury'
-      : 'earth';
-  state.rocketReturnBatches.push({
-    location,
-    amount: toBigInt(recoverCount),
-    returnAt: now + getReturnMs(route),
-  });
-}
-
-function processReturns(state: GameState, now: number): void {
-  if (state.rocketReturnBatches.length === 0) return;
-  const remaining = [] as typeof state.rocketReturnBatches;
-  for (const batch of state.rocketReturnBatches) {
-    if (now >= batch.returnAt) {
-      state.locationResources[batch.location].rockets += batch.amount;
-    } else {
-      remaining.push(batch);
-    }
+  if (route === 'earthOrbit' || route === 'earthMoon') {
+    const rockets = Math.floor(fromBigInt(state.locationResources.earth.rockets));
+    return Math.max(10, rockets * 2);
   }
-  state.rocketReturnBatches = remaining;
+
+  if (route === 'moonOrbit' || route === 'moonMercury') {
+    if (state.pausedFacilities.moonMassDriver) return 0;
+    const massDrivers = fromBigInt(state.locationFacilities.moon.moonMassDriver);
+    return Math.max(0, Math.floor(massDrivers * BALANCE.massDriverLaunchesPerMin));
+  }
+
+  const facilities = fromBigInt(state.locationFacilities.mercury.mercuryDysonSwarmFacility);
+  return Math.max(0, Math.floor(facilities * BALANCE.massDriverLaunchesPerMin));
 }
 
 function processDeliveries(state: GameState, now: number): void {
@@ -190,19 +126,37 @@ function processDeliveries(state: GameState, now: number): void {
   state.transportBatches = remaining;
 }
 
+function getRoutePayloads(route: TransportRouteId): TransportPayloadId[] {
+  if (route === 'earthOrbit') return ['gpuSatellites'];
+  if (route === 'moonOrbit') return ['gpuSatellites'];
+  if (route === 'mercurySun') return ['gpuSatellites'];
+  if (route === 'earthMoon') return ['gpus', 'solarPanels', 'robots'];
+  return ['robots'];
+}
+
+function consumeEarthRocketsForLaunches(state: GameState, launchesUsed: number): void {
+  if (launchesUsed <= 0) return;
+  const lossPct = Math.max(0.01, state.rocketLossPct);
+  const consumed = Math.ceil(launchesUsed * lossPct);
+  if (consumed <= 0) return;
+  const current = state.locationResources.earth.rockets;
+  const next = current - toBigInt(consumed);
+  state.locationResources.earth.rockets = next > 0n ? next : 0n;
+}
+
+function clampLaunchesByEarthFuel(state: GameState, launches: number): number {
+  if (launches <= 0) return 0;
+  const rockets = Math.floor(fromBigInt(state.locationResources.earth.rockets));
+  if (rockets <= 0) return 0;
+  const lossPct = Math.max(0.01, state.rocketLossPct);
+  const maxLaunchesByFuel = Math.floor(rockets / lossPct);
+  return Math.min(launches, Math.max(0, maxLaunchesByFuel));
+}
+
 function launchRoute(state: GameState, route: TransportRouteId, dtMs: number, now: number): void {
   if (!isTransportRouteUnlocked(state, route)) return;
 
-  const payloads: TransportPayloadId[] = route === 'earthOrbit'
-    ? ['gpuSatellites']
-    : route === 'moonOrbit'
-      ? ['gpuSatellites']
-    : route === 'mercurySun'
-      ? ['gpuSatellites']
-    : route === 'earthMoon'
-      ? ['gpus', 'solarPanels', 'robots']
-      : ['robots'];
-
+  const payloads = getRoutePayloads(route);
   const active = payloads.filter((payload) => {
     const key = orderKey(route, payload);
     return (state.logisticsOrders[key] || 0n) > 0n;
@@ -230,19 +184,15 @@ function launchRoute(state: GameState, route: TransportRouteId, dtMs: number, no
   } else {
     launchesToUse = Math.floor(state.earthLaunchCarry);
     state.earthLaunchCarry -= launchesToUse;
+    launchesToUse = clampLaunchesByEarthFuel(state, launchesToUse);
   }
 
   if (launchesToUse <= 0) return;
 
-  const rocketsAvailable = fromBigInt(state.logisticsReservedRockets[route] || 0n);
-  if (rocketsAvailable <= 0) return;
-
-  launchesToUse = Math.min(launchesToUse, Math.floor(rocketsAvailable));
-  if (launchesToUse <= 0) return;
-
   const capacityKg = getTransportRouteCapacityKg(state, route);
+  if (capacityKg <= 0) return;
 
-  let rocketsConsumed = 0;
+  let launchesConsumed = 0;
   let launchesRemaining = launchesToUse;
   const perOrderBase = Math.floor(launchesToUse / active.length);
   let extra = launchesToUse % active.length;
@@ -268,134 +218,86 @@ function launchRoute(state: GameState, route: TransportRouteId, dtMs: number, no
 
     const movedAmount = toBigInt(movedUnits);
     const massKg = movedUnits * weight;
-    const usedRockets = Math.ceil(massKg / capacityKg);
-
-    rocketsConsumed += usedRockets;
-    launchesRemaining -= usedRockets;
+    const usedLaunches = Math.max(1, Math.ceil(massKg / capacityKg));
+    launchesConsumed += usedLaunches;
+    launchesRemaining -= usedLaunches;
 
     state.logisticsOrders[key] -= movedAmount;
     state.logisticsInTransit[key] = (state.logisticsInTransit[key] || 0n) + movedAmount;
-
     state.transportBatches.push({
       route,
       payload,
       amount: movedAmount,
-      launchedRockets: toBigInt(usedRockets),
       deliveredAt: now + getTransitMs(route),
-      rocketReturnAt: now + getReturnMs(route),
-      rocketReturnsTo: route === 'moonOrbit' || route === 'moonMercury' ? 'moon' : route === 'mercurySun' ? 'mercury' : 'earth',
-      returningRockets: toBigInt(Math.max(0, Math.floor(usedRockets * (1 - state.rocketLossPct)))),
     });
   }
 
-  if (rocketsConsumed > 0) {
-    state.logisticsReservedRockets[route] = (state.logisticsReservedRockets[route] || 0n) - toBigInt(rocketsConsumed);
-    scheduleRocketReturns(state, route, rocketsConsumed, now);
+  if (route === 'earthOrbit' || route === 'earthMoon') {
+    consumeEarthRocketsForLaunches(state, launchesConsumed);
   }
 }
 
-function estimateRocketsNeededForPending(state: GameState, route: TransportRouteId): number {
-  if (!isTransportRouteUnlocked(state, route)) return 0;
-
-  const payloads: TransportPayloadId[] = route === 'earthOrbit'
-    ? ['gpuSatellites']
-    : route === 'moonOrbit'
-      ? ['gpuSatellites']
-    : route === 'mercurySun'
-      ? ['gpuSatellites']
-    : route === 'earthMoon'
-      ? ['gpus', 'solarPanels', 'robots']
-      : ['robots'];
-
-  const capacityKg = getTransportRouteCapacityKg(state, route);
-  if (capacityKg <= 0) return 0;
-
-  let rockets = 0;
-  for (const payload of payloads) {
-    const key = orderKey(route, payload);
-    const pendingUnits = Math.floor(fromBigInt(state.logisticsOrders[key] || 0n));
-    if (pendingUnits <= 0) continue;
-    const weight = getTransportPayloadWeight(payload);
-    rockets += Math.ceil((pendingUnits * weight) / capacityKg);
-  }
-  return rockets;
-}
-
-function reserveRocketsForRoute(state: GameState, route: TransportRouteId): void {
+function autoQueuePayload(state: GameState, route: TransportRouteId, payload: TransportPayloadId): void {
+  const key = orderKey(route, payload);
+  if (!state.logisticsAutoQueue[key]) return;
   if (!isTransportRouteUnlocked(state, route)) return;
-  const needed = estimateRocketsNeededForPending(state, route);
-  const reservedNow = Math.floor(fromBigInt(state.logisticsReservedRockets[route] || 0n));
 
-  // Release extra reservations when pending demand drops.
-  if (reservedNow > needed) {
-    const release = reservedNow - needed;
-    if (release > 0) {
-      state.logisticsReservedRockets[route] -= toBigInt(release);
-      setRocketPool(state, route, getRocketPool(state, route) + toBigInt(release));
-    }
-    return;
-  }
+  const source = state.locationResources[getTransportRouteSource(route)];
+  const available = toWholeUnits(
+    payload === 'gpuSatellites'
+      ? source.gpuSatellites
+      : payload === 'gpus'
+        ? source.gpus
+        : payload === 'solarPanels'
+          ? source.solarPanels
+          : source.robots,
+  );
+  if (available <= 0n) return;
 
-  const deficit = needed - reservedNow;
-  if (deficit <= 0) return;
+  if (payload === 'gpuSatellites') source.gpuSatellites -= available;
+  if (payload === 'gpus') source.gpus -= available;
+  if (payload === 'solarPanels') source.solarPanels -= available;
+  if (payload === 'robots') source.robots -= available;
 
-  const available = Math.floor(fromBigInt(getRocketPool(state, route)));
-  if (available <= 0) return;
-
-  const reserve = Math.min(deficit, available);
-  if (reserve <= 0) return;
-
-  setRocketPool(state, route, getRocketPool(state, route) - toBigInt(reserve));
-  state.logisticsReservedRockets[route] = (state.logisticsReservedRockets[route] || 0n) + toBigInt(reserve);
+  state.logisticsOrders[key] = toWholeUnits(state.logisticsOrders[key] || 0n) + available;
+  state.logisticsSent[key] = toWholeUnits(state.logisticsSent[key] || 0n) + available;
 }
 
-function autoQueueMercurySunPayload(state: GameState): void {
-  if (!isTransportRouteUnlocked(state, 'mercurySun')) return;
-  const produced = state.locationResources.mercury.gpuSatellites;
-  if (produced <= 0n) return;
-
-  state.locationResources.mercury.gpuSatellites -= produced;
-  const key = orderKey('mercurySun', 'gpuSatellites');
-  state.logisticsOrders[key] = (state.logisticsOrders[key] || 0n) + produced;
-  state.logisticsSent[key] = (state.logisticsSent[key] || 0n) + produced;
+function autoQueueEnabledPayloads(state: GameState): void {
+  autoQueuePayload(state, 'earthOrbit', 'gpuSatellites');
+  autoQueuePayload(state, 'earthMoon', 'gpus');
+  autoQueuePayload(state, 'earthMoon', 'solarPanels');
+  autoQueuePayload(state, 'earthMoon', 'robots');
+  autoQueuePayload(state, 'moonOrbit', 'gpuSatellites');
+  autoQueuePayload(state, 'moonMercury', 'robots');
+  autoQueuePayload(state, 'mercurySun', 'gpuSatellites');
 }
 
 export function tickSpace(state: GameState, dtMs: number): void {
   const now = state.time;
   ensureLogisticsState(state);
-
-  processReturns(state, now);
+  normalizeLogisticsQuantities(state);
   processDeliveries(state, now);
 
   state.spaceUnlocked = state.completedResearch.includes('rocketry');
   if (!state.spaceUnlocked) {
     state.orbitalPowerMW = 0n;
+    state.dysonSwarmPowerMW = 0n;
     return;
   }
 
-  // Mercury Dyson payloads auto-ship to the Sun route once unlocked.
-  autoQueueMercurySunPayload(state);
-
-  // Reserve rockets immediately for pending orders so source rocket stock reflects demand.
-  reserveRocketsForRoute(state, 'earthOrbit');
-  reserveRocketsForRoute(state, 'earthMoon');
-  reserveRocketsForRoute(state, 'moonOrbit');
-  reserveRocketsForRoute(state, 'moonMercury');
-  reserveRocketsForRoute(state, 'mercurySun');
-
+  autoQueueEnabledPayloads(state);
   launchRoute(state, 'earthOrbit', dtMs, now);
   launchRoute(state, 'earthMoon', dtMs, now);
   launchRoute(state, 'moonOrbit', dtMs, now);
   launchRoute(state, 'moonMercury', dtMs, now);
   launchRoute(state, 'mercurySun', dtMs, now);
 
-  // Orbital power
   const satellitePowerMW = toBigInt(getGpuSatellitePowerMWPerUnit());
   state.orbitalPowerMW = mulB(state.satellites, satellitePowerMW);
   state.dysonSwarmPowerMW = mulB(state.dysonSwarmSatellites, satellitePowerMW);
   state.totalEnergyMW = state.powerSupplyMW + state.lunarPowerSupplyMW + state.mercuryPowerSupplyMW + state.orbitalPowerMW + state.dysonSwarmPowerMW;
 
-  // Mercury depletion progress from mined material
   state.mercuryMassMined = state.locationResources.mercury.material;
   if (state.mercuryMassTotal < BALANCE.mercuryBaseMassTotal) {
     state.mercuryMassTotal = BALANCE.mercuryBaseMassTotal;
@@ -406,14 +308,15 @@ export function tickSpace(state: GameState, dtMs: number): void {
 
 export function schedulePayload(state: GameState, route: TransportRouteId, payload: TransportPayloadId, amount: number): boolean {
   if (!isTransportRouteUnlocked(state, route)) return false;
-  if (amount <= 0) return false;
+  const wholeAmount = Math.floor(amount);
+  if (wholeAmount <= 0) return false;
+  if (route === 'mercurySun') return false;
 
-  const amountB = toBigInt(amount);
+  const amountB = toBigInt(wholeAmount);
   const source = state.locationResources[getTransportRouteSource(route)];
 
   if (route === 'earthOrbit' && payload !== 'gpuSatellites') return false;
   if (route === 'moonOrbit' && payload !== 'gpuSatellites') return false;
-  if (route === 'mercurySun' && payload !== 'gpuSatellites') return false;
   if (route === 'earthMoon' && !['gpus', 'solarPanels', 'robots'].includes(payload)) return false;
   if (route === 'moonMercury' && payload !== 'robots') return false;
 
@@ -422,74 +325,35 @@ export function schedulePayload(state: GameState, route: TransportRouteId, paylo
   if (payload === 'solarPanels' && source.solarPanels < amountB) return false;
   if (payload === 'robots' && source.robots < amountB) return false;
 
-  // Consume immediately at source
   if (payload === 'gpuSatellites') source.gpuSatellites -= amountB;
   if (payload === 'gpus') source.gpus -= amountB;
   if (payload === 'solarPanels') source.solarPanels -= amountB;
   if (payload === 'robots') source.robots -= amountB;
 
   const key = orderKey(route, payload);
-  state.logisticsOrders[key] = (state.logisticsOrders[key] || 0n) + amountB;
-  state.logisticsSent[key] = (state.logisticsSent[key] || 0n) + amountB;
+  state.logisticsOrders[key] = toWholeUnits(state.logisticsOrders[key] || 0n) + amountB;
+  state.logisticsSent[key] = toWholeUnits(state.logisticsSent[key] || 0n) + amountB;
 
   reconcileEarthGpuInstallation(state);
   return true;
 }
 
-export function installSolarPanels(state: GameState, location: LocationId, amount: number): boolean {
-  const amountB = toBigInt(amount);
-  if (amountB <= 0n) return false;
+export function clearQueuedPayload(state: GameState, route: TransportRouteId, payload: TransportPayloadId): boolean {
+  ensureLogisticsState(state);
+  const key = orderKey(route, payload);
+  const hadAutoQueue = state.logisticsAutoQueue[key] === true;
+  state.logisticsAutoQueue[key] = false;
 
-  if (location === 'earth') {
-    if (!state.completedResearch.includes('solarTechnology')) return false;
-    if (state.locationResources.earth.solarPanels < amountB) return false;
+  const queued = toWholeUnits(state.logisticsOrders[key] || 0n);
+  if (queued <= 0n) return hadAutoQueue;
 
-    const laborCost = mulB(amountB, BALANCE.earthSolarInstallLaborCost);
-    if (state.locationResources.earth.labor < laborCost) return false;
+  const source = state.locationResources[getTransportRouteSource(route)];
+  if (payload === 'gpuSatellites') source.gpuSatellites += queued;
+  if (payload === 'gpus') source.gpus += queued;
+  if (payload === 'solarPanels') source.solarPanels += queued;
+  if (payload === 'robots') source.robots += queued;
 
-    const limit = BALANCE.earthSolarInstallLimit;
-    if (state.locationResources.earth.installedSolarPanels + amountB > limit) return false;
-
-    state.locationResources.earth.solarPanels -= amountB;
-    state.locationResources.earth.installedSolarPanels += amountB;
-    state.locationResources.earth.labor -= laborCost;
-    reconcileEarthGpuInstallation(state);
-    return true;
-  }
-
-  if (location === 'moon') {
-    if (!state.completedResearch.includes('payloadToMoon')) return false;
-    if (state.locationResources.moon.solarPanels < amountB) return false;
-
-    const laborCost = mulB(amountB, BALANCE.moonSolarInstallLaborCost);
-    if (state.locationResources.moon.labor < laborCost) return false;
-
-    if (state.locationResources.moon.installedSolarPanels + amountB > BALANCE.moonSolarInstallLimit) return false;
-
-    state.locationResources.moon.solarPanels -= amountB;
-    state.locationResources.moon.installedSolarPanels += amountB;
-    state.locationResources.moon.labor -= laborCost;
-    reconcileEarthGpuInstallation(state);
-    return true;
-  }
-
-  return false;
-}
-
-export function installMoonGpus(state: GameState, amount: number): boolean {
-  const amountB = toBigInt(amount);
-  if (!state.completedResearch.includes('payloadToMoon')) return false;
-  if (state.locationResources.moon.gpus < amountB) return false;
-
-  const laborCost = mulB(amountB, BALANCE.moonGpuInstallLaborCost);
-  if (state.locationResources.moon.labor < laborCost) return false;
-
-  if (state.locationResources.moon.installedGpus + amountB > BALANCE.moonGpuInstallLimit) return false;
-
-  state.locationResources.moon.gpus -= amountB;
-  state.locationResources.moon.installedGpus += amountB;
-  state.locationResources.moon.labor -= laborCost;
-  reconcileEarthGpuInstallation(state);
+  state.logisticsOrders[key] = 0n;
   return true;
 }
 
@@ -497,13 +361,10 @@ export function launchVonNeumannProbe(state: GameState): boolean {
   if (!state.completedResearch.includes('vonNeumannProbes')) return false;
   if (state.gameWon) return false;
 
-  // Any launch-capable location can trigger the end.
-  if (state.locationResources.moon.rockets > 0n) {
-    state.locationResources.moon.rockets -= toBigInt(1);
-  } else if (state.locationResources.earth.rockets > 0n) {
+  const moonHasLaunch = state.locationFacilities.moon.moonMassDriver > 0n;
+  if (!moonHasLaunch) {
+    if (state.locationResources.earth.rockets <= 0n) return false;
     state.locationResources.earth.rockets -= toBigInt(1);
-  } else {
-    return false;
   }
 
   state.gameWon = true;
@@ -511,4 +372,3 @@ export function launchVonNeumannProbe(state: GameState): boolean {
   reconcileEarthGpuInstallation(state);
   return true;
 }
-

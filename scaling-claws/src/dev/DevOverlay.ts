@@ -4,8 +4,6 @@ import {
   getHumanWorkforceRemaining,
   getHumanSalaryPerMin,
   getNextTier,
-  getTrainingDataPurchaseCost,
-  getTrainingDataRemainingPurchaseCapGB,
 } from '../game/BalanceConfig.ts';
 import { createInitialState, getTotalAssignedAgents } from '../game/GameState.ts';
 import type { GameState } from '../game/GameState.ts';
@@ -70,7 +68,6 @@ const GAME_ACTION_TYPES = new Set([
   'fireHumanWorkers',
   'buyRobotWorkers',
   'fireRobotWorkers',
-  'buyTrainingData',
   'startFineTune',
   'startAriesTraining',
   'setTrainingAllocation',
@@ -79,9 +76,11 @@ const GAME_ACTION_TYPES = new Set([
   'sellGridPower',
   'buyGasPlant',
   'buyNuclearPlant',
+  'buySolarFarm',
+  'buyMoonDatacenter',
   'schedulePayload',
-  'installSolarPanels',
-  'installMoonGpus',
+  'setLogisticsAutoQueue',
+  'clearLogisticsQueue',
   'launchVonNeumannProbe',
   'buildFacility',
 ]);
@@ -230,6 +229,19 @@ export class DevOverlay {
     rowState.appendChild(this.pasteStateBtn);
     this.body.appendChild(rowState);
 
+    const resourceBulkAmounts = [
+      1_000n,
+      1_000_000n,
+      1_000_000_000n,
+      1_000_000_000_000n,
+      1_000_000_000_000_000n,
+      1_000_000_000_000_000_000_000n,
+    ];
+    this.body.appendChild(this.makeResourceBulkRow('Funds', 'funds', resourceBulkAmounts));
+    this.body.appendChild(this.makeResourceBulkRow('Labor', 'labor', resourceBulkAmounts));
+    this.body.appendChild(this.makeResourceBulkRow('Code', 'code', resourceBulkAmounts));
+    this.body.appendChild(this.makeResourceBulkRow('Science', 'science', resourceBulkAmounts));
+
     const rowRollback = document.createElement('div');
     rowRollback.className = 'dev-overlay-row';
     rowRollback.appendChild(this.makeButton('↶1s', () => this.rollbackMs(1000)));
@@ -265,6 +277,56 @@ export class DevOverlay {
     btn.textContent = label;
     btn.addEventListener('click', onClick);
     return btn;
+  }
+
+  private makeResourceBulkRow(
+    label: string,
+    resource: 'funds' | 'labor' | 'code' | 'science',
+    amounts: bigint[],
+  ): HTMLDivElement {
+    const row = document.createElement('div');
+    row.className = 'dev-overlay-row';
+
+    const rowLabel = document.createElement('span');
+    rowLabel.className = 'dev-overlay-row-label';
+    rowLabel.textContent = `${label}:`;
+    row.appendChild(rowLabel);
+
+    for (const amount of amounts) {
+      row.appendChild(this.makeButton(`+${this.formatBulkAmount(amount)}`, () => {
+        this.addDevResource(resource, amount);
+      }));
+    }
+
+    return row;
+  }
+
+  private formatBulkAmount(amount: bigint): string {
+    if (amount >= 1_000_000_000_000_000_000_000n) return `${amount / 1_000_000_000_000_000_000_000n}Sx`;
+    if (amount >= 1_000_000_000_000_000n) return `${amount / 1_000_000_000_000_000n}Q`;
+    if (amount >= 1_000_000_000_000n) return `${amount / 1_000_000_000_000n}T`;
+    if (amount >= 1_000_000_000n) return `${amount / 1_000_000_000n}B`;
+    if (amount >= 1_000_000n) return `${amount / 1_000_000n}M`;
+    if (amount >= 1_000n) return `${amount / 1_000n}K`;
+    return `${amount}`;
+  }
+
+  private addDevResource(resource: 'funds' | 'labor' | 'code' | 'science', amount: bigint): void {
+    const state = this.loop.getState();
+    const amountB = scaleBigInt(amount);
+
+    if (resource === 'funds') {
+      state.funds += amountB;
+      state.totalEarned += amountB;
+    } else if (resource === 'labor') {
+      state.locationResources.earth.labor += amountB;
+    } else if (resource === 'code') {
+      state.code += amountB;
+    } else {
+      state.science += amountB;
+    }
+
+    this.refreshUi();
   }
 
   private attachObservers(): void {
@@ -576,23 +638,6 @@ export class DevOverlay {
         }
       }
     } else {
-      if (state.intelligence >= BALANCE.trainingUnlockIntel) {
-        const purchasedGB = Math.max(0, Math.floor(state.trainingDataPurchases));
-        const remainingPurchaseCapGB = getTrainingDataRemainingPurchaseCapGB(purchasedGB);
-        if (remainingPurchaseCapGB > 0) {
-          const preferredAmount = Math.min(10, remainingPurchaseCapGB);
-          const preferredCost = getTrainingDataPurchaseCost(preferredAmount);
-          if (state.funds >= preferredCost) {
-            actions.push({ type: 'buyTrainingData', amountGB: preferredAmount });
-          } else {
-            const singleCost = getTrainingDataPurchaseCost(1);
-            if (state.funds >= singleCost) {
-              actions.push({ type: 'buyTrainingData', amountGB: 1 });
-            }
-          }
-        }
-      }
-
       const nextModelIndex = state.currentModelIndex + 1;
       if (nextModelIndex < BALANCE.models.length) {
         const nextModel = BALANCE.models[nextModelIndex];

@@ -131,7 +131,7 @@ export class EarthMoonSpace {
     }
 
     // Mass driver streaks (periodic animation)
-    const moonMassDriverRate = fromBigInt(state.locationFacilities.moon.massDriver);
+    const moonMassDriverRate = fromBigInt(state.locationFacilities.moon.moonMassDriver);
     if (moonMassDriverRate > 0) {
       const now = state.time;
       const interval = Math.max(1000, 60000 / moonMassDriverRate);

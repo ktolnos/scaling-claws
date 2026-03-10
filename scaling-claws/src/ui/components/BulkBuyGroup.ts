@@ -5,6 +5,11 @@ const HOLD_REPEAT_START_INTERVAL_MS = 220;
 const HOLD_REPEAT_MIN_INTERVAL_MS = 45;
 const HOLD_REPEAT_ACCEL_MS_PER_SEC = 120;
 
+function normalizeAmount(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.floor(value));
+}
+
 export class BulkBuyGroup {
   readonly el: HTMLDivElement;
   private buttons: HTMLButtonElement[] = [];
@@ -12,6 +17,7 @@ export class BulkBuyGroup {
   private onAction: (amount: number) => void;
   private lastTiers: string = '';
   private prefix: string;
+  private isVerticalLayout: boolean;
   private maxedLabel: HTMLSpanElement;
   private canAct: ((amount: number) => boolean) | null = null;
   private onInsufficient: ((amount: number) => void) | null = null;
@@ -34,6 +40,7 @@ export class BulkBuyGroup {
   ) {
     this.el = document.createElement('div');
     this.el.className = 'bulk-buy-group';
+    this.isVerticalLayout = layout === 'vertical';
     if (layout === 'vertical') {
       this.el.style.flexDirection = 'column';
     }
@@ -52,11 +59,20 @@ export class BulkBuyGroup {
   ): void {
     this.canAct = canAct;
     this.onInsufficient = onInsufficient ?? null;
-    const tiers = this.getVisibleTiers(owned, maxQuantity);
-    const displayTiers = this.replaceLowerTierWithAffordableAmount(tiers, canAct);
-    this.displayTiers = displayTiers;
+    const tiers = getVisibleBuyTiers(owned, maxQuantity);
+    let displayTiers = this.replaceLowerTierWithAffordableAmount(tiers, canAct);
+    displayTiers = this.adjustNegativeDisplayTiers(displayTiers, owned, canAct);
+    const integerDisplayTiers: number[] = [];
+    for (const tier of displayTiers) {
+      const normalized = normalizeAmount(tier);
+      if (normalized <= 0) continue;
+      if (!integerDisplayTiers.includes(normalized)) {
+        integerDisplayTiers.push(normalized);
+      }
+    }
+    this.displayTiers = integerDisplayTiers;
     const isMaxed = !!maxQuantity && owned >= maxQuantity;
-    const tiersKey = `${displayTiers.length}|${isMaxed ? 'maxed' : 'active'}`;
+    const tiersKey = `${integerDisplayTiers.length}|${isMaxed ? 'maxed' : 'active'}`;
 
     // Rebuild only when count/maxed mode changes, keep button elements stable otherwise.
     if (tiersKey !== this.lastTiers) {
@@ -67,7 +83,7 @@ export class BulkBuyGroup {
       if (isMaxed) {
         this.el.appendChild(this.maxedLabel);
       } else {
-        for (let i = 0; i < displayTiers.length; i++) {
+        for (let i = 0; i < integerDisplayTiers.length; i++) {
           const btn = document.createElement('button');
           btn.addEventListener('click', (ev) => this.handleButtonClick(ev, i));
           btn.addEventListener('pointerdown', (ev) => this.handleButtonPointerDown(ev, i));
@@ -80,9 +96,10 @@ export class BulkBuyGroup {
     if (isMaxed) return;
 
     // Update labels and enabled state without rebuilding.
-    for (let i = 0; i < displayTiers.length; i++) {
-      const enabled = canAct(displayTiers[i]);
-      this.buttons[i].textContent = this.prefix + formatNumber(displayTiers[i]);
+    for (let i = 0; i < integerDisplayTiers.length; i++) {
+      const amount = integerDisplayTiers[i];
+      const enabled = canAct(amount);
+      this.buttons[i].textContent = this.prefix + formatNumber(amount);
       this.buttons[i].disabled = false;
       this.buttons[i].classList.toggle('bulk-buy-disabled', !enabled);
       this.buttons[i].setAttribute('aria-disabled', enabled ? 'false' : 'true');
@@ -90,8 +107,8 @@ export class BulkBuyGroup {
   }
 
   private handleButtonClick(ev: MouseEvent, index: number): void {
-    const amount = this.displayTiers[index];
-    if (!amount) return;
+    const amount = normalizeAmount(this.displayTiers[index] ?? 0);
+    if (amount <= 0) return;
     if (performance.now() <= this.suppressClickUntilMs) {
       this.suppressClickUntilMs = 0;
       ev.preventDefault();
@@ -106,8 +123,8 @@ export class BulkBuyGroup {
   }
 
   private handleButtonPointerDown(ev: PointerEvent, index: number): void {
-    const amount = this.displayTiers[index];
-    if (!amount) return;
+    const amount = normalizeAmount(this.displayTiers[index] ?? 0);
+    if (amount <= 0) return;
     const target = ev.currentTarget as HTMLButtonElement | null;
     if (ev.button !== 0 || !target) return;
     if (this.canAct && !this.canAct(amount)) return;
@@ -123,8 +140,8 @@ export class BulkBuyGroup {
 
   private getCurrentHoldAmount(): number | null {
     if (this.holdButtonIndex < 0) return null;
-    const amount = this.displayTiers[this.holdButtonIndex];
-    return amount && amount > 0 ? amount : null;
+    const amount = normalizeAmount(this.displayTiers[this.holdButtonIndex] ?? 0);
+    return amount > 0 ? amount : null;
   }
 
   private startHoldRepeat(): void {
@@ -194,8 +211,45 @@ export class BulkBuyGroup {
     this.holdButtonIndex = -1;
   }
 
-  private getVisibleTiers(owned: number, maxQuantity?: number | null): number[] {
-    return getVisibleBuyTiers(owned, maxQuantity);
+  private isNegativeGroup(): boolean {
+    return this.prefix.startsWith('-');
+  }
+
+  private findHighestAffordableAmount(maxAmount: number, canAct: (amount: number) => boolean): number {
+    let left = 1;
+    let right = Math.max(1, normalizeAmount(maxAmount));
+    let best = 0;
+    while (left <= right) {
+      const mid = Math.floor((left + right) / 2);
+      if (canAct(mid)) {
+        best = mid;
+        left = mid + 1;
+      } else {
+        right = mid - 1;
+      }
+    }
+    return best;
+  }
+
+  private adjustNegativeDisplayTiers(
+    tiers: number[],
+    owned: number,
+    canAct: (amount: number) => boolean,
+  ): number[] {
+    if (!this.isNegativeGroup()) return tiers;
+    if (tiers.length <= 0) return tiers;
+
+    if (normalizeAmount(owned) < 10) {
+      const maxAffordable = this.findHighestAffordableAmount(10, canAct);
+      if (maxAffordable > 1) {
+        return this.isVerticalLayout ? [1, maxAffordable] : [maxAffordable, 1];
+      }
+      return [1];
+    }
+
+    if (this.isVerticalLayout) return tiers;
+    const descending = [...tiers].sort((a, b) => b - a);
+    return descending;
   }
 
   private replaceLowerTierWithAffordableAmount(
@@ -204,8 +258,8 @@ export class BulkBuyGroup {
   ): number[] {
     if (tiers.length < 2) return tiers;
 
-    const low = tiers[0];
-    const high = tiers[1];
+    const low = normalizeAmount(tiers[0]);
+    const high = normalizeAmount(tiers[1]);
     if (high <= low || low <= 1) return tiers;
     if (canAct(low)) return tiers;
 
@@ -227,11 +281,11 @@ export class BulkBuyGroup {
   }
 }
 
-/** Returns adaptive tiers; includes +1 at low counts, then powers of 10. */
+/** Returns adaptive tiers; always shows two options: +1 and a larger step. */
 export function getBuyTiers(owned: number): number[] {
-  if (owned < 10) return [1]
-  if (owned < 100) return [1, 10];
-  const mag = Math.floor(Math.log10(owned));
+  const ownedInt = normalizeAmount(owned);
+  if (ownedInt < 100) return [1, 10];
+  const mag = Math.floor(Math.log10(ownedInt));
   const high = 10 ** mag;
   if (high <= 10) return [1, 10];
   const low = 10 ** (mag - 1);
@@ -240,10 +294,12 @@ export function getBuyTiers(owned: number): number[] {
 }
 
 export function getVisibleBuyTiers(owned: number, maxQuantity?: number | null): number[] {
-  const baseTiers = getBuyTiers(owned);
+  const ownedInt = normalizeAmount(owned);
+  const baseTiers = getBuyTiers(ownedInt);
   if (maxQuantity === null || maxQuantity === undefined || maxQuantity <= 0) return baseTiers;
 
-  const remaining = Math.max(0, Math.floor(maxQuantity - owned));
+  const maxQuantityInt = normalizeAmount(maxQuantity);
+  const remaining = Math.max(0, maxQuantityInt - ownedInt);
   if (remaining <= 0) return [];
 
   const clamped = baseTiers.filter((amount) => amount <= remaining);

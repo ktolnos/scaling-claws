@@ -211,8 +211,8 @@ function tickGpuEra(state: GameState, dtMs: number): void {
     // Active users limited by demand and capacity
     state.apiUserCount = state.apiDemand < capacityUsers ? state.apiDemand : capacityUsers;
 
-    // Synth data generation is fully gated by research bonuses from ResearchSystem.
-    // Without synthData1, apiUserSynthRate stays 0 and no synthetic data is produced.
+    // API users always generate baseline training data.
+    // Research bonuses scale the per-user generation rate.
     state.synthDataRate = mulB(state.apiUserCount, state.apiUserSynthRate);
     state.trainingData += mulB(state.synthDataRate, toBigInt(dtMs)) / 60000n;
 
@@ -393,14 +393,18 @@ export function goSelfHosted(state: GameState): boolean {
 
 export function buyGpu(state: GameState, amount: number): boolean {
   const amountB = toBigInt(amount);
+  const earthGpuCount = getEarthGpuCount(state);
+  if (earthGpuCount >= state.gpuCapacity) return false;
+  if (earthGpuCount + amountB > state.gpuCapacity) return false;
+
   const cost = mulB(amountB, state.gpuMarketPrice);
   if (state.funds < cost) return false;
 
   state.funds -= cost;
-  state.locationResources.earth.gpus += amountB;
+  state.locationResources.earth.gpus = earthGpuCount + amountB;
   reconcileEarthGpuInstallation(state);
 
-  if (getEarthGpuCount(state) <= amountB) {
+  if (earthGpuCount <= 0n) {
     state.pendingFlavorTexts.push(
       '"GPU #1 has arrived. Your apartment\'s circuit breaker has opinions about this."'
     );
@@ -561,11 +565,9 @@ function autoAdjustComputeAllocations(state: GameState): void {
   const minInference = state.apiUnlocked ? COMPUTE_AUTO_INFERENCE_MIN_PCT : 0;
   if (!trainingActive) {
     agentsPct = Math.max(0, Math.min(100, agentsPct));
-    inferencePct = Math.max(minInference, Math.min(100 - agentsPct, inferencePct));
-    const ok = setComputeAllocations(state, 0, inferencePct);
-    if (!ok) {
-      setComputeAllocations(state, 0, minInference);
-    }
+    // When no training run is active, reserve all non-agent compute for inference.
+    inferencePct = state.apiUnlocked ? (100 - agentsPct) : 0;
+    setComputeAllocations(state, 0, inferencePct);
     return;
   }
 

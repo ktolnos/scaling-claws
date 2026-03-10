@@ -50,6 +50,7 @@ The UI refreshes every 500ms. Destroying and recreating DOM nodes inside `update
 - `section.innerHTML = ''` followed by `createElement` + `appendChild` inside `update()`.
 - `appendChild(existingNode)` to reorder every tick (moves the node, resets hover).
 - `cloneNode` + `replaceWith` on buttons every tick (use it sparingly, only when the click handler's *identity* truly changes, e.g. switching from fine-tune to Aries training).
+- `button.innerHTML = ...` on interactive buttons inside `update()`. Replacing button children during rapid refresh can swallow clicks between `mousedown` and `mouseup` (pressed visual state, no action).
 
 ## TypeScript Gotchas (tsconfig strict settings)
 - `verbatimModuleSyntax: true` → use `import type { X }` for type-only imports

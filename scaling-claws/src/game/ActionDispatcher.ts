@@ -22,23 +22,22 @@ import {
   nudgeAllAgents,
   assignAgentsToJob,
   removeAgentsFromJob,
+  canHireHumanWorkersWithoutIncomeDeficit,
   hireHumanWorkers,
   fireHumanWorkers,
   buyRobotWorkers,
   fireRobotWorkers,
 } from './systems/JobSystem.ts';
 import {
-  buyTrainingData,
   startFineTune,
   startAriesTraining,
   setTrainingAllocation,
 } from './systems/TrainingSystem.ts';
 import { canPurchaseResearch, purchaseResearch } from './systems/ResearchSystem.ts';
-import { buyGridPower, sellGridPower, buyGasPlant, buyNuclearPlant } from './systems/EnergySystem.ts';
+import { buyGridPower, sellGridPower, buyGasPlant, buyNuclearPlant, buySolarFarm, buyMoonDatacenter } from './systems/EnergySystem.ts';
 import {
   schedulePayload,
-  installSolarPanels,
-  installMoonGpus,
+  clearQueuedPayload,
   launchVonNeumannProbe,
 } from './systems/SpaceSystem.ts';
 import { canBuildFacility, buildFacility } from './systems/SupplySystem.ts';
@@ -79,7 +78,6 @@ export type GameAction =
   | { type: 'fireHumanWorkers'; jobType: JobType; amount: number }
   | { type: 'buyRobotWorkers'; amount: number }
   | { type: 'fireRobotWorkers'; amount: number }
-  | { type: 'buyTrainingData'; amountGB: number }
   | { type: 'startFineTune'; index: number }
   | { type: 'startAriesTraining'; index: number }
   | { type: 'setTrainingAllocation'; pct: number }
@@ -88,9 +86,11 @@ export type GameAction =
   | { type: 'sellGridPower'; amountKW: number }
   | { type: 'buyGasPlant'; amount?: number }
   | { type: 'buyNuclearPlant'; amount?: number }
+  | { type: 'buySolarFarm'; location: LocationId; amount?: number }
+  | { type: 'buyMoonDatacenter'; amount?: number }
   | { type: 'schedulePayload'; route: TransportRouteId; payload: TransportPayloadId; amount: number }
-  | { type: 'installSolarPanels'; location: LocationId; amount: number }
-  | { type: 'installMoonGpus'; amount: number }
+  | { type: 'setLogisticsAutoQueue'; route: TransportRouteId; payload: TransportPayloadId; enabled: boolean }
+  | { type: 'clearLogisticsQueue'; route: TransportRouteId; payload: TransportPayloadId }
   | { type: 'launchVonNeumannProbe' }
   | { type: 'buildFacility'; location: LocationId; facility: FacilityId; amount: number };
 
@@ -314,12 +314,16 @@ function dispatchGameActionCore(state: GameState, action: GameAction): ActionDis
           return sum + state.humanPools[jt].totalCount;
         }, 0n);
       const remainingWorkforce = getHumanWorkforceRemaining(totalPaidHumans);
+      const salaryCapped = !canHireHumanWorkersWithoutIncomeDeficit(state, action.jobType, 1);
+      const blockedByFunds = state.funds < cost;
+      const blockedByUnlock = state.intelligence < jobConfig.unlockAtIntel;
       return result(performed > 0, {
         performed,
         requested,
         partial: performed < requested,
-        reason: performed > 0 ? undefined : 'failed',
-        try_later: state.intelligence >= jobConfig.unlockAtIntel && state.funds >= cost && remainingWorkforce > 0n,
+        reason: performed > 0 ? undefined : (salaryCapped ? 'salary_exceeds_income' : 'failed'),
+        salary_capped: salaryCapped,
+        try_later: !blockedByUnlock && (remainingWorkforce > 0n || !blockedByFunds || salaryCapped),
       });
     }
     case 'fireHumanWorkers': {
@@ -357,18 +361,6 @@ function dispatchGameActionCore(state: GameState, action: GameAction): ActionDis
         partial: performed < requested,
         reason: performed > 0 ? undefined : 'failed',
         try_later: true,
-      });
-    }
-    case 'buyTrainingData': {
-      const amountGB = getRequestedAmount(action.amountGB);
-      if (amountGB <= 0) return result(false, { performed: 0, requested: 0, reason: 'invalid_amount', try_later: false });
-      const ok = buyTrainingData(state, amountGB);
-      const capReached = state.trainingDataPurchases >= BALANCE.dataPurchaseLimitGB;
-      return result(ok, {
-        performed: ok ? amountGB : 0,
-        requested: amountGB,
-        reason: ok ? undefined : 'failed',
-        try_later: capReached ? false : true,
       });
     }
     case 'startFineTune': {
@@ -424,28 +416,48 @@ function dispatchGameActionCore(state: GameState, action: GameAction): ActionDis
       const atLimit = limit > 0 && state.nuclearPlants >= toBigInt(limit);
       return result(ok, { amount: ok ? amount : 0, reason: ok ? undefined : 'failed', try_later: atLimit ? false : true });
     }
+    case 'buySolarFarm': {
+      const amount = getRequestedAmount(action.amount);
+      if (amount <= 0) return result(false, { amount: 0, reason: 'invalid_amount', try_later: false });
+      if (action.location !== 'earth' && action.location !== 'moon') {
+        return result(false, { amount: 0, location: action.location, reason: 'invalid_location', try_later: false });
+      }
+      const ok = buySolarFarm(state, action.location, amount);
+      const installedFarms = state.locationResources[action.location].installedSolarPanels / toBigInt(BALANCE.solarFarmPanelsPerFarm);
+      const atLimit = installedFarms >= BigInt(BALANCE.solarFarmLimit);
+      return result(ok, {
+        amount: ok ? amount : 0,
+        location: action.location,
+        reason: ok ? undefined : 'failed',
+        try_later: atLimit ? false : true,
+      });
+    }
     case 'schedulePayload': {
       const amount = getRequestedAmount(action.amount);
       if (amount <= 0) return result(false, { amount: 0, reason: 'invalid_amount', try_later: false });
       const ok = schedulePayload(state, action.route, action.payload, amount);
       return result(ok, { amount: ok ? amount : 0, reason: ok ? undefined : 'failed', try_later: true });
     }
-    case 'installSolarPanels': {
-      const amount = getRequestedAmount(action.amount);
-      if (amount <= 0) return result(false, { amount: 0, reason: 'invalid_amount', try_later: false });
-      const ok = installSolarPanels(state, action.location, amount);
-      return result(ok, {
-        amount: ok ? amount : 0,
-        location: action.location,
-        reason: ok ? undefined : 'failed',
-        try_later: true,
-      });
+    case 'setLogisticsAutoQueue': {
+      const key = `${action.route}:${action.payload}`;
+      if (!state.logisticsAutoQueue) {
+        state.logisticsAutoQueue = {};
+      }
+      state.logisticsAutoQueue[key] = action.enabled;
+      return result(true, { route: action.route, payload: action.payload, enabled: action.enabled });
     }
-    case 'installMoonGpus': {
+    case 'clearLogisticsQueue': {
+      const ok = clearQueuedPayload(state, action.route, action.payload);
+      return result(ok, { route: action.route, payload: action.payload, reason: ok ? undefined : 'empty_queue' });
+    }
+    case 'buyMoonDatacenter': {
       const amount = getRequestedAmount(action.amount);
       if (amount <= 0) return result(false, { amount: 0, reason: 'invalid_amount', try_later: false });
-      const ok = installMoonGpus(state, amount);
-      return result(ok, { amount: ok ? amount : 0, reason: ok ? undefined : 'failed', try_later: true });
+      const ok = buyMoonDatacenter(state, amount);
+      const gpusPerBuild = toBigInt(BALANCE.moonGpuDatacenterGpusPerBuild);
+      const builtCount = state.locationResources.moon.installedGpus / gpusPerBuild;
+      const atLimit = builtCount >= BigInt(BALANCE.moonGpuDatacenterLimit);
+      return result(ok, { amount: ok ? amount : 0, reason: ok ? undefined : 'failed', try_later: atLimit ? false : true });
     }
     case 'launchVonNeumannProbe': {
       const ok = launchVonNeumannProbe(state);

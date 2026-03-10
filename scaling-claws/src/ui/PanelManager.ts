@@ -29,19 +29,25 @@ interface PanelSlot {
   tabButton?: HTMLButtonElement;
 }
 
+type GameStateWithUi = GameState & {
+  openedTabs?: Record<string, boolean>;
+  tabAlerts?: Record<string, boolean>;
+  selectedTabId?: string | null;
+};
+
 export class PanelManager {
   private readonly tabsContainer: HTMLElement;
   private readonly staticContainers: Map<string, HTMLElement>;
   private readonly tabShell: HTMLDivElement;
   private readonly tabSelectorEl: HTMLDivElement;
-  private readonly tabTitleEl: HTMLDivElement;
   private readonly tabContentEl: HTMLDivElement;
+  private currentState: GameState | null;
   private slots: PanelSlot[] = [];
-  private selectedTabId: string | null = null;
 
-  constructor(tabsContainer: HTMLElement, staticContainers: Record<string, HTMLElement> = {}) {
+  constructor(tabsContainer: HTMLElement, staticContainers: Record<string, HTMLElement> = {}, state: GameState | null = null) {
     this.tabsContainer = tabsContainer;
     this.staticContainers = new Map(Object.entries(staticContainers));
+    this.currentState = state;
 
     this.tabsContainer.innerHTML = '';
 
@@ -52,15 +58,53 @@ export class PanelManager {
     this.tabSelectorEl.className = 'tab-selector';
     this.tabShell.appendChild(this.tabSelectorEl);
 
-    this.tabTitleEl = document.createElement('div');
-    this.tabTitleEl.className = 'tab-selected-title';
-    this.tabShell.appendChild(this.tabTitleEl);
-
     this.tabContentEl = document.createElement('div');
     this.tabContentEl.className = 'tab-content';
     this.tabShell.appendChild(this.tabContentEl);
 
     this.tabsContainer.appendChild(this.tabShell);
+  }
+
+  setState(state: GameState): void {
+    this.currentState = state;
+  }
+
+  private getStateWithUi(): GameStateWithUi | null {
+    if (!this.currentState) return null;
+    return this.currentState as GameStateWithUi;
+  }
+
+  private getSelectedTabId(): string | null {
+    const stateWithUi = this.getStateWithUi();
+    return typeof stateWithUi?.selectedTabId === 'string' ? stateWithUi.selectedTabId : null;
+  }
+
+  private setSelectedTabId(id: string | null): void {
+    const stateWithUi = this.getStateWithUi();
+    if (!stateWithUi) return;
+    stateWithUi.selectedTabId = id;
+  }
+
+  private getOpenedTabsMap(): Record<string, boolean> | null {
+    const stateWithUi = this.getStateWithUi();
+    if (!stateWithUi) {
+      return null;
+    }
+    if (!stateWithUi.openedTabs) {
+      stateWithUi.openedTabs = {};
+    }
+    return stateWithUi.openedTabs;
+  }
+
+  private getTabAlertsMap(): Record<string, boolean> | null {
+    const stateWithUi = this.getStateWithUi();
+    if (!stateWithUi) {
+      return null;
+    }
+    if (!stateWithUi.tabAlerts) {
+      stateWithUi.tabAlerts = {};
+    }
+    return stateWithUi.tabAlerts;
   }
 
   reset(): void {
@@ -78,22 +122,58 @@ export class PanelManager {
     }
 
     this.slots = [];
-    this.selectedTabId = null;
     this.tabSelectorEl.innerHTML = '';
     this.tabContentEl.innerHTML = '';
-    this.tabTitleEl.textContent = '';
   }
 
   private applyTabMetadata(button: HTMLButtonElement, tab: TabMetadata): void {
-    button.textContent = tab.emoji;
+    const emojiEl = button.querySelector<HTMLSpanElement>('.tab-selector-emoji');
+    const titleEl = button.querySelector<HTMLSpanElement>('.tab-selector-title');
+    if (!emojiEl || !titleEl) {
+      return;
+    }
+    emojiEl.textContent = tab.emoji;
+    titleEl.textContent = tab.title;
     button.title = tab.title;
     button.setAttribute('aria-label', tab.title);
+  }
+
+  private clearTabAttention(id: string): void {
+    const openedTabs = this.getOpenedTabsMap();
+    if (openedTabs) {
+      openedTabs[id] = true;
+    }
+  }
+
+  private shouldShowTabAttention(id: string, selected: boolean): boolean {
+    if (selected) return false;
+    const tabAlerts = this.getTabAlertsMap();
+    if (tabAlerts?.[id] === true) {
+      return true;
+    }
+    const openedTabs = this.getOpenedTabsMap();
+    if (!openedTabs) return true;
+    return openedTabs[id] !== true;
   }
 
   private createTabButton(id: string, tab: TabMetadata): HTMLButtonElement {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'tab-selector-btn';
+
+    const emojiEl = document.createElement('span');
+    emojiEl.className = 'tab-selector-emoji';
+    button.appendChild(emojiEl);
+
+    const titleEl = document.createElement('span');
+    titleEl.className = 'tab-selector-title';
+    button.appendChild(titleEl);
+
+    const alertDot = document.createElement('span');
+    alertDot.className = 'tab-selector-alert';
+    alertDot.setAttribute('aria-hidden', 'true');
+    button.appendChild(alertDot);
+
     this.applyTabMetadata(button, tab);
     button.addEventListener('click', () => this.selectTab(id));
     return button;
@@ -113,7 +193,7 @@ export class PanelManager {
       const slot = this.slots[this.slots.length - 1];
       slot.tabButton = button;
 
-      if (this.selectedTabId === null) {
+      if (this.getSelectedTabId() === null) {
         this.selectTab(id);
       } else {
         this.refreshTabUi();
@@ -139,7 +219,7 @@ export class PanelManager {
         if (resolvedPlacement.kind === 'tabs') {
           this.tabContentEl.replaceChild(newPanel.el, old.panel.el);
           newPanel.el.classList.add('panel-tab-view');
-          if (this.selectedTabId !== id) {
+          if (this.getSelectedTabId() !== id) {
             newPanel.el.classList.add('hidden');
           }
 
@@ -178,9 +258,9 @@ export class PanelManager {
           newPanel.el.classList.add('panel-tab-view');
           old.tabButton = button;
 
-          if (this.selectedTabId === null) {
+          if (this.getSelectedTabId() === null) {
             this.selectTab(id);
-          } else if (this.selectedTabId !== id) {
+          } else if (this.getSelectedTabId() !== id) {
             newPanel.el.classList.add('hidden');
           }
         }
@@ -197,44 +277,43 @@ export class PanelManager {
   }
 
   private selectTab(id: string): void {
-    this.selectedTabId = id;
+    this.setSelectedTabId(id);
+    this.clearTabAttention(id);
     this.refreshTabUi();
   }
 
   private refreshTabUi(): void {
-    let selectedTitle = '';
-    let selectedTabExists = false;
+    const tabSlots = this.slots.filter((slot): slot is PanelSlot & { placement: TabPanelPlacement } => slot.placement.kind === 'tabs');
+    const selectedTabId = this.getSelectedTabId();
+    const selectedTabExists = selectedTabId !== null && tabSlots.some((slot) => slot.id === selectedTabId);
+    const visibleTabId = selectedTabExists ? selectedTabId : tabSlots[0]?.id ?? null;
+    const moonUnlocked = this.currentState?.completedResearch.includes('payloadToMoon') ?? false;
 
-    for (const slot of this.slots) {
-      if (slot.placement.kind !== 'tabs') {
-        continue;
-      }
-
-      const selected = slot.id === this.selectedTabId;
-      if (selected) {
-        selectedTabExists = true;
-        selectedTitle = slot.placement.tab.title;
-      }
+    for (const slot of tabSlots) {
+      const selected = slot.id === visibleTabId;
       slot.panel.el.classList.toggle('hidden', !selected);
       slot.tabButton?.classList.toggle('is-selected', selected);
+      slot.tabButton?.classList.toggle('emoji-only', moonUnlocked && !selected);
+      slot.tabButton?.classList.toggle('has-attention', this.shouldShowTabAttention(slot.id, selected));
     }
 
-    if (!selectedTabExists) {
-      const firstTab = this.slots.find((slot) => slot.placement.kind === 'tabs');
-      if (firstTab) {
-        this.selectedTabId = firstTab.id;
-        this.refreshTabUi();
-        return;
-      }
-      this.selectedTabId = null;
-      this.tabTitleEl.textContent = '';
+    if (selectedTabExists) {
       return;
     }
 
-    this.tabTitleEl.textContent = selectedTitle;
+    if (selectedTabId === null) {
+      this.setSelectedTabId(visibleTabId);
+      return;
+    }
+
+    if (visibleTabId === null) {
+      this.setSelectedTabId(null);
+    }
   }
 
   update(state: GameState): void {
+    this.currentState = state;
+    this.refreshTabUi();
     for (const slot of this.slots) {
       slot.panel.update(state);
     }

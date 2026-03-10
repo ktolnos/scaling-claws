@@ -6,7 +6,7 @@ import { dispatchGameAction } from '../../game/ActionDispatcher.ts';
 import { BulkBuyGroup, getVisibleBuyTiers } from '../components/BulkBuyGroup.ts';
 import { CountBulkBuyControls } from '../components/CountBulkBuyControls.ts';
 import { createPanelDivider, createPanelScaffold } from '../components/PanelScaffold.ts';
-import { emojiHtml, moneyWithEmojiHtml, resourceLabelHtml } from '../emoji.ts';
+import { emojiHtml, moneyWithEmojiHtml, resourceLabelHtml, UI_EMOJI } from '../emoji.ts';
 import { setHintTarget } from '../hints/HintUtils.ts';
 import { flashElement } from '../UIUtils.ts';
 
@@ -21,7 +21,9 @@ interface PlantRowRefs {
 const POWER_PLANT_UNLOCK_GRID_KW = toBigInt(1_000_000);
 
 type LogisticsRoute = 'earthOrbit' | 'earthMoon' | 'moonOrbit' | 'moonMercury' | 'mercurySun';
-type SpaceEnergyPanelMode = 'combined' | 'energy' | 'space';
+type LogisticsPayload = 'gpuSatellites' | 'gpus' | 'solarPanels' | 'robots';
+type SpaceEnergyPanelMode = 'combined' | 'energy' | 'space' | 'moon' | 'mercury';
+type SpaceScope = 'all' | 'earth' | 'moon' | 'mercury';
 
 interface LogisticsRowRefs {
   row: HTMLDivElement;
@@ -29,6 +31,8 @@ interface LogisticsRowRefs {
   inTransit: HTMLSpanElement;
   waiting: HTMLSpanElement;
   bulk?: BulkBuyGroup;
+  clearBtn: HTMLButtonElement;
+  autoToggle: HTMLButtonElement;
 }
 
 interface RouteLaneRefs {
@@ -40,6 +44,8 @@ export class SpaceEnergyPanel implements Panel {
   readonly el: HTMLElement;
   private state: GameState;
   private readonly mode: SpaceEnergyPanelMode;
+  private readonly scope: SpaceScope;
+  private readonly sectionTitleOverride: string | null;
   private panelHeaderEl!: HTMLDivElement;
   private earthEnergyTitleEl!: HTMLDivElement;
   private energySection!: HTMLDivElement;
@@ -69,6 +75,8 @@ export class SpaceEnergyPanel implements Panel {
   private logisticsSection!: HTMLDivElement;
   private orbitSatEl!: HTMLSpanElement;
   private orbitPowerEl!: HTMLSpanElement;
+  private dysonSwarmEl!: HTMLSpanElement;
+  private dysonSwarmPowerEl!: HTMLSpanElement;
   private logisticsRows = new Map<string, LogisticsRowRefs>();
   private routeLanes = new Map<LogisticsRoute, RouteLaneRefs>();
   private readonly maxRocketsAddedPerUpdate = 4;
@@ -89,12 +97,22 @@ export class SpaceEnergyPanel implements Panel {
   private mercurySwarmEl!: HTMLSpanElement;
   private mercurySwarmPowerEl!: HTMLSpanElement;
   private mercuryMinedEl!: HTMLSpanElement;
+  private mercuryLaunchEl!: HTMLSpanElement;
+  private mercuryLaunchLaneRow!: HTMLDivElement;
+  private mercuryLaunchLane!: HTMLDivElement;
   private mercuryPieEl!: HTMLDivElement;
   private probeBtn!: HTMLButtonElement;
 
-  constructor(state: GameState, mode: SpaceEnergyPanelMode = 'combined') {
+  constructor(
+    state: GameState,
+    mode: SpaceEnergyPanelMode = 'combined',
+    scope: SpaceScope = 'all',
+    sectionTitleOverride: string | null = null,
+  ) {
     this.state = state;
     this.mode = mode;
+    this.scope = scope;
+    this.sectionTitleOverride = sectionTitleOverride;
     const { panel } = createPanelScaffold('SPACE & ENERGY', {
       panelClassName: 'panel space-energy-panel',
       bodyClassName: 'panel-body panel-body-tight',
@@ -216,7 +234,7 @@ export class SpaceEnergyPanel implements Panel {
 
     this.earthSolarLabelEl = document.createElement('span');
     this.earthSolarLabelEl.className = 'label';
-    this.earthSolarLabelEl.textContent = 'Solar Panels Installation';
+    this.earthSolarLabelEl.textContent = 'Solar Farms';
     setHintTarget(this.earthSolarLabelEl, 'infra.solarInstall');
     top.appendChild(this.earthSolarLabelEl);
 
@@ -243,7 +261,7 @@ export class SpaceEnergyPanel implements Panel {
     this.earthSolarRow.appendChild(left);
 
     this.earthSolarBulk = new BulkBuyGroup((amt) => {
-      dispatchGameAction(this.state, { type: 'installSolarPanels', location: 'earth', amount: amt });
+      dispatchGameAction(this.state, { type: 'buySolarFarm', location: 'earth', amount: amt });
     }, '+');
     const earthSolarControls = document.createElement('div');
     earthSolarControls.style.display = 'flex';
@@ -253,7 +271,7 @@ export class SpaceEnergyPanel implements Panel {
     earthSolarControls.appendChild(this.earthSolarBulk.el);
 
     const earthSolarActionLabel = document.createElement('span');
-    earthSolarActionLabel.insertAdjacentHTML('beforeend', 'Install: ');
+    earthSolarActionLabel.insertAdjacentHTML('beforeend', 'Build: ');
     earthSolarActionLabel.appendChild(this.earthSolarCostEl);
     earthSolarActionLabel.style.fontSize = '0.62rem';
     earthSolarActionLabel.style.color = 'var(--text-muted)';
@@ -349,6 +367,20 @@ export class SpaceEnergyPanel implements Panel {
     orbitRow.appendChild(this.orbitPowerEl);
     this.logisticsSection.appendChild(orbitRow);
 
+    const dysonRow = document.createElement('div');
+    dysonRow.className = 'panel-row';
+    this.dysonSwarmEl = document.createElement('span');
+    this.dysonSwarmEl.className = 'label';
+    this.dysonSwarmEl.style.fontSize = '0.76rem';
+    this.dysonSwarmEl.style.whiteSpace = 'nowrap';
+    this.dysonSwarmEl.style.overflow = 'hidden';
+    this.dysonSwarmEl.style.textOverflow = 'ellipsis';
+    this.dysonSwarmPowerEl = document.createElement('span');
+    this.dysonSwarmPowerEl.className = 'value';
+    dysonRow.appendChild(this.dysonSwarmEl);
+    dysonRow.appendChild(this.dysonSwarmPowerEl);
+    this.logisticsSection.appendChild(dysonRow);
+
     this.buildRouteLaneRow(this.logisticsSection, 'earthOrbit', 'earth', 'orbit');
     this.buildLogisticsRow(this.logisticsSection, resourceLabelHtml('gpuSatellites'), 'GPU Satellites', 'earthOrbit:gpuSatellites', (amt) => {
       dispatchGameAction(this.state, { type: 'schedulePayload', route: 'earthOrbit', payload: 'gpuSatellites', amount: amt });
@@ -402,7 +434,7 @@ export class SpaceEnergyPanel implements Panel {
     const destinationEnd = document.createElement('span');
     destinationEnd.className = 'logistics-route-end';
     destinationEnd.innerHTML = destination === 'sun'
-      ? '☀ Sun'
+      ? `${emojiHtml('sun')}Sun`
       : `${emojiHtml(destination)}${destination === 'moon' ? 'Moon' : destination === 'mercury' ? 'Mercury' : 'Orbit'}`;
 
     row.appendChild(sourceEnd);
@@ -463,14 +495,59 @@ export class SpaceEnergyPanel implements Panel {
 
     row.appendChild(left);
 
+    const controls = document.createElement('div');
+    controls.style.display = 'flex';
+    controls.style.alignItems = 'center';
+    controls.style.gap = '4px';
+
     let bulk: BulkBuyGroup | undefined;
     if (withBulk) {
       bulk = new BulkBuyGroup((amt) => act(amt), '+');
-      row.appendChild(bulk.el);
+      controls.appendChild(bulk.el);
     }
 
+    const clearBtn = document.createElement('button');
+    clearBtn.className = 'bulk-buy-btn';
+    clearBtn.style.width = '3ch';
+    clearBtn.style.minWidth = '3ch';
+    clearBtn.style.padding = '0';
+    clearBtn.textContent = UI_EMOJI.clear;
+    clearBtn.title = 'Clear waiting queue';
+    clearBtn.addEventListener('click', () => {
+      const [route, payload] = key.split(':') as [LogisticsRoute, LogisticsPayload];
+      dispatchGameAction(this.state, { type: 'clearLogisticsQueue', route, payload });
+      flashElement(waiting);
+    });
+
+    const autoWrap = document.createElement('span');
+    autoWrap.style.display = 'flex';
+    autoWrap.style.alignItems = 'center';
+    autoWrap.style.gap = '4px';
+
+    const autoLabel = document.createElement('span');
+    autoLabel.style.fontSize = '0.64rem';
+    autoLabel.style.color = 'var(--text-muted)';
+    autoLabel.textContent = 'Auto-launch';
+    autoWrap.appendChild(autoLabel);
+
+    const autoToggle = document.createElement('button');
+    autoToggle.type = 'button';
+    autoToggle.className = 'api-auto-price-toggle';
+    autoToggle.setAttribute('aria-label', `Toggle auto-launch for ${labelTitle}`);
+    autoToggle.setAttribute('aria-pressed', 'false');
+    autoToggle.addEventListener('click', () => {
+      const [route, payload] = key.split(':') as [LogisticsRoute, LogisticsPayload];
+      const enabled = !(this.state.logisticsAutoQueue?.[key] === true);
+      dispatchGameAction(this.state, { type: 'setLogisticsAutoQueue', route, payload, enabled });
+      flashElement(autoToggle);
+    });
+    autoWrap.appendChild(autoToggle);
+    controls.appendChild(autoWrap);
+    controls.appendChild(clearBtn);
+
+    row.appendChild(controls);
     parent.appendChild(row);
-    this.logisticsRows.set(key, { row, sent, inTransit, waiting, bulk });
+    this.logisticsRows.set(key, { row, sent, inTransit, waiting, bulk, clearBtn, autoToggle });
   }
 
   private getLogisticsRocketCount(inTransit: bigint): number {
@@ -494,7 +571,7 @@ export class SpaceEnergyPanel implements Panel {
   private createLaneRocket(direction: 'outbound' | 'returning', durationMs: number): HTMLSpanElement {
     const rocket = document.createElement('span');
     rocket.className = `logistics-rocket logistics-rocket-${direction}`;
-    rocket.textContent = '🚀';
+    rocket.textContent = UI_EMOJI.rockets;
     const laneOffset = (Math.floor(Math.random() * 5) - 2) * 1.5;
     rocket.style.animationDuration = `${Math.max(0.2, durationMs / 1000)}s`;
     rocket.style.animationDelay = '0ms';
@@ -615,7 +692,7 @@ export class SpaceEnergyPanel implements Panel {
 
     const title = document.createElement('div');
     title.className = 'panel-section-title';
-    title.innerHTML = 'MOON' // `${locationLabelHtml('moon')} Installation`;
+    title.textContent = this.sectionTitleOverride ?? 'MOON';
     this.moonSection.appendChild(title);
 
     const powerRow = document.createElement('div');
@@ -654,7 +731,7 @@ export class SpaceEnergyPanel implements Panel {
 
     const solarLbl = document.createElement('span');
     solarLbl.className = 'label';
-    solarLbl.textContent = 'Moon Solar';
+    solarLbl.textContent = 'Moon Solar Farms';
     setHintTarget(solarLbl, 'infra.solarInstall');
     solarLbl.style.whiteSpace = 'nowrap';
     solarTop.appendChild(solarLbl);
@@ -684,7 +761,7 @@ export class SpaceEnergyPanel implements Panel {
     solarBottom.appendChild(solarMeta);
 
     this.moonSolarBulk = new BulkBuyGroup((amt) => {
-      dispatchGameAction(this.state, { type: 'installSolarPanels', location: 'moon', amount: amt });
+      dispatchGameAction(this.state, { type: 'buySolarFarm', location: 'moon', amount: amt });
     }, '+');
     solarBottom.appendChild(this.moonSolarBulk.el);
 
@@ -741,7 +818,7 @@ export class SpaceEnergyPanel implements Panel {
     gpuBottom.appendChild(gpuMeta);
 
     this.moonGpuBulk = new BulkBuyGroup((amt) => {
-      dispatchGameAction(this.state, { type: 'installMoonGpus', amount: amt });
+      dispatchGameAction(this.state, { type: 'buyMoonDatacenter', amount: amt });
     }, '+');
     gpuBottom.appendChild(this.moonGpuBulk.el);
 
@@ -759,7 +836,7 @@ export class SpaceEnergyPanel implements Panel {
 
     const title = document.createElement('div');
     title.className = 'panel-section-title';
-    title.innerHTML =  'MERCURY' // locationLabelHtml('mercury');
+    title.textContent = this.sectionTitleOverride ?? 'MERCURY';
     this.mercurySection.appendChild(title);
 
     const overview = document.createElement('div');
@@ -793,6 +870,35 @@ export class SpaceEnergyPanel implements Panel {
     minedRow.appendChild(this.mercuryMinedEl);
     textWrap.appendChild(minedRow);
 
+    const launchRow = document.createElement('div');
+    launchRow.className = 'mercury-mined-row';
+    this.mercuryLaunchEl = document.createElement('span');
+    this.mercuryLaunchEl.className = 'value';
+    this.mercuryLaunchEl.style.fontSize = '0.72rem';
+    this.mercuryLaunchEl.style.color = 'var(--text-secondary)';
+    launchRow.appendChild(this.mercuryLaunchEl);
+    textWrap.appendChild(launchRow);
+
+    this.mercuryLaunchLaneRow = document.createElement('div');
+    this.mercuryLaunchLaneRow.className = 'panel-row logistics-route-row';
+    this.mercuryLaunchLaneRow.style.marginTop = '2px';
+
+    const sourceEnd = document.createElement('span');
+    sourceEnd.className = 'logistics-route-end';
+    sourceEnd.innerHTML = `${emojiHtml('mercury')}Mercury`;
+
+    this.mercuryLaunchLane = document.createElement('div');
+    this.mercuryLaunchLane.className = 'logistics-lane';
+
+    const destinationEnd = document.createElement('span');
+    destinationEnd.className = 'logistics-route-end';
+    destinationEnd.innerHTML = `${emojiHtml('sun')}Sun`;
+
+    this.mercuryLaunchLaneRow.appendChild(sourceEnd);
+    this.mercuryLaunchLaneRow.appendChild(this.mercuryLaunchLane);
+    this.mercuryLaunchLaneRow.appendChild(destinationEnd);
+    textWrap.appendChild(this.mercuryLaunchLaneRow);
+
     overview.appendChild(textWrap);
     this.mercurySection.appendChild(overview);
 
@@ -805,6 +911,13 @@ export class SpaceEnergyPanel implements Panel {
     this.mercurySection.appendChild(this.probeBtn);
 
     parent.appendChild(this.mercurySection);
+  }
+
+  private isRouteVisibleInScope(route: LogisticsRoute): boolean {
+    if (this.scope === 'all') return true;
+    if (this.scope === 'earth') return route === 'earthOrbit' || route === 'earthMoon';
+    if (this.scope === 'moon') return route === 'earthMoon' || route === 'moonOrbit' || route === 'moonMercury';
+    return route === 'moonMercury' || route === 'mercurySun';
   }
 
   private updatePlant(
@@ -847,7 +960,7 @@ export class SpaceEnergyPanel implements Panel {
     }
     this.el.style.display = '';
 
-    const showEnergy = this.mode !== 'space';
+    const showEnergy = this.mode === 'combined' || this.mode === 'energy';
     const showSpace = this.mode !== 'energy';
     this.energySection.style.display = showEnergy ? '' : 'none';
     this.spaceSection.style.display = showSpace ? '' : 'none';
@@ -858,6 +971,10 @@ export class SpaceEnergyPanel implements Panel {
       this.earthEnergyTitleEl.style.display = 'none';
     } else if (this.mode === 'space') {
       this.panelHeaderEl.textContent = 'SPACE';
+    } else if (this.mode === 'moon') {
+      this.panelHeaderEl.textContent = 'MOON';
+    } else if (this.mode === 'mercury') {
+      this.panelHeaderEl.textContent = 'MERCURY';
     } else {
       this.panelHeaderEl.textContent = spaceUnlocked ? 'SPACE & ENERGY' : 'ENERGY';
       this.earthEnergyTitleEl.style.display = spaceUnlocked ? '' : 'none';
@@ -923,22 +1040,26 @@ export class SpaceEnergyPanel implements Panel {
       const earthSolarUnlocked = state.completedResearch.includes('solarTechnology');
       this.earthSolarRow.style.display = earthSolarUnlocked ? '' : 'none';
       const earth = state.locationResources.earth;
+      const solarPanelsPerFarm = toBigInt(BALANCE.solarFarmPanelsPerFarm);
+      const earthSolarFarms = earth.installedSolarPanels / solarPanelsPerFarm;
+      const earthSolarFarmsNum = Number(earthSolarFarms);
       const earthSolarProduction = mulB(earth.installedSolarPanels, toBigInt(getSolarPanelPowerMW('earth', state.completedResearch)));
-      this.earthSolarLabelEl.textContent = 'Solar Panels';
+      this.earthSolarLabelEl.textContent = 'Solar Farms';
       this.earthSolarProductionEl.textContent = formatMW(earthSolarProduction);
       this.earthSolarStatusEl.innerHTML =
-        `Stock ${formatNumber(earth.solarPanels)} | Installed ${formatNumber(earth.installedSolarPanels)}`;
-      const earthLaborOk = earth.labor >= BALANCE.earthSolarInstallLaborCost;
-      const earthSolarOk = earth.solarPanels >= toBigInt(1);
+        `Stock ${formatNumber(earth.solarPanels)} | Farms ${formatNumber(scaleBigInt(earthSolarFarms))}`;
+      const earthLaborOk = earth.labor >= BALANCE.earthSolarFarmLaborCost;
+      const earthSolarOk = earth.solarPanels >= solarPanelsPerFarm;
       this.earthSolarCostEl.innerHTML =
-        `<span style="color:${earthLaborOk ? 'var(--text-muted)' : 'var(--accent-red)'}">${formatNumber(BALANCE.earthSolarInstallLaborCost)} ${emojiHtml('labor')} labor</span>` +
+        `<span style="color:${earthSolarOk ? 'var(--text-muted)' : 'var(--accent-red)'}">${formatNumber(solarPanelsPerFarm)} ${emojiHtml('solarPanels')} solar</span>` +
         ` + ` +
-        `<span style="color:${earthSolarOk ? 'var(--text-muted)' : 'var(--accent-red)'}">1 ${emojiHtml('solarPanels')} solar</span>`;
-      this.earthSolarBulk.update(Math.floor(fromBigInt(earth.installedSolarPanels)), (amt) => {
+        `<span style="color:${earthLaborOk ? 'var(--text-muted)' : 'var(--accent-red)'}">${formatNumber(BALANCE.earthSolarFarmLaborCost)} ${emojiHtml('labor')} labor</span>`;
+      this.earthSolarBulk.update(earthSolarFarmsNum, (amt) => {
         const a = toBigInt(amt);
-        const laborCost = mulB(a, BALANCE.earthSolarInstallLaborCost);
-        return earth.solarPanels >= a && earth.labor >= laborCost;
-      }, Math.floor(fromBigInt(BALANCE.earthSolarInstallLimit)), () => {
+        const panelCost = mulB(a, solarPanelsPerFarm);
+        const laborCost = mulB(a, BALANCE.earthSolarFarmLaborCost);
+        return earth.solarPanels >= panelCost && earth.labor >= laborCost;
+      }, BALANCE.solarFarmLimit, () => {
         flashElement(this.earthSolarStatusEl);
       });
 
@@ -946,7 +1067,7 @@ export class SpaceEnergyPanel implements Panel {
       const nuclearLimit = BALANCE.powerPlants.nuclear.limit ?? 0;
       const gasAtLimit = gasLimit > 0 && state.gasPlants >= toBigInt(gasLimit);
       const nuclearAtLimit = nuclearLimit > 0 && state.nuclearPlants >= toBigInt(nuclearLimit);
-      const solarAtLimit = !earthSolarUnlocked || earth.installedSolarPanels >= BALANCE.earthSolarInstallLimit;
+      const solarAtLimit = !earthSolarUnlocked || earthSolarFarms >= BigInt(BALANCE.solarFarmLimit);
       const gridAtLimit = state.gridPowerKW >= toBigInt(BALANCE.gridPowerKWLimit);
       const allEarthPowerOptionsMaxed = gasAtLimit && nuclearAtLimit && solarAtLimit && gridAtLimit;
       const showThrottleWarning = state.powerThrottle < 1 && !allEarthPowerOptionsMaxed;
@@ -965,18 +1086,21 @@ export class SpaceEnergyPanel implements Panel {
     }
 
     const logisticsUnlocked = state.completedResearch.includes('rocketry');
-    this.logisticsSection.style.display = logisticsUnlocked ? '' : 'none';
+    const logisticsVisible = logisticsUnlocked && this.mode !== 'moon' && this.mode !== 'mercury';
+    this.logisticsSection.style.display = logisticsVisible ? '' : 'none';
 
     this.orbitSatEl.innerHTML = `${resourceLabelHtml('gpuSatellites', 'GPU Sats in Orbit')}: ${formatNumber(state.satellites)}`;
     this.orbitPowerEl.innerHTML = `${resourceLabelHtml('energy', 'Power')} ${formatMW(state.orbitalPowerMW)}`;
+    this.dysonSwarmEl.innerHTML = `${resourceLabelHtml('gpuSatellites', 'Dyson Swarm')}: ${formatNumber(state.dysonSwarmSatellites)}`;
+    this.dysonSwarmPowerEl.innerHTML = `${resourceLabelHtml('energy', 'Power')} ${formatMW(state.dysonSwarmPowerMW)}`;
 
     const logisticsConfigs: Array<{ key: string; route: LogisticsRoute; source: bigint; enabled: boolean }> = [
       { key: 'earthOrbit:gpuSatellites', route: 'earthOrbit', source: state.locationResources.earth.gpuSatellites, enabled: state.completedResearch.includes('rocketry') },
       { key: 'earthMoon:gpus', route: 'earthMoon', source: state.locationResources.earth.gpus, enabled: state.completedResearch.includes('payloadToMoon') },
       { key: 'earthMoon:solarPanels', route: 'earthMoon', source: state.locationResources.earth.solarPanels, enabled: state.completedResearch.includes('payloadToMoon') },
       { key: 'earthMoon:robots', route: 'earthMoon', source: state.locationResources.earth.robots, enabled: state.completedResearch.includes('payloadToMoon') },
-      { key: 'moonOrbit:gpuSatellites', route: 'moonOrbit', source: state.locationResources.moon.gpuSatellites, enabled: state.completedResearch.includes('rocketry') && state.completedResearch.includes('payloadToMoon') },
-      { key: 'moonMercury:robots', route: 'moonMercury', source: state.locationResources.moon.robots, enabled: state.completedResearch.includes('payloadToMercury') },
+      { key: 'moonOrbit:gpuSatellites', route: 'moonOrbit', source: state.locationResources.moon.gpuSatellites, enabled: state.completedResearch.includes('rocketry') && state.completedResearch.includes('payloadToMoon') && state.completedResearch.includes('moonMassDrivers') },
+      { key: 'moonMercury:robots', route: 'moonMercury', source: state.locationResources.moon.robots, enabled: state.completedResearch.includes('payloadToMercury') && state.completedResearch.includes('moonMassDrivers') },
       { key: 'mercurySun:gpuSatellites', route: 'mercurySun', source: state.locationResources.mercury.gpuSatellites, enabled: state.completedResearch.includes('payloadToMercury') },
     ];
 
@@ -991,8 +1115,14 @@ export class SpaceEnergyPanel implements Panel {
     for (const config of logisticsConfigs) {
       const refs = this.logisticsRows.get(config.key);
       if (!refs) continue;
-      refs.row.style.display = config.enabled ? '' : 'none';
-      if (!config.enabled) continue;
+      const inScope = this.isRouteVisibleInScope(config.route);
+      const autoEnabled = state.logisticsAutoQueue?.[config.key] === true;
+      refs.autoToggle.classList.toggle('is-on', autoEnabled);
+      refs.autoToggle.setAttribute('aria-pressed', autoEnabled ? 'true' : 'false');
+      refs.autoToggle.disabled = !logisticsVisible || !config.enabled || !inScope;
+      refs.clearBtn.disabled = !logisticsVisible || !config.enabled || !inScope;
+      refs.row.style.display = logisticsVisible && config.enabled && inScope ? '' : 'none';
+      if (!logisticsVisible || !config.enabled || !inScope) continue;
 
       const sent = state.logisticsSent[config.key] || 0n;
       const inTransit = state.logisticsInTransit[config.key] || 0n;
@@ -1001,6 +1131,7 @@ export class SpaceEnergyPanel implements Panel {
       refs.inTransit.textContent = formatNumber(inTransit);
       refs.waiting.textContent = formatNumber(queued);
       refs.waiting.style.color = queued > inTransit ? 'var(--accent-red)' : '';
+      refs.clearBtn.disabled = queued <= 0n;
       routeTotals[config.route].enabled = true;
       routeTotals[config.route].inTransit += inTransit;
       routeTotals[config.route].queued += queued;
@@ -1023,7 +1154,7 @@ export class SpaceEnergyPanel implements Panel {
 
     for (const [route, refs] of this.routeLanes) {
       const totals = routeTotals[route];
-      refs.row.style.display = totals.enabled ? '' : 'none';
+      refs.row.style.display = logisticsVisible && totals.enabled ? '' : 'none';
       if (!totals.enabled) {
         refs.lane.classList.remove('logistics-lane-congested');
         refs.lane.replaceChildren();
@@ -1037,53 +1168,67 @@ export class SpaceEnergyPanel implements Panel {
     }
 
     const moonUnlocked = state.completedResearch.includes('payloadToMoon');
-    this.moonSection.style.display = moonUnlocked ? '' : 'none';
-    if (moonUnlocked) {
+    const moonInScope = (this.scope === 'all' || this.scope === 'moon') && this.mode !== 'space';
+    this.moonSection.style.display = moonUnlocked && moonInScope ? '' : 'none';
+    if (moonUnlocked && moonInScope) {
       const moon = state.locationResources.moon;
       this.moonPowerSupplyEl.textContent = formatMW(state.lunarPowerSupplyMW);
       this.moonPowerDemandEl.textContent = formatMW(state.lunarPowerDemandMW);
       this.moonPowerSupplyEl.style.color = state.lunarPowerSupplyMW >= state.lunarPowerDemandMW ? 'var(--accent-green)' : 'var(--accent-red)';
       const moonEffPct = Math.round(state.lunarPowerThrottle * 100);
 
+      const solarPanelsPerFarm = toBigInt(BALANCE.solarFarmPanelsPerFarm);
+      const moonSolarFarms = moon.installedSolarPanels / solarPanelsPerFarm;
+      const moonSolarFarmsNum = Number(moonSolarFarms);
       const moonSolarProduction = mulB(moon.installedSolarPanels, toBigInt(getSolarPanelPowerMW('moon', state.completedResearch)));
       this.moonSolarStatusEl.innerHTML =
-        `Stock ${formatNumber(moon.solarPanels)} | Installed ${formatNumber(moon.installedSolarPanels)} | ${formatMW(moonSolarProduction)}`;
-      const moonSolarLaborOk = moon.labor >= BALANCE.moonSolarInstallLaborCost;
-      const moonSolarUnitOk = moon.solarPanels >= toBigInt(1);
+        `Stock ${formatNumber(moon.solarPanels)} | Farms ${formatNumber(scaleBigInt(moonSolarFarms))} | ${formatMW(moonSolarProduction)}`;
+      const moonSolarLaborOk = moon.labor >= BALANCE.moonSolarFarmLaborCost;
+      const moonSolarUnitOk = moon.solarPanels >= solarPanelsPerFarm;
       this.moonSolarCostEl.innerHTML =
-        `<span style="color:${moonSolarLaborOk ? 'var(--text-secondary)' : 'var(--accent-red)'}">${formatNumber(BALANCE.moonSolarInstallLaborCost)} ${emojiHtml('labor')} labor</span>` +
+        `<span style="color:${moonSolarUnitOk ? 'var(--text-secondary)' : 'var(--accent-red)'}">${formatNumber(solarPanelsPerFarm)} ${emojiHtml('solarPanels')} solar</span>` +
         ` + ` +
-        `<span style="color:${moonSolarUnitOk ? 'var(--text-secondary)' : 'var(--accent-red)'}">1 ${emojiHtml('solarPanels')} solar</span>`;
-      this.moonSolarBulk.update(Math.floor(fromBigInt(moon.installedSolarPanels)), (amt) => {
+        `<span style="color:${moonSolarLaborOk ? 'var(--text-secondary)' : 'var(--accent-red)'}">${formatNumber(BALANCE.moonSolarFarmLaborCost)} ${emojiHtml('labor')} labor</span>`;
+      this.moonSolarBulk.update(moonSolarFarmsNum, (amt) => {
         const a = toBigInt(amt);
-        const laborCost = mulB(a, BALANCE.moonSolarInstallLaborCost);
-        return moon.solarPanels >= a && moon.labor >= laborCost;
-      }, Math.floor(fromBigInt(BALANCE.moonSolarInstallLimit)), () => {
+        const panelCost = mulB(a, solarPanelsPerFarm);
+        const laborCost = mulB(a, BALANCE.moonSolarFarmLaborCost);
+        return moon.solarPanels >= panelCost && moon.labor >= laborCost;
+      }, BALANCE.solarFarmLimit, () => {
         flashElement(this.moonSolarStatusEl);
       });
 
       const moonEffColor = moonEffPct === 100 ? 'var(--text-primary)' : 'var(--accent-red)';
+      const moonGpusPerDatacenter = toBigInt(BALANCE.moonGpuDatacenterGpusPerBuild);
+      const moonDatacenterCount = moon.installedGpus / moonGpusPerDatacenter;
+      const moonDatacenterCountNum = Number(moonDatacenterCount);
       this.moonGpuStatusEl.innerHTML =
-        `Stock ${formatNumber(moon.gpus)} | Installed ${formatNumber(moon.installedGpus)} | ` +
+        `Stock ${formatNumber(moon.gpus)} | Datacenters ${formatNumber(scaleBigInt(moonDatacenterCount))} | ` +
         `${resourceLabelHtml('efficiency', 'Efficiency')} <span style="color:${moonEffColor}">${moonEffPct}%</span>`;
-      const moonGpuLaborOk = moon.labor >= BALANCE.moonGpuInstallLaborCost;
-      const moonGpuUnitOk = moon.gpus >= toBigInt(1);
+      const moonGpuLaborOk = moon.labor >= BALANCE.moonGpuDatacenterLaborCost;
+      const moonGpuUnitOk = moon.gpus >= moonGpusPerDatacenter;
       this.moonGpuCostEl.innerHTML =
-        `<span style="color:${moonGpuLaborOk ? 'var(--text-secondary)' : 'var(--accent-red)'}">${formatNumber(BALANCE.moonGpuInstallLaborCost)} ${emojiHtml('labor')} labor</span>` +
+        `<span style="color:${moonGpuUnitOk ? 'var(--text-secondary)' : 'var(--accent-red)'}">${formatNumber(moonGpusPerDatacenter)} ${emojiHtml('gpus')} GPU</span>` +
         ` + ` +
-        `<span style="color:${moonGpuUnitOk ? 'var(--text-secondary)' : 'var(--accent-red)'}">1 ${emojiHtml('gpus')} GPU</span>`;
-      this.moonGpuBulk.update(Math.floor(fromBigInt(moon.installedGpus)), (amt) => {
+        `<span style="color:${moonGpuLaborOk ? 'var(--text-secondary)' : 'var(--accent-red)'}">${formatNumber(BALANCE.moonGpuDatacenterLaborCost)} ${emojiHtml('labor')} labor</span>`;
+      this.moonGpuBulk.update(moonDatacenterCountNum, (amt) => {
         const a = toBigInt(amt);
-        const laborCost = mulB(a, BALANCE.moonGpuInstallLaborCost);
-        return moon.gpus >= a && moon.labor >= laborCost;
-      }, Math.floor(fromBigInt(BALANCE.moonGpuInstallLimit)), () => {
+        const gpuCost = mulB(a, moonGpusPerDatacenter);
+        const laborCost = mulB(a, BALANCE.moonGpuDatacenterLaborCost);
+        return moon.gpus >= gpuCost && moon.labor >= laborCost;
+      }, BALANCE.moonGpuDatacenterLimit, () => {
         flashElement(this.moonGpuStatusEl);
       });
     }
 
     const mercuryUnlocked = state.completedResearch.includes('payloadToMercury');
-    this.mercurySection.style.display = mercuryUnlocked ? '' : 'none';
-    if (mercuryUnlocked) {
+    const mercuryInScope = (this.scope === 'all' || this.scope === 'mercury') && this.mode !== 'space';
+    this.mercurySection.style.display = mercuryUnlocked && mercuryInScope ? '' : 'none';
+    if (!mercuryUnlocked || !mercuryInScope) {
+      this.mercuryLaunchLane.classList.remove('logistics-lane-congested');
+      this.mercuryLaunchLane.replaceChildren();
+    }
+    if (mercuryUnlocked && mercuryInScope) {
       const mined = state.mercuryMassMined;
       const total = state.mercuryMassTotal > 0n ? state.mercuryMassTotal : BALANCE.mercuryBaseMassTotal;
       const minedPctRaw = total > 0n ? (Number(mined) / Number(total)) * 100 : 0;
@@ -1100,6 +1245,19 @@ export class SpaceEnergyPanel implements Panel {
         `Mined ${formatNumber(mined)}/${formatNumber(total)} (${minedPctText}%) ` +
         `<span style="color:${rateColor}">${rateSign}${formatNumber(rateAbs)}/m</span>`;
       this.mercuryPieEl.style.background = `conic-gradient(var(--bg-panel) 0 ${minedPct.toFixed(3)}%, transparent ${minedPct.toFixed(3)}% 100%)`;
+
+      const dysonKey = 'mercurySun:gpuSatellites';
+      const sent = state.logisticsSent[dysonKey] || 0n;
+      const inTransit = state.logisticsInTransit[dysonKey] || 0n;
+      const waiting = state.logisticsOrders[dysonKey] || 0n;
+      this.mercuryLaunchEl.textContent = `Auto Launching: Sent ${formatNumber(sent)} | Shipping ${formatNumber(inTransit)} | Waiting ${formatNumber(waiting)}`;
+      this.mercuryLaunchLane.classList.toggle('logistics-lane-congested', waiting > inTransit);
+
+      const outboundCount = this.getLogisticsRocketCount(inTransit);
+      const recoveryUnlocked = state.rocketLossPct < BALANCE.rocketLossNoReuse;
+      const recoveredPct = Math.max(0, 1 - state.rocketLossPct);
+      const returningCount = recoveryUnlocked ? Math.min(100, Math.floor(outboundCount * recoveredPct)) : 0;
+      this.syncLogisticsRockets('mercurySun', this.mercuryLaunchLane, outboundCount, returningCount);
 
       const hasProbeTech = state.completedResearch.includes('vonNeumannProbes');
       this.probeBtn.style.display = hasProbeTech ? '' : 'none';

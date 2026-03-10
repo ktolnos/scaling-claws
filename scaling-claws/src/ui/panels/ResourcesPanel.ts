@@ -1,23 +1,18 @@
 import type { GameState, LocationId, SupplyResourceId } from '../../game/GameState.ts';
 import type { Panel } from '../PanelManager.ts';
 import { BALANCE } from '../../game/BalanceConfig.ts';
-import { formatFlops, formatMW, formatMoney, formatNumber, toBigInt } from '../../game/utils.ts';
+import { formatFlops, formatMW, formatMoney, formatNumber } from '../../game/utils.ts';
 import { deleteSave } from '../../game/SaveManager.ts';
-import { estimateTransportRockets, getTransportRouteSource } from '../../game/systems/SpaceRules.ts';
 import { createPanelScaffold } from '../components/PanelScaffold.ts';
-import { locationLabelHtml, resourceLabelHtml } from '../emoji.ts';
+import { emojiHtml, locationLabelHtml, resourceLabelHtml } from '../emoji.ts';
 import { setHintTarget } from '../hints/HintUtils.ts';
 import { flashElement } from '../UIUtils.ts';
+import { isSupplyResourceUnlocked } from './supplyVisibility.ts';
 
 type CoreResourceId = 'funds' | 'intel' | 'flops' | 'code' | 'science' | 'energy';
 
 interface ResourceLineRefs {
   row: HTMLDivElement;
-  value: HTMLSpanElement;
-  rate: HTMLSpanElement;
-}
-
-interface SupplyTableCellRefs {
   value: HTMLSpanElement;
   rate: HTMLSpanElement;
 }
@@ -60,23 +55,49 @@ const SUPPLY_HINTS: Record<SupplyResourceId, string> = {
   gpuSatellites: 'resource.gpuSatellites',
 };
 
+interface ResourcesPanelOptions {
+  includeCore?: boolean;
+  fixedLocations?: LocationId[];
+  showRestart?: boolean;
+  supplyTitle?: string | null;
+  showLocationHeaders?: boolean;
+  summaryMode?: 'default' | 'leftOverview';
+}
+
 export class ResourcesPanel implements Panel {
   readonly el: HTMLElement;
+  private readonly includeCore: boolean;
+  private readonly fixedLocations: LocationId[] | null;
+  private readonly showRestart: boolean;
+  private readonly supplyTitle: string | null;
+  private readonly showLocationHeaders: boolean;
+  private readonly summaryMode: 'default' | 'leftOverview';
 
   private coreSection!: HTMLDivElement;
   private supplySection!: HTMLDivElement;
-  private supplySimpleList!: HTMLDivElement;
-  private supplyTableWrap!: HTMLDivElement;
+  private supplyLocationList!: HTMLDivElement;
 
   private coreRefs = new Map<CoreResourceId, ResourceLineRefs>();
-  private supplySimpleRefs = new Map<SupplyResourceId, ResourceLineRefs>();
-  private supplyTableRefs = new Map<string, SupplyTableCellRefs>();
+  private supplyLocationRefs = new Map<string, ResourceLineRefs>();
+  private locationEnergyRefs = new Map<LocationId, ResourceLineRefs>();
+  private summaryLocationRefs = new Map<string, ResourceLineRefs>();
+  private summaryLocationTitles = new Map<LocationId, HTMLDivElement>();
+  private summaryOrbitBlock: HTMLDivElement | null = null;
+  private orbitRefs: ResourceLineRefs | null = null;
+  private dysonRefs: ResourceLineRefs | null = null;
 
   private supplyLayoutKey = '';
   private visibleLocations: LocationId[] = ['earth'];
-  private supplyMode: 'simple' | 'table' = 'simple';
 
-  constructor(_state: GameState) {
+  constructor(_state: GameState, options: ResourcesPanelOptions = {}) {
+    this.includeCore = options.includeCore ?? true;
+    this.fixedLocations = options.fixedLocations ? [...options.fixedLocations] : null;
+    this.showRestart = options.showRestart ?? true;
+    this.supplyTitle = Object.prototype.hasOwnProperty.call(options, 'supplyTitle')
+      ? (options.supplyTitle ?? null)
+      : 'SUPPLY CHAIN';
+    this.showLocationHeaders = options.showLocationHeaders ?? true;
+    this.summaryMode = options.summaryMode ?? 'default';
     const { panel } = createPanelScaffold('RESOURCES', {
       panelClassName: 'panel resources-panel',
       bodyClassName: 'panel-body panel-body-tight',
@@ -88,60 +109,77 @@ export class ResourcesPanel implements Panel {
   private build(): void {
     const body = this.el.querySelector('.panel-body') as HTMLDivElement;
 
-    this.coreSection = document.createElement('div');
-    this.coreSection.className = 'panel-section resources-core-section';
+    if (this.includeCore) {
+      this.coreSection = document.createElement('div');
+      this.coreSection.className = 'panel-section resources-core-section';
 
-    const coreTitle = document.createElement('div');
-    coreTitle.className = 'panel-section-title';
-    coreTitle.textContent = 'CORE';
-    this.coreSection.appendChild(coreTitle);
+      const coreTitle = document.createElement('div');
+      coreTitle.className = 'panel-section-title';
+      coreTitle.textContent = 'CORE';
+      this.coreSection.appendChild(coreTitle);
 
-    for (const resource of CORE_RESOURCE_ORDER) {
-      const refs = this.createResourceLine(resourceLabelHtml(resource), CORE_HINTS[resource]);
-      this.coreRefs.set(resource, refs);
-      this.coreSection.appendChild(refs.row);
+      for (const resource of CORE_RESOURCE_ORDER) {
+        if (this.summaryMode === 'leftOverview' && resource === 'energy') continue;
+        const refs = this.createResourceLine(resourceLabelHtml(resource), CORE_HINTS[resource]);
+        this.coreRefs.set(resource, refs);
+        this.coreSection.appendChild(refs.row);
+      }
     }
 
     this.supplySection = document.createElement('div');
     this.supplySection.className = 'panel-section resources-supply-section';
 
-    const supplyTitle = document.createElement('div');
-    supplyTitle.className = 'panel-section-title';
-    supplyTitle.textContent = 'SUPPLY CHAIN';
-    this.supplySection.appendChild(supplyTitle);
+    if (this.supplyTitle) {
+      const supplyTitle = document.createElement('div');
+      supplyTitle.className = 'panel-section-title';
+      supplyTitle.textContent = this.supplyTitle;
+      this.supplySection.appendChild(supplyTitle);
+    }
 
-    this.supplySimpleList = document.createElement('div');
-    this.supplySimpleList.className = 'resource-simple-list';
-    this.supplySection.appendChild(this.supplySimpleList);
+    this.supplyLocationList = document.createElement('div');
+    this.supplyLocationList.className = 'resource-location-list';
+    if (this.summaryMode === 'leftOverview') {
+      this.supplyLocationList.classList.add('resource-location-list-single-col');
+    }
+    this.supplySection.appendChild(this.supplyLocationList);
 
-    this.supplyTableWrap = document.createElement('div');
-    this.supplyTableWrap.className = 'resource-table-wrap hidden';
-    this.supplySection.appendChild(this.supplyTableWrap);
-
-    const controls = document.createElement('div');
-    controls.className = 'resources-controls';
-
-    const restartBtn = document.createElement('button');
-    restartBtn.className = 'btn-danger btn-restart';
-    restartBtn.textContent = 'Restart';
-    restartBtn.onclick = () => {
-      if (confirm('Are you sure you want to RESTART? All progress will be lost forever.')) {
-        deleteSave();
-        window.location.reload();
-      }
-    };
-    controls.appendChild(restartBtn);
-
-    body.appendChild(this.coreSection);
+    if (this.includeCore) {
+      body.appendChild(this.coreSection);
+    }
     body.appendChild(this.supplySection);
-    body.appendChild(controls);
 
-    document.addEventListener('flash-funds', () => {
-      const funds = this.coreRefs.get('funds');
-      if (funds) {
-        flashElement(funds.value);
-      }
-    });
+    if (this.showRestart) {
+      const controls = document.createElement('div');
+      controls.className = 'resources-controls';
+
+      const restartBtn = document.createElement('button');
+      restartBtn.className = 'btn-danger btn-restart';
+      restartBtn.textContent = 'Restart';
+      restartBtn.onclick = () => {
+        if (confirm('Are you sure you want to RESTART? All progress will be lost forever.')) {
+          deleteSave();
+          window.location.reload();
+        }
+      };
+      controls.appendChild(restartBtn);
+      body.appendChild(controls);
+    }
+
+    if (this.includeCore) {
+      document.addEventListener('flash-funds', () => {
+        const funds = this.coreRefs.get('funds');
+        if (funds) {
+          flashElement(funds.value);
+        }
+      });
+
+      document.addEventListener('flash-income', () => {
+        const funds = this.coreRefs.get('funds');
+        if (funds) {
+          flashElement(funds.rate);
+        }
+      });
+    }
   }
 
   private createResourceLine(labelHtml: string, hintId: string): ResourceLineRefs {
@@ -170,35 +208,41 @@ export class ResourcesPanel implements Panel {
   }
 
   private getVisibleLocations(state: GameState): LocationId[] {
-    if (state.completedResearch.includes('payloadToMercury')) return ['earth', 'moon', 'mercury'];
-    if (state.completedResearch.includes('payloadToMoon')) return ['earth', 'moon'];
-    return ['earth'];
+    let unlocked: LocationId[] = ['earth'];
+    if (state.completedResearch.includes('payloadToMercury')) {
+      unlocked = ['earth', 'moon', 'mercury'];
+    } else if (state.completedResearch.includes('payloadToMoon')) {
+      unlocked = ['earth', 'moon'];
+    }
+
+    if (!this.fixedLocations) return unlocked;
+    return unlocked.filter((location) => this.fixedLocations!.includes(location));
+  }
+
+  private isSupplyResourceActive(state: GameState, location: LocationId, resource: SupplyResourceId): boolean {
+    const stock = state.locationResources[location][resource];
+    const income = state.locationProductionPerMin[location][resource];
+    const expense = state.locationConsumptionPerMin[location][resource];
+    return stock > 0n || income > 0n || expense > 0n;
   }
 
   private isSupplyResourceUnlocked(state: GameState, location: LocationId, resource: SupplyResourceId): boolean {
-    if (resource === 'robots') {
-      if (location === 'earth') return state.completedResearch.includes('robotics1');
-      if (location === 'moon') return state.completedResearch.includes('payloadToMoon') && state.completedResearch.includes('robotics1');
-      return state.completedResearch.includes('payloadToMercury') && state.completedResearch.includes('robotics1');
-    }
+    return isSupplyResourceUnlocked(state, location, resource, this.isSupplyResourceActive(state, location, resource));
+  }
 
-    if (resource === 'rockets') {
-      if (location === 'earth') return state.completedResearch.includes('rocketry');
-      if (location === 'moon') return state.completedResearch.includes('moonRocketry');
-      return state.completedResearch.includes('payloadToMercury');
-    }
+  private getSupplyResourceLabel(_location: LocationId, resource: SupplyResourceId): string {
+    return resourceLabelHtml(resource);
+  }
 
-    if (resource === 'gpuSatellites') {
-      if (location === 'earth') return state.completedResearch.includes('rocketry');
-      if (location === 'moon') return state.completedResearch.includes('moonRocketry');
-      return false;
-    }
-
-    return true;
+  private isLocationEnergyVisible(location: LocationId): boolean {
+    return location === 'earth' || location === 'moon';
   }
 
   private getSupplyLayoutKey(state: GameState): string {
     const locations = this.getVisibleLocations(state);
+    if (this.summaryMode === 'leftOverview') {
+      return `overview:${locations.join(',')}`;
+    }
     const unlockToken = SUPPLY_RESOURCE_ORDER
       .map((resource) => {
         const unlocked = locations.some((location) => this.isSupplyResourceUnlocked(state, location, resource));
@@ -210,79 +254,111 @@ export class ResourcesPanel implements Panel {
 
   private rebuildSupplyLayout(state: GameState): void {
     this.visibleLocations = this.getVisibleLocations(state);
-    this.supplyMode = this.visibleLocations.length > 1 ? 'table' : 'simple';
+    this.supplyLocationRefs.clear();
+    this.locationEnergyRefs.clear();
+    this.summaryLocationRefs.clear();
+    this.summaryLocationTitles.clear();
+    this.summaryOrbitBlock = null;
+    this.orbitRefs = null;
+    this.dysonRefs = null;
+    this.supplyLocationList.innerHTML = '';
 
-    this.supplySimpleRefs.clear();
-    this.supplyTableRefs.clear();
-    this.supplySimpleList.innerHTML = '';
-    this.supplyTableWrap.innerHTML = '';
+    if (this.summaryMode === 'leftOverview') {
+      for (const location of this.visibleLocations) {
+        const locationBlock = document.createElement('div');
+        locationBlock.className = 'resource-location-block resource-location-block-single-col';
 
-    if (this.supplyMode === 'simple') {
-      this.supplySimpleList.classList.remove('hidden');
-      this.supplyTableWrap.classList.add('hidden');
-      for (const resource of SUPPLY_RESOURCE_ORDER) {
-        const unlocked = this.isSupplyResourceUnlocked(state, 'earth', resource);
-        if (!unlocked) continue;
-        const refs = this.createResourceLine(resourceLabelHtml(resource), SUPPLY_HINTS[resource]);
-        this.supplySimpleRefs.set(resource, refs);
-        this.supplySimpleList.appendChild(refs.row);
+        if (this.showLocationHeaders) {
+          const locationTitle = document.createElement('div');
+          locationTitle.className = 'panel-section-title resource-location-title';
+          locationTitle.innerHTML = locationLabelHtml(location, location.toUpperCase());
+          this.summaryLocationTitles.set(location, locationTitle);
+          locationBlock.appendChild(locationTitle);
+        }
+
+        const materialRefs = this.createResourceLine(resourceLabelHtml('material'), 'resource.material');
+        this.summaryLocationRefs.set(`${location}:material`, materialRefs);
+        locationBlock.appendChild(materialRefs.row);
+
+        const laborRefs = this.createResourceLine(resourceLabelHtml('labor'), 'resource.labor');
+        this.summaryLocationRefs.set(`${location}:labor`, laborRefs);
+        locationBlock.appendChild(laborRefs.row);
+
+        if (location !== 'mercury') {
+          const installedGpuRefs = this.createResourceLine(resourceLabelHtml('gpus', 'Installed GPUs'), 'resource.gpus');
+          this.summaryLocationRefs.set(`${location}:installedGpus`, installedGpuRefs);
+          locationBlock.appendChild(installedGpuRefs.row);
+        }
+
+        if (this.isLocationEnergyVisible(location)) {
+          const energyRefs = this.createResourceLine(resourceLabelHtml('energy'), 'resource.energy');
+          this.summaryLocationRefs.set(`${location}:energy`, energyRefs);
+          locationBlock.appendChild(energyRefs.row);
+        }
+
+        this.supplyLocationList.appendChild(locationBlock);
+
+        if (location === 'earth') {
+          const orbitBlock = document.createElement('div');
+          orbitBlock.className = 'resource-location-block resource-location-block-single-col';
+          this.summaryOrbitBlock = orbitBlock;
+          if (this.showLocationHeaders) {
+            const orbitTitle = document.createElement('div');
+            orbitTitle.className = 'panel-section-title resource-location-title';
+            orbitTitle.innerHTML = locationLabelHtml('orbit', 'EARTH ORBIT');
+            orbitBlock.appendChild(orbitTitle);
+          }
+          const orbitRefs = this.createResourceLine(resourceLabelHtml('gpuSatellites', 'GPU Satellites'), 'resource.gpuSatellites');
+          this.orbitRefs = orbitRefs;
+          orbitBlock.appendChild(orbitRefs.row);
+          this.supplyLocationList.appendChild(orbitBlock);
+        }
+
+        if (location === 'mercury') {
+          const sunOrbitBlock = document.createElement('div');
+          sunOrbitBlock.className = 'resource-location-block resource-location-block-single-col';
+          if (this.showLocationHeaders) {
+            const sunOrbitTitle = document.createElement('div');
+            sunOrbitTitle.className = 'panel-section-title resource-location-title';
+            sunOrbitTitle.innerHTML = `${emojiHtml('sun')} SUN ORBIT`;
+            sunOrbitBlock.appendChild(sunOrbitTitle);
+          }
+          const dysonRefs = this.createResourceLine(resourceLabelHtml('gpuSatellites', 'Dyson Swarm'), 'resource.gpuSatellites');
+          this.dysonRefs = dysonRefs;
+          sunOrbitBlock.appendChild(dysonRefs.row);
+          this.supplyLocationList.appendChild(sunOrbitBlock);
+        }
       }
       return;
     }
 
-    this.supplySimpleList.classList.add('hidden');
-    this.supplyTableWrap.classList.remove('hidden');
-
-    const table = document.createElement('div');
-    table.className = 'resource-table';
-    table.style.setProperty('--resource-table-cols', this.visibleLocations.length.toString());
-
-    const header = document.createElement('div');
-    header.className = 'resource-table-row resource-table-header';
-    const headLabel = document.createElement('span');
-    headLabel.className = 'label';
-    header.appendChild(headLabel);
     for (const location of this.visibleLocations) {
-      const col = document.createElement('span');
-      col.className = 'resource-table-col-head';
-      col.innerHTML = locationLabelHtml(location);
-      header.appendChild(col);
-    }
-    table.appendChild(header);
+      const locationBlock = document.createElement('div');
+      locationBlock.className = 'resource-location-block';
 
-    for (const resource of SUPPLY_RESOURCE_ORDER) {
-      const unlocked = this.visibleLocations.some((location) => this.isSupplyResourceUnlocked(state, location, resource));
-      if (!unlocked) continue;
-
-      const row = document.createElement('div');
-      row.className = 'resource-table-row';
-
-      const label = document.createElement('span');
-      label.className = 'label';
-      label.innerHTML = resourceLabelHtml(resource);
-      setHintTarget(label, SUPPLY_HINTS[resource]);
-      row.appendChild(label);
-
-      for (const location of this.visibleLocations) {
-        const cell = document.createElement('div');
-        cell.className = 'resource-table-cell';
-
-        const value = document.createElement('span');
-        value.className = 'resource-table-value';
-        cell.appendChild(value);
-
-        const rate = document.createElement('span');
-        rate.className = 'resource-table-rate';
-        cell.appendChild(rate);
-
-        row.appendChild(cell);
-        this.supplyTableRefs.set(`${resource}:${location}`, { value, rate });
+      if (this.showLocationHeaders) {
+        const locationTitle = document.createElement('div');
+        locationTitle.className = 'panel-section-title resource-location-title';
+        locationTitle.innerHTML = locationLabelHtml(location, location.toUpperCase());
+        locationBlock.appendChild(locationTitle);
       }
 
-      table.appendChild(row);
-    }
+      for (const resource of SUPPLY_RESOURCE_ORDER) {
+        if (!this.isSupplyResourceUnlocked(state, location, resource)) continue;
+        const refs = this.createResourceLine(this.getSupplyResourceLabel(location, resource), SUPPLY_HINTS[resource]);
+        this.supplyLocationRefs.set(`${resource}:${location}`, refs);
+        locationBlock.appendChild(refs.row);
+      }
 
-    this.supplyTableWrap.appendChild(table);
+      if (this.isLocationEnergyVisible(location)) {
+        const energyRefs = this.createResourceLine(resourceLabelHtml('energy'), 'resource.energy');
+        energyRefs.row.classList.add('location-energy-row');
+        this.locationEnergyRefs.set(location, energyRefs);
+        locationBlock.appendChild(energyRefs.row);
+      }
+
+      this.supplyLocationList.appendChild(locationBlock);
+    }
   }
 
   private formatRate(value: bigint, formatter: (input: bigint) => string): string {
@@ -308,35 +384,8 @@ export class ResourcesPanel implements Panel {
     return '';
   }
 
-  private getBusyRocketsForLocation(state: GameState, location: LocationId): bigint {
-    const reserved = state.logisticsReservedRockets || {
-      earthOrbit: 0n,
-      earthMoon: 0n,
-      moonOrbit: 0n,
-      moonMercury: 0n,
-      mercurySun: 0n,
-    };
-
-    let busy = 0n;
-    if (location === 'earth') busy += (reserved.earthOrbit || 0n) + (reserved.earthMoon || 0n);
-    if (location === 'moon') busy += (reserved.moonMercury || 0n);
-    if (location === 'mercury') busy += (reserved.mercurySun || 0n);
-
-    for (const batch of state.transportBatches || []) {
-      if (getTransportRouteSource(batch.route) !== location) continue;
-      const estimated = estimateTransportRockets(state, batch.route, batch.payload, batch.amount, batch.launchedRockets);
-      busy += toBigInt(estimated);
-    }
-
-    for (const batch of state.rocketReturnBatches || []) {
-      if (batch.location === location) busy += batch.amount;
-    }
-    return busy;
-  }
-
   private updateCore(state: GameState): void {
-    const energyUnlocked = state.isPostGpuTransition &&
-      (state.completedResearch.includes('rocketry') || state.datacenters.some((count) => count > 0n));
+    if (!this.includeCore) return;
 
     const funds = this.coreRefs.get('funds')!;
     funds.value.textContent = this.formatMoneySpaced(state.funds);
@@ -357,49 +406,94 @@ export class ResourcesPanel implements Panel {
     const code = this.coreRefs.get('code')!;
     code.value.textContent = formatNumber(state.code);
     code.rate.textContent = this.formatRate(state.codePerMin, formatNumber);
-    code.row.style.display = state.code > 0n || state.codePerMin > 0n ? '' : 'none';
+    code.row.style.display = state.unlockedJobs.includes('humanSWE') || state.code > 0n || state.codePerMin > 0n ? '' : 'none';
 
     const science = this.coreRefs.get('science')!;
     science.value.textContent = formatNumber(state.science);
     science.rate.textContent = this.formatRate(state.sciencePerMin, formatNumber);
     science.row.style.display = state.science > 0n || state.sciencePerMin > 0n ? '' : 'none';
 
-    const energy = this.coreRefs.get('energy')!;
-    energy.value.textContent = formatMW(state.totalEnergyMW);
-    energy.rate.textContent = '';
-    energy.row.style.display = energyUnlocked ? '' : 'none';
-  }
-
-  private updateSupplySimple(state: GameState): void {
-    for (const resource of SUPPLY_RESOURCE_ORDER) {
-      const refs = this.supplySimpleRefs.get(resource);
-      if (!refs) continue;
-
-      const stock = state.locationResources.earth[resource];
-      const income = state.locationProductionPerMin.earth[resource];
-      const expense = state.locationConsumptionPerMin.earth[resource];
-      const net = income - expense;
-
-      const capSuffix = this.getSupplyCapSuffix('earth', resource, stock);
-      refs.value.textContent = `${formatNumber(stock)}${capSuffix}`;
-
-      const rateText = this.formatRate(net, formatNumber);
-      if (resource === 'rockets') {
-        const busy = this.getBusyRocketsForLocation(state, 'earth');
-        refs.rate.textContent = busy > 0n
-          ? `${rateText}${rateText ? ' ' : ''}Busy ${formatNumber(busy)}`
-          : rateText;
-      } else {
-        refs.rate.textContent = rateText;
-      }
-      refs.rate.style.color = net < 0n ? 'var(--accent-red)' : 'var(--text-muted)';
+    const energy = this.coreRefs.get('energy');
+    if (energy) {
+      const energyUnlocked = state.datacenters.some((count) => count > 0n);
+      energy.value.textContent = formatMW(state.totalEnergyMW);
+      energy.rate.textContent = '';
+      energy.row.style.display = energyUnlocked ? '' : 'none';
     }
   }
 
-  private updateSupplyTable(state: GameState): void {
+  private updateSupplyByLocation(state: GameState): void {
+    if (this.summaryMode === 'leftOverview') {
+      const rocketryUnlocked = state.completedResearch.includes('rocketry');
+      const humanWorkerUnlocked = state.unlockedJobs.includes('humanWorker');
+      const energyUnlocked = state.datacenters.some((count) => count > 0n);
+
+      for (const location of this.visibleLocations) {
+        const locationTitle = this.summaryLocationTitles.get(location);
+        if (locationTitle) {
+          locationTitle.style.display = location === 'earth' && !rocketryUnlocked ? 'none' : '';
+        }
+
+        const materialRefs = this.summaryLocationRefs.get(`${location}:material`);
+        if (materialRefs) {
+          const materialVisible = this.isSupplyResourceUnlocked(state, location, 'material');
+          materialRefs.row.style.display = materialVisible ? '' : 'none';
+          const stock = state.locationResources[location].material;
+          const net = state.locationProductionPerMin[location].material - state.locationConsumptionPerMin[location].material;
+          const capSuffix = this.getSupplyCapSuffix(location, 'material', stock);
+          materialRefs.value.textContent = `${formatNumber(stock)}${capSuffix}`;
+          materialRefs.rate.textContent = this.formatRate(net, formatNumber);
+          materialRefs.rate.style.color = net < 0n ? 'var(--accent-red)' : 'var(--text-muted)';
+        }
+
+        const laborRefs = this.summaryLocationRefs.get(`${location}:labor`);
+        if (laborRefs) {
+          laborRefs.row.style.display = humanWorkerUnlocked ? '' : 'none';
+          const stock = state.locationResources[location].labor;
+          const net = state.locationProductionPerMin[location].labor - state.locationConsumptionPerMin[location].labor;
+          laborRefs.value.textContent = formatNumber(stock);
+          laborRefs.rate.textContent = this.formatRate(net, formatNumber);
+          laborRefs.rate.style.color = net < 0n ? 'var(--accent-red)' : 'var(--text-muted)';
+        }
+
+        const installedGpuRefs = this.summaryLocationRefs.get(`${location}:installedGpus`);
+        if (installedGpuRefs) {
+          const installed = location === 'earth'
+            ? state.installedGpuCount
+            : state.locationResources[location].installedGpus;
+          installedGpuRefs.value.textContent = formatNumber(installed);
+          installedGpuRefs.rate.textContent = '';
+        }
+
+        const energyRefs = this.summaryLocationRefs.get(`${location}:energy`);
+        if (energyRefs) {
+          energyRefs.row.style.display = energyUnlocked ? '' : 'none';
+          const supply = location === 'earth' ? state.powerSupplyMW : state.lunarPowerSupplyMW;
+          const demand = location === 'earth' ? state.powerDemandMW : state.lunarPowerDemandMW;
+          energyRefs.value.textContent = `${formatMW(supply)} / Demand ${formatMW(demand)}`;
+          energyRefs.rate.textContent = '';
+          energyRefs.value.style.color = supply >= demand ? 'var(--accent-green)' : 'var(--accent-red)';
+        }
+      }
+
+      if (this.summaryOrbitBlock) {
+        this.summaryOrbitBlock.style.display = rocketryUnlocked ? '' : 'none';
+      }
+
+      if (this.orbitRefs) {
+        this.orbitRefs.value.textContent = formatNumber(state.satellites);
+        this.orbitRefs.rate.textContent = '';
+      }
+      if (this.dysonRefs) {
+        this.dysonRefs.value.textContent = formatNumber(state.dysonSwarmSatellites);
+        this.dysonRefs.rate.textContent = '';
+      }
+      return;
+    }
+
     for (const resource of SUPPLY_RESOURCE_ORDER) {
       for (const location of this.visibleLocations) {
-        const refs = this.supplyTableRefs.get(`${resource}:${location}`);
+        const refs = this.supplyLocationRefs.get(`${resource}:${location}`);
         if (!refs) continue;
 
         const stock = state.locationResources[location][resource];
@@ -410,17 +504,17 @@ export class ResourcesPanel implements Panel {
         const capSuffix = this.getSupplyCapSuffix(location, resource, stock);
         refs.value.textContent = `${formatNumber(stock)}${capSuffix}`;
 
-        const rateText = this.formatRate(net, formatNumber);
-        if (resource === 'rockets') {
-          const busy = this.getBusyRocketsForLocation(state, location);
-          refs.rate.textContent = busy > 0n
-            ? `${rateText}${rateText ? ' ' : ''}Busy ${formatNumber(busy)}`
-            : rateText;
-        } else {
-          refs.rate.textContent = rateText;
-        }
+        refs.rate.textContent = this.formatRate(net, formatNumber);
         refs.rate.style.color = net < 0n ? 'var(--accent-red)' : 'var(--text-muted)';
       }
+    }
+
+    for (const [location, refs] of this.locationEnergyRefs) {
+      const supply = location === 'earth' ? state.powerSupplyMW : state.lunarPowerSupplyMW;
+      const demand = location === 'earth' ? state.powerDemandMW : state.lunarPowerDemandMW;
+      refs.value.textContent = `Supply ${formatMW(supply)} / Demand ${formatMW(demand)}`;
+      refs.rate.textContent = '';
+      refs.value.style.color = supply >= demand ? 'var(--accent-green)' : 'var(--accent-red)';
     }
   }
 
@@ -433,11 +527,6 @@ export class ResourcesPanel implements Panel {
       this.rebuildSupplyLayout(state);
     }
 
-    if (this.supplyMode === 'simple') {
-      this.updateSupplySimple(state);
-      return;
-    }
-
-    this.updateSupplyTable(state);
+    this.updateSupplyByLocation(state);
   }
 }

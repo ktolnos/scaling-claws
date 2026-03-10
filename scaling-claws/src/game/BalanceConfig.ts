@@ -31,20 +31,38 @@ const SOLAR_OUTPUT_MULTIPLIER_EARTH = 1.0;
 const SOLAR_OUTPUT_MULTIPLIER_MOON = 1.35;
 const SOLAR_OUTPUT_MULTIPLIER_MERCURY = 3.2;
 const SOLAR_OUTPUT_MULTIPLIER_SPACE_SSO = 3.8;
-const ALGO_EFFICIENCY_MULTIPLIER = 3;
+const SOLAR_FARM_PANELS = 1_000_000;
+const TARGET_EARTH_SOLAR_POWER_TW = 3;
+const TARGET_EARTH_SOLAR_POWER_MW = TARGET_EARTH_SOLAR_POWER_TW * 1_000_000;
+const MAX_EARTH_SOLAR_PANELS = Math.round(
+  TARGET_EARTH_SOLAR_POWER_MW / (SOLAR_PANEL_POWER_MW * SOLAR_OUTPUT_MULTIPLIER_EARTH),
+);
+const SOLAR_FARM_LIMIT = Math.round(MAX_EARTH_SOLAR_PANELS / SOLAR_FARM_PANELS);
+const MEGA_DATACENTER_GPU_CAPACITY = 1_000_000;
+const MEGA_DATACENTER_LIMIT = Math.round(
+  TARGET_EARTH_SOLAR_POWER_MW / (GPU_POWER_MW_PER_UNIT * MEGA_DATACENTER_GPU_CAPACITY),
+);
+const MOON_GPU_DATACENTER_GPUS_PER_BUILD = 1_000_000;
+const MOON_MAX_SOLAR_POWER_MW = MAX_EARTH_SOLAR_PANELS * SOLAR_PANEL_POWER_MW * SOLAR_OUTPUT_MULTIPLIER_MOON;
+const MOON_GPU_DATACENTER_LIMIT = Math.round(
+  MOON_MAX_SOLAR_POWER_MW / (GPU_POWER_MW_PER_UNIT * MOON_GPU_DATACENTER_GPUS_PER_BUILD),
+);
+const ALGO_EFFICIENCY_MULTIPLIER = 1.3;
 const API_USER_SYNTH_BASE_RATE = 1000n;
-const API_USER_SYNTH_RATE_MULTIPLIER = 2n;
+const API_USER_SYNTH_RATE_MULTIPLIER = 2;
+const API_USER_SYNTH_RATE_MULTIPLIER_B = 2n;
 const ROCKET_LOSS_NO_REUSE = 1.0;
 const ROCKET_LOSS_REUSABLE_1 = 0.5;
 const ROCKET_LOSS_REUSABLE_2 = 0.1;
 const ROCKET_LOSS_REUSABLE_3 = 0.01;
-const SOLAR_EFFICIENCY_1_MULTIPLIER = 1.5;
-const SOLAR_EFFICIENCY_2_MULTIPLIER = 2;
 const GPU_SATELLITE_FACTORY_OUTPUT_PER_MONTH = 6;
 const GPU_SATELLITE_GPU_REQ_PER_MONTH = 300;
 const GPU_SATELLITE_SOLAR_PANEL_REQ_PER_MONTH = Math.round(
   (GPU_SATELLITE_GPU_REQ_PER_MONTH * GPU_POWER_MW_PER_UNIT) / (SOLAR_PANEL_POWER_MW * SOLAR_OUTPUT_MULTIPLIER_SPACE_SSO),
 );
+const DYSON_SWARM_FACILITY_OUTPUT_PER_MONTH = GPU_SATELLITE_FACTORY_OUTPUT_PER_MONTH;
+const DYSON_SWARM_FACILITY_MATERIAL_REQ_PER_MONTH = 2_000;
+const DYSON_SWARM_FACILITY_LABOR_REQ_PER_MONTH = 200;
 
 export const SubscriptionTiers = {
   basic: 'basic',
@@ -98,6 +116,7 @@ export type FacilityProductionId =
   | 'gpuFactory'
   | 'rocketFactory'
   | 'gpuSatelliteFactory'
+  | 'dysonSwarmFacility'
   | 'massDriver';
 
 /** Display order for jobs in the UI. */
@@ -116,7 +135,6 @@ export const ResearchIds = {
   algoEfficiency4: 'algoEfficiency4',
   apiAutoPricing: 'apiAutoPricing',
   computeAutoAllocation: 'computeAutoAllocation',
-  synthData1: 'synthData1',
   synthData2: 'synthData2',
   synthData3: 'synthData3',
   syntheticData1: 'syntheticData1',
@@ -125,8 +143,6 @@ export const ResearchIds = {
   gpuArch1: 'gpuArch1',
   gpuArch2: 'gpuArch2',
   gpuArch3: 'gpuArch3',
-  solarEfficiency1: 'solarEfficiency1',
-  solarEfficiency2: 'solarEfficiency2',
 
   // Earth production
   solarTechnology: 'solarTechnology',
@@ -143,9 +159,7 @@ export const ResearchIds = {
 
   // Moon building unlocks
   moonMineEngineering: 'moonMineEngineering',
-  moonSolarManufacturing: 'moonSolarManufacturing',
   moonChipManufacturing: 'moonChipManufacturing',
-  moonRocketry: 'moonRocketry',
   moonMassDrivers: 'moonMassDrivers',
 
   // Rocket reusability tiers
@@ -164,19 +178,32 @@ export const ResearchIds = {
 } as const;
 
 export type ResearchId = typeof ResearchIds[keyof typeof ResearchIds];
+export type ResearchCostResource = Extract<ResourceType, 'code' | 'science'>;
+export type ResearchQuantityEmoji = 'code' | 'science' | 'labor' | 'data' | 'flops' | 'energy' | 'rockets';
+
+export interface InfiniteResearchConfig {
+  initialLevel: number;
+  priceExponentPerLevel: number;
+  quantityMultiplierPerLevel: number;
+  quantityLabel: string;
+  quantityBase: number;
+  quantityEmoji: ResearchQuantityEmoji;
+  quantityUnit?: string;
+}
 
 export interface ResearchConfig {
   id: ResearchId;
   name: string;
   cost: bigint;
+  costResource?: ResearchCostResource;
+  infinite?: InfiniteResearchConfig;
   prereqs: ResearchId[];
   description: string;
   algoEfficiencyMultiplier?: number;
-  apiUserSynthBaseRate?: bigint;
   apiUserSynthRateMultiplier?: bigint;
   gpuFlopsMultiplier?: number;
   rocketLossPct?: number;
-  solarPowerMultiplier?: number;
+  rocketLossMultiplier?: number;
   productionBoosts?: {
     jobs?: Partial<Record<JobType, number>>;
     facilities?: Partial<Record<FacilityProductionId, number>>;
@@ -274,8 +301,8 @@ export const BALANCE = {
     // - Computer & Information Research Scientists: ~$141k/year -> ~$12k/month
     // - Construction Laborers/Helpers: ~$46k/year -> ~$4k/month
     humanSWE:         { produces: { resource: 'code', amount: toBigInt(0.1) },   timeMs: 6_000, unlockAtIntel: 3.0,  agentIntelReq: 0, workerType: 'human', displayName: 'Human Coder', salaryPerMin: toBigInt(11_000), hireCost: toBigInt(500) } as JobConfig,
-    humanResearcher:  { produces: { resource: 'science', amount: toBigInt(0.1) }, timeMs: 6_000, unlockAtIntel: 11.0, agentIntelReq: 0, workerType: 'human', displayName: 'Human Researcher', salaryPerMin: toBigInt(12_000), hireCost: toBigInt(1000) } as JobConfig,
-    humanWorker:      { produces: { resource: 'labor', amount: toBigInt(0.1) },     timeMs: 6_000, unlockAtIntel: 5.0,  agentIntelReq: 0, workerType: 'human', displayName: 'Human Worker', salaryPerMin: toBigInt(4_000), hireCost: toBigInt(300) } as JobConfig,
+    humanResearcher:  { produces: { resource: 'science', amount: toBigInt(0.1) }, timeMs: 6_000, unlockAtIntel: 10.0, agentIntelReq: 0, workerType: 'human', displayName: 'Human Researcher', salaryPerMin: toBigInt(12_000), hireCost: toBigInt(1000) } as JobConfig,
+    humanWorker:      { produces: { resource: 'labor', amount: toBigInt(0.1) },     timeMs: 6_000, unlockAtIntel: 7.0,  agentIntelReq: 0, workerType: 'human', displayName: 'Human Worker', salaryPerMin: toBigInt(4_000), hireCost: toBigInt(300) } as JobConfig,
 
     unassigned: {
       produces: { resource: 'funds', amount: 0n },
@@ -349,7 +376,7 @@ export const BALANCE = {
     { name: 'Small Datacenter',  cost: toBigInt(6_000_000),     gpuCapacity: scaleBigInt(256n),      laborCost: toBigInt(12),    limit: 100 } as DatacenterConfig,
     { name: 'Medium Datacenter', cost: toBigInt(75_000_000),    gpuCapacity: scaleBigInt(4_096n),    laborCost: toBigInt(360),  limit: 500 } as DatacenterConfig,
     { name: 'Large Datacenter',  cost: toBigInt(100_000_000),  gpuCapacity: scaleBigInt(65_536n),   laborCost: toBigInt(70_000), limit: 1000 } as DatacenterConfig,
-    { name: 'Mega Datacenter',   cost: toBigInt(1_000_000_000), gpuCapacity: scaleBigInt(1_000_000n), laborCost: toBigInt(3_000_000), limit: 2500 } as DatacenterConfig,
+    { name: 'Mega Datacenter',   cost: toBigInt(1_000_000_000), gpuCapacity: scaleBigInt(BigInt(MEGA_DATACENTER_GPU_CAPACITY)), laborCost: toBigInt(3_000_000), limit: MEGA_DATACENTER_LIMIT } as DatacenterConfig,
   ] as DatacenterConfig[],
 
   // Energy
@@ -379,18 +406,14 @@ export const BALANCE = {
   solarOutputMultiplierMercury: SOLAR_OUTPUT_MULTIPLIER_MERCURY,
   // Sun-synchronous orbit assumption for Earth-orbit satellite design point.
   solarOutputMultiplierSpaceSso: SOLAR_OUTPUT_MULTIPLIER_SPACE_SSO,
-  // Install labor per unit (person-months per installed panel/GPU).
-  // Values include labor-equivalent battery system capex (procurement + install):
-  // - Earth: ~6h storage equivalent at ~120 USD/kWh installed + BOS/land burden.
-  // - Moon: higher-cost storage and deployment burden for off-world operations.
-  earthSolarInstallLaborCost: toBigInt(0.1),
-  moonSolarInstallLaborCost: toBigInt(1),
-  // GPU installation is mechanical/electrical integration only (no battery bundle).
-  moonGpuInstallLaborCost: toBigInt(0.01),
-  // 3 billion panels at 0.0006 MW/panel ~= 1,800,000 MW (~1.8 TW) nameplate.
-  earthSolarInstallLimit: scaleBigInt(2_500_000_000n),
-  moonSolarInstallLimit: scaleBigInt(100_000_000_000n), // Can be raised up to 500B
-  moonGpuInstallLimit: scaleBigInt(125_000_000_000n),
+  // Solar farms are discrete builds that consume panel inventory + labor.
+  solarFarmPanelsPerFarm: SOLAR_FARM_PANELS,
+  solarFarmLimit: SOLAR_FARM_LIMIT,
+  earthSolarFarmLaborCost: toBigInt(100_000),
+  moonSolarFarmLaborCost: toBigInt(1_000_000),
+  moonGpuDatacenterGpusPerBuild: MOON_GPU_DATACENTER_GPUS_PER_BUILD,
+  moonGpuDatacenterLimit: MOON_GPU_DATACENTER_LIMIT,
+  moonGpuDatacenterLaborCost: toBigInt(10_000),
 
   // Training
   fineTunes: [
@@ -412,43 +435,80 @@ export const BALANCE = {
   dataPurchaseLimitGB: 1_000_000,
 
   // Research
-  researchUnlockIntel: 11.0,
+  researchUnlockIntel: 10.0,
   research: [
     // Algorithms and API
-    { id: 'algoEfficiency1', name: 'Algo Efficiency I',   cost: toBigInt(200),    prereqs: [],                   description: 'Training 3x faster', algoEfficiencyMultiplier: ALGO_EFFICIENCY_MULTIPLIER },
-    { id: 'algoEfficiency2', name: 'Algo Efficiency II',  cost: toBigInt(2000),    prereqs: ['algoEfficiency1'],  description: 'Training 3x faster', algoEfficiencyMultiplier: ALGO_EFFICIENCY_MULTIPLIER },
-    { id: 'algoEfficiency3', name: 'Algo Efficiency III', cost: toBigInt(1200_000),   prereqs: ['algoEfficiency2'],  description: 'Training 3x faster', algoEfficiencyMultiplier: ALGO_EFFICIENCY_MULTIPLIER },
-    { id: 'algoEfficiency4', name: 'Algo Efficiency IV',  cost: toBigInt(2000_000_000),  prereqs: ['algoEfficiency3'],  description: 'Training 3x faster', algoEfficiencyMultiplier: ALGO_EFFICIENCY_MULTIPLIER },
-
-    { id: 'synthData1', name: 'API Data Generation I',   cost: toBigInt(5),   prereqs: [],             description: 'API users generate training data', apiUserSynthBaseRate: API_USER_SYNTH_BASE_RATE },
-    { id: 'apiAutoPricing', name: 'API Auto Pricing',   cost: toBigInt(2),   prereqs: ['synthData1'], description: 'Unlock automatic API price adjustments' },
-    { id: 'computeAutoAllocation', name: 'Compute Auto Allocation', cost: toBigInt(2), prereqs: ['apiAutoPricing'], description: 'Unlock automatic compute allocation' },
-    { id: 'synthData2', name: 'API Data Generation II',  cost: toBigInt(1000),  prereqs: ['synthData1'], description: 'API user data generation x2', apiUserSynthRateMultiplier: API_USER_SYNTH_RATE_MULTIPLIER },
-    { id: 'synthData3', name: 'API Data Generation III', cost: toBigInt(10000), prereqs: ['synthData2'], description: 'API user data generation x2', apiUserSynthRateMultiplier: API_USER_SYNTH_RATE_MULTIPLIER },
-    { id: 'syntheticData1', name: 'Synthetic Data I',    cost: toBigInt(20000),  prereqs: ['synthData3'], description: 'Unlock AI Data Synthesizer job' },
     {
-      id: 'syntheticData2',
-      name: 'Synthetic Data II',
-      cost: toBigInt(6_000_000),
-      prereqs: ['syntheticData1'],
-      description: 'AI Data Synthesizer output x2',
-      productionBoosts: { jobs: { aiDataSynthesizer: 2 } },
+      id: 'algoEfficiency1',
+      name: 'Algorithmic Efficiency +30%',
+      cost: toBigInt(1),
+      costResource: 'code',
+      infinite: {
+        initialLevel: 0,
+        priceExponentPerLevel: 1.2,
+        quantityMultiplierPerLevel: ALGO_EFFICIENCY_MULTIPLIER,
+        quantityLabel: 'Training Speed',
+        quantityBase: 1,
+        quantityEmoji: 'flops',
+        quantityUnit: 'x',
+      },
+      prereqs: [],
+      description: 'Improvements to training algorithms speed up training.',
+      algoEfficiencyMultiplier: ALGO_EFFICIENCY_MULTIPLIER,
+    },
+    { id: 'apiAutoPricing', name: 'API Auto Pricing',  cost: toBigInt(0.1),   costResource: 'code', prereqs: [], description: 'Unlock automatic API price adjustments' },
+    { id: 'computeAutoAllocation', name: 'Compute Auto Allocation', cost: toBigInt(2), costResource: 'code', prereqs: ['apiAutoPricing'], description: 'Unlock automatic compute allocation' },
+    {
+      id: 'synthData2',
+      name: 'API Data Generation (+100%)',
+      cost: toBigInt(1000),
+      costResource: 'code',
+      infinite: {
+        initialLevel: 1,
+        priceExponentPerLevel: 1.2,
+        quantityMultiplierPerLevel: API_USER_SYNTH_RATE_MULTIPLIER,
+        quantityLabel: 'API User Data Rate',
+        quantityBase: 1000,
+        quantityEmoji: 'data',
+        quantityUnit: '/m',
+      },
+      prereqs: [],
+      description: 'API user data generation scales infinitely.',
+      apiUserSynthRateMultiplier: API_USER_SYNTH_RATE_MULTIPLIER_B,
     },
     {
-      id: 'syntheticData3',
-      name: 'Synthetic Data III',
-      cost: toBigInt(600_000_000),
-      prereqs: ['syntheticData2'],
-      description: 'AI Data Synthesizer output x2',
+      id: 'syntheticData1',
+      name: 'Synthetic Data',
+      cost: toBigInt(20000),
+      costResource: 'code',
+      prereqs: [],
+      description: 'Unlock AI Data Synthesizer job',
+    },
+    {
+      id: 'syntheticData2',
+      name: 'Synthetic Data Output (+100%)',
+      cost: toBigInt(6_000_000),
+      costResource: 'code',
+      infinite: {
+        initialLevel: 0,
+        priceExponentPerLevel: 100,
+        quantityMultiplierPerLevel: 2,
+        quantityLabel: 'Synthesizer Output',
+        quantityBase: 10,
+        quantityEmoji: 'data',
+        quantityUnit: '/m',
+      },
+      prereqs: ['syntheticData1'],
+      description: 'AI Data Synthesizer output scales infinitely.',
       productionBoosts: { jobs: { aiDataSynthesizer: 2 } },
     },
 
     // Earth industrial start (pick order)
-    { id: 'solarTechnology',      name: 'Solar Manufacturing',    cost: toBigInt(0.1),   prereqs: [],                    description: 'Unlock Earth supply chain, solar factories, and installation' },
+    { id: 'solarTechnology',      name: 'Solar Manufacturing',    cost: toBigInt(0.1),   prereqs: [],                    description: 'Unlock mining, solar factories, and solar farms' },
     { id: 'chipManufacturing',    name: 'Chip Manufacturing',     cost: toBigInt(2_000),   prereqs: [],   description: 'Unlock Earth GPU factories' },
     {
       id: 'robotics1',
-      name: 'Robotics I',
+      name: 'Robotics',
       cost: toBigInt(10_000),
       prereqs: ['solarTechnology'],
       description: 'Unlock robot workers.',
@@ -461,11 +521,9 @@ export const BALANCE = {
 
     // Transport and lunar expansion
     { id: 'payloadToMoon',        name: 'Lunar Transport',        cost: toBigInt(5_000_000),  prereqs: ['rocketry'], description: 'Unlock Earth->Moon logistics and Moon installation UI' },
-    { id: 'moonMineEngineering',  name: 'Moon Mines',             cost: toBigInt(20_000_000),  prereqs: ['payloadToMoon'], description: 'Unlock Moon material mines' },
-    { id: 'moonSolarManufacturing', name: 'Moon Solar Plants',    cost: toBigInt(20_000_000), prereqs: ['payloadToMoon'], description: 'Unlock Moon solar factories' },
-    { id: 'moonChipManufacturing',  name: 'Moon Chip Fabs',       cost: toBigInt(20_000_000), prereqs: ['payloadToMoon'], description: 'Unlock Moon GPU factories' },
-    { id: 'moonRocketry',         name: 'Moon Rocketry',          cost: toBigInt(20_000_000), prereqs: ['payloadToMoon', 'rocketry'], description: 'Unlock Moon rocket and GPU satellite factories' },
-    { id: 'moonMassDrivers',      name: 'Moon Mass Drivers',      cost: toBigInt(100_000_000_000), prereqs: ['payloadToMoon', 'moonRocketry'], description: 'Unlock Moon mass drivers (more launches, larger payload)' },
+    { id: 'moonMineEngineering',  name: 'Moon Mining & Solar',    cost: toBigInt(20_000_000),  prereqs: ['payloadToMoon'], description: 'Unlock Moon material mines and solar factories' },
+    { id: 'moonChipManufacturing',  name: 'Moon GPU Manufacturing',       cost: toBigInt(20_000_000), prereqs: ['moonMineEngineering'], description: 'Unlock Moon GPU factories' },
+    { id: 'moonMassDrivers',      name: 'Moon Mass Drivers',      cost: toBigInt(100_000_000_000), prereqs: ['moonChipManufacturing'], description: 'Unlock Moon GPU satellite factories and mass drivers (more launches, larger payload)' },
     { id: 'moonRobotics', name: 'Moon Robotics', cost: toBigInt(20_000_000), prereqs: ['payloadToMoon', 'robotFactoryEngineering1'], description: 'Unlock Moon robot factories' },
 
     // Mercury and endgame
@@ -473,74 +531,57 @@ export const BALANCE = {
     { id: 'mercuryRobotics', name: 'Mercury Robotics', cost: toBigInt(1_000_000), prereqs: ['payloadToMercury', 'moonRobotics'], description: 'Unlock Mercury robot factories' },
 
     // Rocket reuse tiers
-    { id: 'reusableRockets1',     name: 'Reusable Rockets I',     cost: toBigInt(100_000),  prereqs: ['rocketry'], description: 'Reduce rocket losses after launch', rocketLossPct: ROCKET_LOSS_REUSABLE_1 },
-    { id: 'reusableRockets2',     name: 'Reusable Rockets II',    cost: toBigInt(1_000_000), prereqs: ['reusableRockets1'], description: 'Further reduce rocket losses', rocketLossPct: ROCKET_LOSS_REUSABLE_2 },
-    { id: 'reusableRockets3',     name: 'Reusable Rockets III',   cost: toBigInt(100_000_000), prereqs: ['reusableRockets2'], description: 'Most rockets are recovered', rocketLossPct: ROCKET_LOSS_REUSABLE_3 },
+    {
+      id: 'reusableRockets1',
+      name: 'Rocket Reusability (+100%)',
+      cost: toBigInt(100_000),
+      infinite: {
+        initialLevel: 0,
+        priceExponentPerLevel: 10,
+        quantityMultiplierPerLevel: 0.5,
+        quantityLabel: 'Rocket Loss',
+        quantityBase: 100,
+        quantityEmoji: 'rockets',
+        quantityUnit: '%',
+      },
+      prereqs: ['rocketry'],
+      description: 'Rocket losses scale down infinitely.',
+      rocketLossMultiplier: ROCKET_LOSS_REUSABLE_1,
+    },
 
     // Robotics scaling
     {
       id: 'robotics2',
-      name: 'Robotics II',
+      name: 'Robot Labor Output (+100%)',
       cost: toBigInt(100_000),
+      infinite: {
+        initialLevel: 0,
+        priceExponentPerLevel: 5,
+        quantityMultiplierPerLevel: 2,
+        quantityLabel: 'Robot Labor Output',
+        quantityBase: 0.5,
+        quantityEmoji: 'labor',
+        quantityUnit: '/m',
+      },
       prereqs: ['robotics1'],
-      description: 'Robot labor output x10 (matches human)',
-      productionBoosts: { jobs: { robotWorker: 2 } },
-    },
-    {
-      id: 'robotics3',
-      name: 'Robotics III',
-      cost: toBigInt(1_000_000),
-      prereqs: ['robotics2'],
-      description: 'Robot labor output x3',
-      productionBoosts: { jobs: { robotWorker: 3 } },
-    },
-    {
-      id: 'robotics4',
-      name: 'Robotics IV',
-      cost: toBigInt(5_000_000),
-      prereqs: ['robotics3'],
-      description: 'Robot labor output x3',
-      productionBoosts: { jobs: { robotWorker: 3 } },
-    },
-    {
-      id: 'robotics5',
-      name: 'Robotics V',
-      cost: toBigInt(20_000_000),
-      prereqs: ['robotics4'],
-      description: 'Robot labor output x2',
-      productionBoosts: { jobs: { robotWorker: 2 } },
-    },
-    {
-      id: 'robotics6',
-      name: 'Robotics VI',
-      cost: toBigInt(100_000_000),
-      prereqs: ['robotics5'],
-      description: 'Robot labor output x2',
+      description: 'Robot labor output scales infinitely.',
       productionBoosts: { jobs: { robotWorker: 2 } },
     },
     {
       id: 'facilityThroughput1',
-      name: 'Facility Throughput I',
+      name: 'Facility Throughput (+100%)',
       cost: toBigInt(80_000_000),
-      prereqs: ['payloadToMercury'],
-      description: 'All industrial facilities produce 100% more',
-      productionBoosts: {
-        facilities: {
-          materialMine: 2,
-          solarFactory: 2,
-          robotFactory: 2,
-          gpuFactory: 2,
-          rocketFactory: 2,
-          gpuSatelliteFactory: 2,
-        },
+      infinite: {
+        initialLevel: 0,
+        priceExponentPerLevel: 100,
+        quantityMultiplierPerLevel: 2,
+        quantityLabel: 'Facility Output',
+        quantityBase: 1,
+        quantityEmoji: 'flops',
+        quantityUnit: 'x',
       },
-    },
-    {
-      id: 'facilityThroughput2',
-      name: 'Facility Throughput II',
-      cost: toBigInt(8_000_000_000),
-      prereqs: ['facilityThroughput1'],
-      description: 'All industrial facilities produce 100% more',
+      prereqs: ['payloadToMercury'],
+      description: 'All industrial facilities scale infinitely.',
       productionBoosts: {
         facilities: {
           materialMine: 2,
@@ -549,15 +590,25 @@ export const BALANCE = {
           gpuFactory: 2,
           rocketFactory: 2,
           gpuSatelliteFactory: 2,
+          dysonSwarmFacility: 2,
         },
       },
     },
     {
       id: 'jobThroughput1',
-      name: 'Workforce Throughput I',
+      name: 'Workforce Throughput (+50%)',
       cost: toBigInt(900_000_000),
+      infinite: {
+        initialLevel: 0,
+        priceExponentPerLevel: 4,
+        quantityMultiplierPerLevel: 1.5,
+        quantityLabel: 'AI Job Output',
+        quantityBase: 1,
+        quantityEmoji: 'code',
+        quantityUnit: 'x',
+      },
       prereqs: ['payloadToMercury'],
-      description: 'All AI jobs produce 50% more',
+      description: 'All AI job output scales infinitely.',
       productionBoosts: {
         jobs: {
           aiSWE: 1.5,
@@ -567,48 +618,26 @@ export const BALANCE = {
         },
       },
     },
-    {
-      id: 'jobThroughput2',
-      name: 'Workforce Throughput II',
-      cost: toBigInt(3_500_000_000),
-      prereqs: ['jobThroughput1'],
-      description: 'All AI jobs produce 100% more',
-      productionBoosts: {
-        jobs: {
-          aiSWE: 2,
-          aiResearcher: 2,
-          aiDataSynthesizer: 2,
-          manager: 2,
-        },
-      },
-    },
 
-    { id: 'vonNeumannProbes',     name: 'Von Neumann Probes',     cost: scaleBigInt(1_000_000_000_000n), prereqs: ['payloadToMercury', 'robotics3'], description: 'Unlock endgame probe launch' },
+    { id: 'vonNeumannProbes',     name: 'Von Neumann Probes',     cost: scaleBigInt(1_000_000_000_000n), prereqs: ['payloadToMercury', 'robotics2'], description: 'Unlock endgame probe launch' },
 
     // Compute techs
-    { id: 'gpuArch1', name: 'GPU Architecture v1', cost: toBigInt(4_000),    prereqs: ['chipManufacturing'], description: 'GPUs +50% FLOPS', gpuFlopsMultiplier: 1.5 },
-    { id: 'gpuArch2', name: 'GPU Architecture v2', cost: toBigInt(3_000_000),   prereqs: ['gpuArch1'], description: 'GPUs +50% FLOPS', gpuFlopsMultiplier: 1.5 },
-    { id: 'gpuArch3', name: 'GPU Architecture v3', cost: toBigInt(25_000_000),  prereqs: ['gpuArch2'], description: 'GPUs +100% FLOPS', gpuFlopsMultiplier: 2 },
-    { id: 'gpuArch4', name: 'GPU Architecture v4', cost: toBigInt(100_000_000),  prereqs: ['gpuArch3'], description: 'GPUs +100% FLOPS', gpuFlopsMultiplier: 2 },
-    { id: 'gpuArch5', name: 'GPU Architecture v5', cost: toBigInt(1_000_000_000),  prereqs: ['gpuArch4'], description: 'GPUs +100% FLOPS', gpuFlopsMultiplier: 2 },
-    { id: 'gpuArch6', name: 'GPU Architecture v6', cost: toBigInt(10_000_000_000),  prereqs: ['gpuArch5'], description: 'GPUs +100% FLOPS', gpuFlopsMultiplier: 2 },
-    { id: 'gpuArch7', name: 'GPU Architecture v7', cost: toBigInt(100_000_000_000),  prereqs: ['gpuArch6'], description: 'GPUs +100% FLOPS', gpuFlopsMultiplier: 2 },
-    { id: 'gpuArch8', name: 'GPU Architecture v8', cost: toBigInt(1_000_000_000_000),  prereqs: ['gpuArch7'], description: 'GPUs +100% FLOPS', gpuFlopsMultiplier: 2 },
     {
-      id: 'solarEfficiency1',
-      name: 'Solar Efficiency I',
-      cost: toBigInt(50_000),
-      prereqs: ['solarTechnology'],
-      description: 'Installed solar panel power output +50%',
-      solarPowerMultiplier: SOLAR_EFFICIENCY_1_MULTIPLIER,
-    },
-    {
-      id: 'solarEfficiency2',
-      name: 'Solar Efficiency II',
-      cost: toBigInt(50_000_000),
-      prereqs: ['solarEfficiency1'],
-      description: 'Installed solar panel power output +100%',
-      solarPowerMultiplier: SOLAR_EFFICIENCY_2_MULTIPLIER,
+      id: 'gpuArch1',
+      name: 'GPU Architecture (+50%)',
+      cost: toBigInt(4_000),
+      infinite: {
+        initialLevel: 0,
+        priceExponentPerLevel: 10,
+        quantityMultiplierPerLevel: 1.5,
+        quantityLabel: 'GPU FLOPS',
+        quantityBase: 1,
+        quantityEmoji: 'flops',
+        quantityUnit: 'x',
+      },
+      prereqs: ['chipManufacturing'],
+      description: 'GPU performance scales infinitely.',
+      gpuFlopsMultiplier: 1.5,
     },
   ] as ResearchConfig[],
 
@@ -675,6 +704,14 @@ export const BALANCE = {
   gpuSatelliteFactorySolarPanelReq: toBigInt(GPU_SATELLITE_SOLAR_PANEL_REQ_PER_MONTH),
   gpuSatelliteFactoryGpuReq: toBigInt(GPU_SATELLITE_GPU_REQ_PER_MONTH),
 
+  // Mercury-only orbital assembly line for Dyson Swarm satellites.
+  // For now this mirrors legacy satellite output speed with simplified direct inputs.
+  dysonSwarmFacilityBuildMaterialCost: usdToMaterial(10_000_000),
+  dysonSwarmFacilityLimit: 1_000_000,
+  dysonSwarmFacilityOutput: DYSON_SWARM_FACILITY_OUTPUT_PER_MONTH,
+  dysonSwarmFacilityMaterialReq: toBigInt(DYSON_SWARM_FACILITY_MATERIAL_REQ_PER_MONTH),
+  dysonSwarmFacilityLaborReq: toBigInt(DYSON_SWARM_FACILITY_LABOR_REQ_PER_MONTH),
+
   // Soft stockpile caps to prevent overcommitting one production line.
   locationResourceStockpileCap: scaleBigInt(1_000_000_000_000_000n), // 1P
   locationResourceStockpileCapLabel: '1P',
@@ -687,25 +724,20 @@ export const BALANCE = {
   mercuryFacilityCostMultiplier: 4.0,
   mercuryFacilityLaborMultiplier: 2.0,
 
-  // Off-world facility limits are defined as multipliers over Earth limits
-  // for the corresponding shared facility types.
+  // Location-specific facility limits keep IDs decoupled for future per-location balancing.
   moonFacilityLimits: {
-    materialMine: 100,
-    solarFactory: 100,
-    robotFactory: 100,
-    gpuFactory: 100,
-    rocketFactory: 100,
-    gpuSatelliteFactory: 100,
+    moonMaterialMine: 100,
+    moonSolarFactory: 100,
+    moonRobotFactory: 100,
+    moonGpuFactory: 100,
+    moonGpuSatelliteFactory: 100,
   },
   moonMassDriverLimit: 10_000,
 
   mercuryFacilityLimits: {
-    materialMine: 10_000,
-    solarFactory: 10_000,
-    robotFactory: 10_000,
-    gpuFactory: 10_000,
-    rocketFactory: 10_000,
-    gpuSatelliteFactory: 10_000,
+    mercuryMaterialMine: 10_000,
+    mercuryRobotFactory: 10_000,
+    mercuryDysonSwarmFacility: 10_000,
   },
 
   // Space logistics
@@ -1093,19 +1125,15 @@ export function getAlgoEfficiencyResearchMultiplier(completedResearch: string[])
 }
 
 export function getApiUserSynthRateFromResearch(completedResearch: string[]): bigint {
-  let baseRate = 0n;
+  const baseRate = BALANCE.apiUserSynthBase;
   let multiplier = 1n;
   for (const researchId of completedResearch) {
     const research = RESEARCH_BY_ID[researchId];
     if (!research) continue;
 
-    const unlockBase = research.apiUserSynthBaseRate;
-    if (unlockBase !== undefined) baseRate += unlockBase;
-
     const rateMultiplier = research.apiUserSynthRateMultiplier;
     if (rateMultiplier !== undefined) multiplier *= rateMultiplier;
   }
-  if (baseRate <= 0n) return 0n;
   return baseRate * multiplier;
 }
 
@@ -1135,22 +1163,16 @@ export function getRocketLossPctFromResearch(completedResearch: string[]): numbe
   let rocketLossPct = BALANCE.rocketLossNoReuse;
   for (const researchId of completedResearch) {
     const research = RESEARCH_BY_ID[researchId];
+    const lossMultiplier = research?.rocketLossMultiplier;
+    if (lossMultiplier !== undefined) {
+      rocketLossPct *= lossMultiplier;
+    }
     const candidate = research?.rocketLossPct;
     if (candidate !== undefined && candidate < rocketLossPct) {
       rocketLossPct = candidate;
     }
   }
   return rocketLossPct;
-}
-
-export function getSolarPowerGenerationMultiplier(completedResearch: string[]): number {
-  let multiplier = 1;
-  for (const researchId of completedResearch) {
-    const research = RESEARCH_BY_ID[researchId];
-    const boost = research?.solarPowerMultiplier;
-    if (boost !== undefined) multiplier *= boost;
-  }
-  return multiplier;
 }
 
 export type SolarOutputEnvironment = 'earth' | 'moon' | 'mercury' | 'spaceSso';
@@ -1162,11 +1184,10 @@ export function getSolarPanelEnvironmentMultiplier(environment: SolarOutputEnvir
   return BALANCE.solarOutputMultiplierEarth;
 }
 
-/** Effective per-panel MW including location and research multipliers. */
-export function getSolarPanelPowerMW(environment: SolarOutputEnvironment, completedResearch: string[]): number {
+/** Effective per-panel MW including location multipliers. */
+export function getSolarPanelPowerMW(environment: SolarOutputEnvironment, _completedResearch: string[]): number {
   return (
     BALANCE.solarPanelMW *
-    getSolarPanelEnvironmentMultiplier(environment) *
-    getSolarPowerGenerationMultiplier(completedResearch)
+    getSolarPanelEnvironmentMultiplier(environment)
   );
 }
