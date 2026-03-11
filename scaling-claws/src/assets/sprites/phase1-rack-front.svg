@@ -2,7 +2,7 @@
   <rect x="0" y="0" width="118" height="350" fill="#131e30" stroke="#2e405e" stroke-width="1"/>
   <rect x="6" y="6" width="106" height="338" fill="#131e30"/>
   <rect x="11" y="10" width="96" height="330" fill="#131e30"/>
-  <rect x="103" y="7" width="9" height="9" rx="1" fill="#5be7b8"/>
+  <rect x="106" y="2" width="10" height="10" rx="1" fill="#5be7b8"/>
 
   <g fill="#6d7e9a">
     <circle cx="8" cy="25" r="1.5"/>

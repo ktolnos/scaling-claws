@@ -40,15 +40,29 @@ interface FrontRackRefs {
 const GPUS_PER_RACK = 80;
 const SLOT_COUNT = 10;
 const GPUS_PER_SLOT = 8;
-const FRONT_RACK_CAP = 4;
-const MAX_CANVAS_RACKS = 2000;
+const FRONT_RACK_MIN_CAP = 1;
+const FRONT_RACK_MAX_CAP = 96;
+const MAX_CANVAS_RACKS = 1000;
 const TERMINAL_LINE_COUNT = 4;
-const SVG_FRONT_ROW_BOTTOM_PX = 30;
+const FOREGROUND_ROW_BOTTOM_OFFSET_PX = 0;
+const BACKGROUND_ROW_BOTTOM_OFFSET_PX = 0;
 const SVG_FRONT_ROW_SIDE_PADDING_PX = 5;
-const CANVAS_START_ROW_OFFSET_AFTER_SVG = 0.88;
-const ROW_DEPTH_FALLOFF_PER_ROW = 0.95;
-const CANVAS_FADE_START_RATIO = 0;
+const CANVAS_START_ROW_OFFSET_AFTER_SVG = 2;
+const ROW_DEPTH_FALLOFF_PER_ROW = 0.94;
+const CANVAS_FADE_START_RATIO = 0.5;
 const CANVAS_FADE_MIN_ALPHA = 0;
+const BACKGROUND_DEPTH_SPAN_RACK_HEIGHT_MULTIPLIER = 1;
+const LAPTOP_ASPECT = 820 / 500;
+const RACK_ASPECT = 118 / 350;
+const LAPTOP_MAX_HEIGHT_RATIO = 0.48;
+const LAPTOP_TARGET_WIDTH_RATIO = 0.7;
+const LAPTOP_BASE_WIDTH_PX = 610;
+const FRONT_RACK_HEIGHT_TO_LAPTOP = 1.2;
+const FRONT_RACK_GAP_TO_WIDTH = 0.18;
+const MIC_MINI_WIDTH_PX = 52;
+const MIC_MINI_HEIGHT_PX = 86;
+const MIC_MINI_GAP_PX = 3;
+const MIC_MINI_SIDE_OFFSET_PX = -50;
 
 const TERMINAL_BOOT_LINES = [
   'Booting dispatch runtime...',
@@ -99,6 +113,7 @@ export class DatacenterScene implements VisualScene {
   private paneGridEl!: HTMLDivElement;
   private micLaneEl!: HTMLDivElement;
   private rackFrontLaneEl!: HTMLDivElement;
+  private laptopStageEl!: HTMLDivElement;
 
   private visible = true;
   private canvasWidth = 0;
@@ -117,11 +132,16 @@ export class DatacenterScene implements VisualScene {
   private sampledPostGpu = false;
   private targetFrontRackCount = 0;
   private targetFarRackCount = 0;
-  private farRackCount = 0;
+  private frontRowCapacity = FRONT_RACK_MIN_CAP;
+  private frontRowSlotCount = FRONT_RACK_MIN_CAP;
   private frontRackPixelWidth = 182;
   private frontRackPixelHeight = 515;
   private frontRackFloorY: number | null = null;
   private frontRackGapPx = 12;
+  private laptopPixelWidth = LAPTOP_BASE_WIDTH_PX;
+  private laptopUiScale = 1;
+  private layoutResizedSinceLastSample = false;
+  private pendingFillAnimEnableFrame: number | null = null;
   private lastFrameDrawCalls = 0;
   private lastLayoutWidth = 0;
   private lastLayoutHeight = 0;
@@ -148,6 +168,7 @@ export class DatacenterScene implements VisualScene {
 
     const laptopStage = document.createElement('div');
     laptopStage.className = 'dc-laptop-stage';
+    this.laptopStageEl = laptopStage;
 
     const laptopShell = document.createElement('div');
     laptopShell.className = 'dc-laptop-shell';
@@ -187,7 +208,9 @@ export class DatacenterScene implements VisualScene {
     this.sampledGpus = toWholeCount(state.locationResources.earth.gpus);
     this.sampledTotalRacks = this.sampledGpus <= 0 ? 0 : Math.ceil(this.sampledGpus / GPUS_PER_RACK);
 
-    const directCount = this.sampledPostGpu ? Math.min(this.sampledTotalRacks, FRONT_RACK_CAP) : 0;
+    this.updateFrontRackLayout();
+
+    const directCount = this.sampledPostGpu ? Math.min(this.sampledTotalRacks, this.frontRowCapacity) : 0;
     const overflowRackCount = this.sampledPostGpu ? Math.max(0, this.sampledTotalRacks - directCount) : 0;
     this.targetFrontRackCount = this.sampledPostGpu ? Math.max(1, directCount) : 0;
     this.targetFarRackCount = Math.min(MAX_CANVAS_RACKS, overflowRackCount);
@@ -197,9 +220,19 @@ export class DatacenterScene implements VisualScene {
     const availableRacks = this.sampledPostGpu ? this.sampledTotalRacks : 0;
     const frontCount = Math.min(desiredFrontCount, availableRacks);
 
-    this.reconcileRackRow(frontCount, this.frontRacks, this.rackFrontLaneEl);
-    this.refreshFrontRackMetrics();
+    this.reconcileRackRow(frontCount, this.frontRacks, this.rackFrontLaneEl, this.layoutResizedSinceLastSample);
+    if (this.layoutResizedSinceLastSample) {
+      this.rackFrontLaneEl.classList.add('dc-front-rack-lane-no-fill-anim');
+      if (this.pendingFillAnimEnableFrame !== null) {
+        cancelAnimationFrame(this.pendingFillAnimEnableFrame);
+      }
+      this.pendingFillAnimEnableFrame = requestAnimationFrame(() => {
+        this.rackFrontLaneEl.classList.remove('dc-front-rack-lane-no-fill-anim');
+        this.pendingFillAnimEnableFrame = null;
+      });
+    }
     this.updateFrontRackLayout();
+    this.layoutResizedSinceLastSample = false;
     this.syncRackSlotFill();
 
     const jobs = this.collectJobSamples(state);
@@ -208,8 +241,6 @@ export class DatacenterScene implements VisualScene {
   }
 
   simulate(dtMs: number): void {
-    this.farRackCount += (this.targetFarRackCount - this.farRackCount) * Math.min(1, dtMs / 450);
-
     this.cursorBlinkMs += dtMs;
     if (this.cursorBlinkMs >= 520) {
       this.cursorBlinkMs = 0;
@@ -308,11 +339,18 @@ export class DatacenterScene implements VisualScene {
       const stale = this.micNodes.pop();
       stale?.remove();
     }
+
+    this.updateMicMiniLayout(this.sceneEl.clientWidth);
   }
 
-  private reconcileRackRow(targetCount: number, rowRefs: FrontRackRefs[], laneEl: HTMLElement): void {
+  private reconcileRackRow(
+    targetCount: number,
+    rowRefs: FrontRackRefs[],
+    laneEl: HTMLElement,
+    suppressAppearAnimation = false,
+  ): void {
     while (rowRefs.length < targetCount) {
-      const rack = this.createFrontRack();
+      const rack = this.createFrontRack(!suppressAppearAnimation);
       rowRefs.push(rack);
       laneEl.appendChild(rack.root);
     }
@@ -323,9 +361,12 @@ export class DatacenterScene implements VisualScene {
     }
   }
 
-  private createFrontRack(): FrontRackRefs {
+  private createFrontRack(animateAppear = true): FrontRackRefs {
     const root = document.createElement('div');
     root.className = 'dc-front-rack';
+    if (!animateAppear) {
+      root.classList.add('dc-front-rack-no-pop');
+    }
     root.innerHTML = phase1RackFrontSvg;
 
     const slotFillEls = Array.from(root.querySelectorAll<SVGRectElement>('rect.phase1-rack-slot-fill'));
@@ -355,45 +396,105 @@ export class DatacenterScene implements VisualScene {
     }
   }
 
-  private refreshFrontRackMetrics(): void {
-    const rack = this.frontRacks[0];
-    if (!rack) {
-      this.frontRackFloorY = null;
+  private updateFrontRackLayout(): boolean {
+    const sceneWidth = this.sceneEl.clientWidth;
+    const sceneHeight = this.sceneEl.clientHeight;
+    if (sceneWidth <= 0 || sceneHeight <= 0) {
+      return false;
+    }
+    const layoutChanged = sceneWidth !== this.lastLayoutWidth || sceneHeight !== this.lastLayoutHeight;
+    if (layoutChanged) {
+      this.layoutResizedSinceLastSample = true;
+    }
+
+    const maxLaptopHeight = sceneHeight * LAPTOP_MAX_HEIGHT_RATIO;
+    const targetLaptopWidth = sceneWidth * LAPTOP_TARGET_WIDTH_RATIO;
+    const maxLaptopWidthByHeight = maxLaptopHeight * LAPTOP_ASPECT;
+    const laptopWidth = Math.max(1, Math.min(targetLaptopWidth, maxLaptopWidthByHeight));
+    this.laptopStageEl.style.width = `${laptopWidth.toFixed(1)}px`;
+    this.laptopPixelWidth = laptopWidth;
+    const laptopUiScale = Math.max(0.55, Math.min(1.35, laptopWidth / LAPTOP_BASE_WIDTH_PX));
+    this.laptopUiScale = laptopUiScale;
+    const laptopUiScaleInv = 1 / laptopUiScale;
+    this.laptopStageEl.style.setProperty('--dc-laptop-ui-scale', laptopUiScale.toFixed(3));
+    this.laptopStageEl.style.setProperty('--dc-laptop-ui-scale-inv', laptopUiScaleInv.toFixed(6));
+    this.updateMicMiniLayout(sceneWidth);
+
+    const laptopHeight = laptopWidth / LAPTOP_ASPECT;
+    const rackHeight = Math.max(6, laptopHeight * FRONT_RACK_HEIGHT_TO_LAPTOP);
+    const rackWidth = Math.max(2, rackHeight * RACK_ASPECT);
+    this.frontRackPixelWidth = rackWidth;
+    this.frontRackPixelHeight = rackHeight;
+
+    const rowGap = Math.max(2, rackWidth * FRONT_RACK_GAP_TO_WIDTH);
+    const usableWidth = Math.max(0, sceneWidth - (SVG_FRONT_ROW_SIDE_PADDING_PX * 2));
+    const rackStep = rackWidth + rowGap;
+    const fittedCount = rackStep > 0 ? Math.ceil((usableWidth + rowGap) / rackStep) : FRONT_RACK_MIN_CAP;
+    let slotCount = Math.max(1, Math.min(FRONT_RACK_MAX_CAP, Math.max(FRONT_RACK_MIN_CAP, fittedCount)));
+    if (slotCount > 1 && slotCount % 2 === 0) {
+      if (slotCount < FRONT_RACK_MAX_CAP) {
+        slotCount += 1;
+      } else {
+        slotCount -= 1;
+      }
+    }
+    this.frontRowSlotCount = slotCount;
+    this.frontRowCapacity = slotCount;
+
+    this.frontRackGapPx = rowGap;
+    this.rackFrontLaneEl.style.left = '0';
+    this.rackFrontLaneEl.style.right = '0';
+    this.rackFrontLaneEl.style.bottom = `${FOREGROUND_ROW_BOTTOM_OFFSET_PX}px`;
+    this.rackFrontLaneEl.style.gap = '0';
+    this.rackFrontLaneEl.style.justifyContent = 'flex-start';
+    this.rackFrontLaneEl.style.transform = 'none';
+    this.frontRackFloorY = Math.max(0, sceneHeight - BACKGROUND_ROW_BOTTOM_OFFSET_PX);
+
+    const step = rackWidth + rowGap;
+    const centeredLeftMostCenterX = (sceneWidth * 0.5) - (((this.frontRowSlotCount - 1) * step) * 0.5);
+    const leftMostCenterX = centeredLeftMostCenterX;
+    this.frontRowCapacity = this.frontRowSlotCount;
+    for (let idx = 0; idx < this.frontRacks.length; idx++) {
+      const rack = this.frontRacks[idx];
+      const slotIndex = idx;
+      const centerX = leftMostCenterX + (slotIndex * step);
+      rack.root.style.width = `${rackWidth.toFixed(1)}px`;
+      rack.root.style.position = 'absolute';
+      rack.root.style.left = `${(centerX - (rackWidth * 0.5)).toFixed(1)}px`;
+      rack.root.style.bottom = '0';
+    }
+    this.lastLayoutWidth = sceneWidth;
+    this.lastLayoutHeight = sceneHeight;
+    return layoutChanged;
+  }
+
+  private updateMicMiniLayout(sceneWidth: number): void {
+    if (sceneWidth <= 0) {
       return;
     }
 
-    const rect = rack.root.getBoundingClientRect();
-    if (rect.width > 0 && rect.height > 0) {
-      this.frontRackPixelWidth = rect.width;
-      this.frontRackPixelHeight = rect.height;
+    const micScale = this.laptopUiScale;
+    const micWidth = Math.max(1, MIC_MINI_WIDTH_PX * micScale);
+    const micHeight = Math.max(1, MIC_MINI_HEIGHT_PX * micScale);
+    const micGap = Math.max(1, MIC_MINI_GAP_PX * micScale);
+    const micSideOffset = MIC_MINI_SIDE_OFFSET_PX * micScale;
+
+    const centerX = sceneWidth * 0.5;
+    const halfLaptopWidth = this.laptopPixelWidth * 0.5;
+    const firstOffset = halfLaptopWidth + micSideOffset + (micWidth * 0.5);
+    const step = micWidth + micGap;
+
+    for (let idx = 0; idx < this.micNodes.length; idx++) {
+      const node = this.micNodes[idx];
+      const side = idx % 2 === 0 ? -1 : 1;
+      const sideOrder = Math.floor(idx / 2);
+      const center = centerX + (side * (firstOffset + (sideOrder * step)));
+      node.style.width = `${micWidth.toFixed(1)}px`;
+      node.style.height = `${micHeight.toFixed(1)}px`;
+      node.style.position = 'absolute';
+      node.style.left = `${(center - (micWidth * 0.5)).toFixed(1)}px`;
+      node.style.bottom = '-7px';
     }
-
-    const sceneRect = this.sceneEl.getBoundingClientRect();
-    if (sceneRect.height > 0) {
-      const measuredFloorY = rect.bottom - sceneRect.top;
-      this.frontRackFloorY = Math.max(0, Math.min(sceneRect.height, measuredFloorY));
-    }
-  }
-
-  private updateFrontRackLayout(): void {
-    const baseGap = Math.max(8, this.frontRackPixelWidth * 0.12);
-    const sceneWidth = this.sceneEl.clientWidth;
-    const usableWidth = Math.max(0, sceneWidth - (SVG_FRONT_ROW_SIDE_PADDING_PX * 2));
-    const rackSlots = Math.max(1, FRONT_RACK_CAP);
-
-    let rowGap = baseGap;
-    if (rackSlots > 1 && usableWidth > 0) {
-      const filledGap = (usableWidth - (rackSlots * this.frontRackPixelWidth)) / (rackSlots - 1);
-      rowGap = Math.max(4, filledGap);
-    }
-
-    this.frontRackGapPx = rowGap;
-    this.rackFrontLaneEl.style.left = `${SVG_FRONT_ROW_SIDE_PADDING_PX}px`;
-    this.rackFrontLaneEl.style.right = `${SVG_FRONT_ROW_SIDE_PADDING_PX}px`;
-    this.rackFrontLaneEl.style.bottom = `${SVG_FRONT_ROW_BOTTOM_PX}px`;
-    this.rackFrontLaneEl.style.gap = `${rowGap.toFixed(1)}px`;
-    this.rackFrontLaneEl.style.justifyContent = 'flex-start';
-    this.rackFrontLaneEl.style.transform = 'none';
   }
 
   private reconcilePanes(samples: JobTerminalSample[]): void {
@@ -572,9 +673,6 @@ export class DatacenterScene implements VisualScene {
       clientWidth !== this.lastLayoutWidth ||
       clientHeight !== this.lastLayoutHeight
     ) {
-      this.lastLayoutWidth = clientWidth;
-      this.lastLayoutHeight = clientHeight;
-      this.refreshFrontRackMetrics();
       this.updateFrontRackLayout();
     }
 
@@ -584,8 +682,7 @@ export class DatacenterScene implements VisualScene {
     const width = this.canvasWidth;
     const height = this.canvasHeight;
 
-    const horizonY = height * 0.3;
-    const floorY = this.frontRackFloorY ?? (height - SVG_FRONT_ROW_BOTTOM_PX);
+    const floorY = this.frontRackFloorY ?? (height - BACKGROUND_ROW_BOTTOM_OFFSET_PX);
     const centerX = width * 0.5;
 
     const bg = ctx.createLinearGradient(0, 0, 0, height);
@@ -595,49 +692,37 @@ export class DatacenterScene implements VisualScene {
     ctx.fillStyle = bg;
     this.fillRect(ctx, 0, 0, width, height);
 
-    this.renderDensityRacks(ctx, centerX, horizonY, floorY);
+    this.renderDensityRacks(ctx, centerX, floorY);
   }
 
   private renderDensityRacks(
     ctx: CanvasRenderingContext2D,
     centerX: number,
-    horizonY: number,
     floorY: number,
   ): void {
     if (!this.sampledPostGpu) {
       return;
     }
 
-    const firstRowCount = Math.max(1, this.frontRacks.length);
+    const firstRowVisibleCount = Math.max(1, this.frontRacks.length);
+    const firstRowSlotCount = Math.max(1, this.frontRowSlotCount);
     const firstRackWidth = this.frontRackPixelWidth;
     const firstRackHeight = this.frontRackPixelHeight;
-    const svgRowCount = this.frontRacks.length > 0 ? 1 : 0;
     const svgRowsVisible = this.frontRacks.length > 0 ? CANVAS_START_ROW_OFFSET_AFTER_SVG : 0;
     const visibleTotalRackBudget = Math.max(
-      firstRowCount,
-      Math.min(MAX_CANVAS_RACKS, Math.floor(this.farRackCount) + this.frontRacks.length),
+      firstRowVisibleCount,
+      Math.min(MAX_CANVAS_RACKS, this.targetFarRackCount + this.frontRacks.length),
     );
     const canvasRackBudget = Math.max(0, visibleTotalRackBudget - this.frontRacks.length);
     if (canvasRackBudget <= 0) {
       return;
     }
 
-    let totalRowCount = Math.max(1, svgRowCount);
-    while (totalRowCount < 2048) {
-      const lastLogicalRow = totalRowCount - 1;
-      const lastRowWidth = Math.max(firstRowCount, firstRowCount + (2 * Math.floor(lastLogicalRow / 3)));
-      if ((lastRowWidth * totalRowCount) >= visibleTotalRackBudget) {
-        break;
-      }
-      totalRowCount++;
-    }
-
-    const rowCount = Math.max(1, totalRowCount - svgRowCount);
-
     const firstGap = this.frontRackGapPx;
-    const depthSpan = Math.max(1, floorY - horizonY);
+    const depthSpan = Math.max(1, firstRackHeight * BACKGROUND_DEPTH_SPAN_RACK_HEIGHT_MULTIPLIER);
 
     interface CanvasRow {
+      firstCenterX: number;
       y: number;
       rackWidth: number;
       rackHeight: number;
@@ -649,7 +734,7 @@ export class DatacenterScene implements VisualScene {
     const rows: CanvasRow[] = [];
     let drawnRacks = 0;
 
-    for (let row = 0; row < rowCount; row++) {
+    for (let row = 0; row < 2048; row++) {
       if (drawnRacks >= canvasRackBudget) {
         break;
       }
@@ -659,17 +744,32 @@ export class DatacenterScene implements VisualScene {
       const scale = 1 - (0.82 * depth);
       const rackWidth = Math.max(1, firstRackWidth * scale);
       const rackHeight = Math.max(3, firstRackHeight * scale);
+      const rowGap = Math.max(2, firstGap * scale);
 
-      const rowBaseCount = firstRowCount + (2 * Math.floor(logicalRow / 3));
-      const colCount = Math.max(firstRowCount, rowBaseCount);
-      const renderCount = Math.min(colCount, canvasRackBudget - drawnRacks);
+      const rowBaseCount = firstRowSlotCount + (2 * Math.floor(logicalRow / 3));
+      const fittedCount = Math.max(1, Math.ceil(this.canvasWidth / Math.max(1, rackWidth + rowGap)));
+      let rowSlotCount = fittedCount + 2;
+      if (rowSlotCount > 1 && rowSlotCount % 2 === 0) {
+        rowSlotCount += 1;
+      }
+      const colCount = Math.max(firstRowSlotCount, rowBaseCount, rowSlotCount);
+      const remainingBudget = canvasRackBudget - drawnRacks;
+      const renderCount = Math.min(colCount, remainingBudget);
       if (renderCount <= 0) {
         break;
       }
 
-      const rowGap = Math.max(2, firstGap * scale);
+      const firstCenterX = centerX - (((colCount - 1) * (rackWidth + rowGap)) * 0.5);
       const y = floorY - (depth * depthSpan);
-      rows.push({ y, rackWidth, rackHeight, renderCount, rowGap, rackStartIndex: drawnRacks });
+      rows.push({
+        firstCenterX,
+        y,
+        rackWidth,
+        rackHeight,
+        renderCount,
+        rowGap,
+        rackStartIndex: drawnRacks,
+      });
 
       drawnRacks += renderCount;
     }
@@ -685,10 +785,8 @@ export class DatacenterScene implements VisualScene {
       ctx.globalAlpha = rowAlpha;
 
       const step = row.rackWidth + row.rowGap;
-      const oddRowCenterShift = (row.renderCount % 2 === 1) ? 0.5 : 0;
       for (let col = 0; col < row.renderCount; col++) {
-        const centerOffset = (col - ((row.renderCount - 1) * 0.5) - oddRowCenterShift) * step;
-        const x = centerX + centerOffset;
+        const x = row.firstCenterX + (col * step);
 
         ctx.fillStyle = '#131e30';
         this.fillRect(ctx, x - (row.rackWidth * 0.5), row.y - row.rackHeight, row.rackWidth, row.rackHeight);
@@ -703,7 +801,7 @@ export class DatacenterScene implements VisualScene {
         );
 
         const indicatorSize = Math.max(1, row.rackWidth * 0.08);
-        const indicatorMargin = Math.max(1, row.rackWidth * 0.06);
+        const indicatorMargin = Math.max(1, row.rackWidth * 0.02);
         const indicatorX = x + (row.rackWidth * 0.5) - indicatorMargin - indicatorSize;
         const indicatorY = row.y - row.rackHeight + indicatorMargin;
         ctx.fillStyle = '#5be7b8';

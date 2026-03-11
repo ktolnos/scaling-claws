@@ -78,6 +78,8 @@
 }
 
 .dc-laptop-stage {
+  --dc-laptop-ui-scale: 1;
+  --dc-laptop-ui-scale-inv: 1;
   position: absolute;
   left: 50%;
   bottom: 0;
@@ -114,10 +116,16 @@
 
 .dc-terminal-grid {
   position: absolute;
-  inset: 6px;
+  inset: 0;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
+  padding: 6px;
+  box-sizing: border-box;
+  width: calc(100% * var(--dc-laptop-ui-scale-inv));
+  height: calc(100% * var(--dc-laptop-ui-scale-inv));
+  transform: scale(var(--dc-laptop-ui-scale));
+  transform-origin: top left;
 }
 
 .dc-term-pane {
@@ -190,18 +198,14 @@
 
 .dc-mic-lane {
   position: absolute;
-  left: 24px;
-  bottom: 18px;
-  display: flex;
-  align-items: flex-end;
-  gap: 6px;
-  max-width: 42%;
-  z-index: 28;
+  inset: 0;
+  z-index: 25;
+  pointer-events: none;
 }
 
 .dc-mic-unit {
-  width: 26px;
-  height: 43px;
+  width: 52px;
+  height: 86px;
   filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.35));
   animation: dc-mic-rise 0.28s ease-out;
 }
@@ -233,12 +237,16 @@
   flex: 0 0 auto;
   width: min(182px, 20%);
   height: auto;
-  aspect-ratio: 182 / 515;
+  aspect-ratio: 118 / 350;
   overflow: hidden;
   border-radius: 0;
   opacity: 1;
   filter: drop-shadow(0 6px 10px rgba(2, 5, 10, 0.48));
   animation: dc-rack-pop 0.35s ease-out;
+}
+
+.dc-front-rack.dc-front-rack-no-pop {
+  animation: none;
 }
 
 .dc-front-rack > svg {
@@ -249,6 +257,10 @@
 
 .dc-front-rack .phase1-rack-slot-fill {
   transition: width 0.15s linear, opacity 0.15s linear;
+}
+
+.dc-front-rack-lane.dc-front-rack-lane-no-fill-anim .phase1-rack-slot-fill {
+  transition: none;
 }
 
 @keyframes dc-mic-rise {
@@ -290,14 +302,9 @@
     bottom: 0;
   }
 
-  .dc-mic-lane {
-    left: 8px;
-    gap: 4px;
-  }
-
   .dc-mic-unit {
-    width: 20px;
-    height: 34px;
+    width: 52px;
+    height: 86px;
   }
 }
 

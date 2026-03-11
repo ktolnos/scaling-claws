@@ -32,9 +32,10 @@ interface PersistedReplayV1 {
   recordedActions: RecordedAction[];
 }
 
-interface PersistedDevOverlayV1 {
-  version: 1;
+interface PersistedDevOverlayV2 {
+  version: 2;
   paused: boolean;
+  placeholderVisibility: Partial<Record<VisualPlaceholderId, boolean>>;
 }
 
 interface Snapshot {
@@ -52,7 +53,7 @@ interface DevOverlayOptions {
 }
 
 const DEV_REPLAY_STORAGE_KEY = 'scaling-claws.dev-replay.v1';
-const DEV_OVERLAY_STORAGE_KEY = 'scaling-claws.dev-overlay.v1';
+const DEV_OVERLAY_STORAGE_KEY = 'scaling-claws.dev-overlay.v2';
 
 const GAME_ACTION_TYPES = new Set([
   'hireAgent',
@@ -142,6 +143,7 @@ export class DevOverlay {
   private readonly snapshotEveryMs = 2000;
   private readonly snapshotRetentionMs = 20 * 60 * 1000;
   private readonly maxSnapshots = 600;
+  private persistedPlaceholderVisibility: Partial<Record<VisualPlaceholderId, boolean>> = {};
 
   private unsubscribeActionObserver: (() => void) | null = null;
   private unsubscribeTick: (() => void) | null = null;
@@ -157,6 +159,7 @@ export class DevOverlay {
     this.recordingStartRandomSeed = getGameRandomSeed();
     this.loadPersistedReplay();
     this.loadPersistedOverlayState();
+    this.applyPersistedPlaceholderVisibility();
 
     this.buildUi();
     this.attachObservers();
@@ -291,7 +294,7 @@ export class DevOverlay {
         const btn = this.makeButton('', () => {
           const current = this.getVisualPlaceholderStates?.().find(item => item.id === placeholder.id);
           const currentVisible = current ? current.visible : true;
-          this.onToggleVisualPlaceholder?.(placeholder.id, !currentVisible);
+          this.setVisualPlaceholderVisible(placeholder.id, !currentVisible);
           this.refreshUi();
         });
         this.placeholderButtons.set(placeholder.id, btn);
@@ -511,6 +514,14 @@ export class DevOverlay {
 
   private setLoopPaused(paused: boolean): void {
     this.loop.setPaused(paused);
+    this.persistOverlayState();
+  }
+
+  private setVisualPlaceholderVisible(id: VisualPlaceholderId, visible: boolean): void {
+    if (!this.onToggleVisualPlaceholder) {
+      return;
+    }
+    this.onToggleVisualPlaceholder(id, visible);
     this.persistOverlayState();
   }
 
@@ -883,20 +894,52 @@ export class DevOverlay {
       if (!raw) return;
 
       const parsed = JSON.parse(raw) as unknown;
-      if (!isObject(parsed) || parsed.version !== 1) return;
+      if (!isObject(parsed) || parsed.version !== 2) return;
 
       const paused = parsed.paused;
-      if (typeof paused !== 'boolean') return;
+      const placeholderVisibility = parsed.placeholderVisibility;
+      if (typeof paused !== 'boolean' || !isObject(placeholderVisibility)) return;
       this.loop.setPaused(paused);
+
+      const persisted: Partial<Record<VisualPlaceholderId, boolean>> = {};
+      for (const [id, visible] of Object.entries(placeholderVisibility)) {
+        if (typeof visible === 'boolean') {
+          persisted[id as VisualPlaceholderId] = visible;
+        }
+      }
+      this.persistedPlaceholderVisibility = persisted;
     } catch {
       // Ignore malformed payloads and continue with default overlay state.
     }
   }
 
+  private applyPersistedPlaceholderVisibility(): void {
+    if (!this.getVisualPlaceholderStates || !this.onToggleVisualPlaceholder) {
+      return;
+    }
+
+    for (const placeholder of this.getVisualPlaceholderStates()) {
+      const persistedValue = this.persistedPlaceholderVisibility[placeholder.id];
+      if (typeof persistedValue !== 'boolean' || persistedValue === placeholder.visible) {
+        continue;
+      }
+      this.onToggleVisualPlaceholder(placeholder.id, persistedValue);
+    }
+  }
+
   private persistOverlayState(): void {
-    const payload: PersistedDevOverlayV1 = {
-      version: 1,
+    const placeholderVisibility: Partial<Record<VisualPlaceholderId, boolean>> = {};
+    if (this.getVisualPlaceholderStates) {
+      for (const placeholder of this.getVisualPlaceholderStates()) {
+        placeholderVisibility[placeholder.id] = placeholder.visible;
+      }
+    }
+
+    this.persistedPlaceholderVisibility = placeholderVisibility;
+    const payload: PersistedDevOverlayV2 = {
+      version: 2,
       paused: this.loop.isPaused(),
+      placeholderVisibility,
     };
     try {
       localStorage.setItem(DEV_OVERLAY_STORAGE_KEY, JSON.stringify(payload));
