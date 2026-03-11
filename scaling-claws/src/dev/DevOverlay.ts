@@ -9,6 +9,11 @@ import { createInitialState, getTotalAssignedAgents } from '../game/GameState.ts
 import type { GameState } from '../game/GameState.ts';
 import type { HumanJobType } from '../game/BalanceConfig.ts';
 import type { GameAction } from '../game/ActionDispatcher.ts';
+import type {
+  VisualPanelPerfStat,
+  VisualPlaceholderId,
+  VisualPlaceholderState,
+} from '../ui/visuals/VisualDirector.ts';
 import { addActionObserver, dispatchGameActionWithSource } from '../game/ActionDispatcher.ts';
 import { mulB, scaleBigInt } from '../game/utils.ts';
 import { getGameRandomSeed, setGameRandomSeed } from '../game/Random.ts';
@@ -41,6 +46,9 @@ interface Snapshot {
 interface DevOverlayOptions {
   loop: GameLoop;
   onStateReplaced: (state: GameState) => void;
+  getVisualPanelPerfStats?: () => ReadonlyArray<VisualPanelPerfStat>;
+  getVisualPlaceholderStates?: () => ReadonlyArray<VisualPlaceholderState>;
+  onToggleVisualPlaceholder?: (id: VisualPlaceholderId, visible: boolean) => void;
 }
 
 const DEV_REPLAY_STORAGE_KEY = 'scaling-claws.dev-replay.v1';
@@ -98,6 +106,9 @@ function isValidGameAction(value: unknown): value is GameAction {
 export class DevOverlay {
   private readonly loop: GameLoop;
   private readonly onStateReplaced: (state: GameState) => void;
+  private readonly getVisualPanelPerfStats: (() => ReadonlyArray<VisualPanelPerfStat>) | null;
+  private readonly getVisualPlaceholderStates: (() => ReadonlyArray<VisualPlaceholderState>) | null;
+  private readonly onToggleVisualPlaceholder: ((id: VisualPlaceholderId, visible: boolean) => void) | null;
 
   private root!: HTMLDivElement;
   private body!: HTMLDivElement;
@@ -110,6 +121,7 @@ export class DevOverlay {
   private replayPauseBtn!: HTMLButtonElement;
   private replayStopBtn!: HTMLButtonElement;
   private speedButtons = new Map<number, HTMLButtonElement>();
+  private placeholderButtons = new Map<VisualPlaceholderId, HTMLButtonElement>();
   private clipboardStatus: string = '';
 
   private minimized = false;
@@ -138,6 +150,9 @@ export class DevOverlay {
   constructor(options: DevOverlayOptions) {
     this.loop = options.loop;
     this.onStateReplaced = options.onStateReplaced;
+    this.getVisualPanelPerfStats = options.getVisualPanelPerfStats ?? null;
+    this.getVisualPlaceholderStates = options.getVisualPlaceholderStates ?? null;
+    this.onToggleVisualPlaceholder = options.onToggleVisualPlaceholder ?? null;
     this.recordingStartTimeMs = this.loop.getState().time;
     this.recordingStartRandomSeed = getGameRandomSeed();
     this.loadPersistedReplay();
@@ -262,6 +277,29 @@ export class DevOverlay {
       rowSpeed.appendChild(btn);
     }
     this.body.appendChild(rowSpeed);
+
+    if (this.getVisualPlaceholderStates && this.onToggleVisualPlaceholder) {
+      const rowVisuals = document.createElement('div');
+      rowVisuals.className = 'dev-overlay-row';
+
+      const rowLabel = document.createElement('span');
+      rowLabel.className = 'dev-overlay-row-label';
+      rowLabel.textContent = 'Visuals:';
+      rowVisuals.appendChild(rowLabel);
+
+      for (const placeholder of this.getVisualPlaceholderStates()) {
+        const btn = this.makeButton('', () => {
+          const current = this.getVisualPlaceholderStates?.().find(item => item.id === placeholder.id);
+          const currentVisible = current ? current.visible : true;
+          this.onToggleVisualPlaceholder?.(placeholder.id, !currentVisible);
+          this.refreshUi();
+        });
+        this.placeholderButtons.set(placeholder.id, btn);
+        rowVisuals.appendChild(btn);
+      }
+
+      this.body.appendChild(rowVisuals);
+    }
 
     this.statusEl = document.createElement('div');
     this.statusEl.className = 'dev-overlay-status';
@@ -895,11 +933,33 @@ export class DevOverlay {
       btn.classList.toggle('active', speed === currentSpeed);
     }
 
+    if (this.getVisualPlaceholderStates) {
+      for (const placeholder of this.getVisualPlaceholderStates()) {
+        const btn = this.placeholderButtons.get(placeholder.id);
+        if (!btn) {
+          continue;
+        }
+        btn.classList.toggle('active', placeholder.visible);
+        btn.textContent = `${placeholder.label}: ${placeholder.visible ? 'on' : 'off'}`;
+      }
+    }
+
     const replayState = this.replaying
       ? `Replay ${this.replayPaused ? 'paused ' : ''}${this.replayIndex}/${this.recordedActions.length}`
       : 'Replay idle';
     const clipboardState = this.clipboardStatus ? ` | ${this.clipboardStatus}` : '';
-    this.statusEl.textContent =
-      `t=${Math.floor(state.time / 1000)}s | speed=${currentSpeed}x | actions=${this.recordedActions.length} | snapshots=${this.snapshots.length} | ${replayState}${clipboardState}`;
+
+    const statusLines = [
+      `t=${Math.floor(state.time / 1000)}s | speed=${currentSpeed}x | actions=${this.recordedActions.length} | snapshots=${this.snapshots.length} | ${replayState}${clipboardState}`,
+    ];
+
+    if (this.getVisualPanelPerfStats) {
+      const panelStats = this.getVisualPanelPerfStats();
+      for (const panel of panelStats) {
+        statusLines.push(`visual ${panel.label}: ${panel.fps.toFixed(1)} FPS | ${panel.renderMs.toFixed(2)} ms | draw calls ${panel.drawCalls}`);
+      }
+    }
+
+    this.statusEl.textContent = statusLines.join('\n');
   }
 }

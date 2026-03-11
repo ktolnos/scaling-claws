@@ -20,6 +20,8 @@ import mercurySvg from './sprites/mercury.svg?raw';
 import earthMoonViewSvg from './sprites/earth-moon-view.svg?raw';
 import earthSurfaceViewSvg from './sprites/earth-surface-view.svg?raw';
 import innerSolarSystemSvg from './sprites/inner-solar-system.svg?raw';
+import phase1LaptopShellSvg from './sprites/phase1-laptop-shell.svg?raw';
+import phase1RackFrontSvg from './sprites/phase1-rack-front.svg?raw';
 
 export {
   laptopSvg,
@@ -44,4 +46,6 @@ export {
   earthMoonViewSvg,
   earthSurfaceViewSvg,
   innerSolarSystemSvg,
+  phase1LaptopShellSvg,
+  phase1RackFrontSvg,
 };

@@ -64,9 +64,6 @@ The UI refreshes every 500ms. Destroying and recreating DOM nodes inside `update
 - When multiple SVGs are inlined in the same page, watch for `<defs>` ID collisions — namespace IDs if needed
 - SVGs already contain `<animate>` elements for LEDs, cursors, etc.
 
-## Design Doc
-Full game spec is in `/DESIGN.md` (661 lines). Covers all 10 game phases, UI layouts, balance tables, visual panel specs, and implementation notes.
-
 ## Build & Run
 ```bash
 cd scaling-claws

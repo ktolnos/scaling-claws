@@ -364,7 +364,7 @@ export const BALANCE = {
   ] as ModelConfig[],
 
   // Datacenters
-  datacenterThreshold: scaleBigInt(200n),
+  datacenterThreshold: scaleBigInt(160n),
   // Datacenter prices/labor represent building + electrical/mechanical shell only.
   // GPU hardware is purchased separately via market price.
   // laborCost is person-months (1 labor = 1 person-month), one-time build labor.

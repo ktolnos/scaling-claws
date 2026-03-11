@@ -19,9 +19,7 @@ import { SupplyPanel } from './ui/panels/SupplyPanel.ts';
 import { ResourcesPanel } from './ui/panels/ResourcesPanel.ts';
 import { LocationPanel } from './ui/panels/LocationPanel.ts';
 import { UI_EMOJI } from './ui/emoji.ts';
-import { DatacenterInterior } from './ui/visuals/DatacenterInterior.ts';
-import { EarthSurface } from './ui/visuals/EarthSurface.ts';
-import { EarthMoonSpace } from './ui/visuals/EarthMoonSpace.ts';
+import { VisualDirector } from './ui/visuals/VisualDirector.ts';
 import { Ticker } from './ui/components/Ticker.ts';
 import { HintOverlay } from './ui/hints/HintOverlay.ts';
 import { DevOverlay } from './dev/DevOverlay.ts';
@@ -47,9 +45,7 @@ const { leftRegion, tabsRegion } = createWorkspaceLayout(panelContainer, visualA
   rightPanelWidthPx: 550,
 });
 const panelManager = new PanelManager(tabsRegion, { left: leftRegion }, initialState);
-const datacenterVisual = new DatacenterInterior(visualArea);
-const earthSurface = new EarthSurface(visualArea);
-const earthMoonSpace = new EarthMoonSpace(visualArea);
+const visualDirector = new VisualDirector(visualArea, initialState);
 const ticker = new Ticker(document.getElementById('ticker')!);
 new HintOverlay(document.body);
 
@@ -174,6 +170,8 @@ function configurePanels(state: GameState): void {
 }
 
 configurePanels(initialState);
+visualDirector.sample(initialState);
+visualDirector.start();
 
 // UI update loop
 setInterval(() => {
@@ -217,21 +215,22 @@ setInterval(() => {
   }
 
   panelManager.update(s);
-  datacenterVisual.update(s);
-  earthSurface.update(s);
-  earthMoonSpace.update(s);
+  visualDirector.sample(s);
   ticker.update(s);
 }, BALANCE.uiUpdateIntervalMs);
 
 // Dev controls overlay
 new DevOverlay({
   loop,
+  getVisualPanelPerfStats: () => visualDirector.getPanelPerfStats(),
+  getVisualPlaceholderStates: () => visualDirector.getPlaceholderStates(),
+  onToggleVisualPlaceholder: (id, visible) => {
+    visualDirector.setPlaceholderVisible(id, visible);
+  },
   onStateReplaced: (state) => {
     configurePanels(state);
     panelManager.update(state);
-    datacenterVisual.update(state);
-    earthSurface.update(state);
-    earthMoonSpace.update(state);
+    visualDirector.sample(state);
     ticker.update(state);
   },
 });

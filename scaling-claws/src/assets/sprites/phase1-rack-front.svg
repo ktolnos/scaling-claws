@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 118 350" width="118" height="350">
+  <rect x="0" y="0" width="118" height="350" fill="#131e30" stroke="#2e405e" stroke-width="1"/>
+  <rect x="6" y="6" width="106" height="338" fill="#131e30"/>
+  <rect x="11" y="10" width="96" height="330" fill="#131e30"/>
+  <rect x="103" y="7" width="9" height="9" rx="1" fill="#5be7b8"/>
+
+  <g fill="#6d7e9a">
+    <circle cx="8" cy="25" r="1.5"/>
+    <circle cx="110" cy="25" r="1.5"/>
+    <circle cx="8" cy="335" r="1.5"/>
+    <circle cx="110" cy="335" r="1.5"/>
+  </g>
+
+  <g class="phase1-rack-slot">
+    <rect x="15" y="17" width="88" height="26" rx="4" fill="#0a0f18" stroke="#2e405e"/>
+    <rect class="phase1-rack-slot-fill" x="19" y="23" width="0" height="14" rx="3" fill="#5be7b8"/>
+    <circle cx="96" cy="30" r="2" fill="#264a35"/>
+
+    <rect x="15" y="49" width="88" height="26" rx="4" fill="#0a0f18" stroke="#2e405e"/>
+    <rect class="phase1-rack-slot-fill" x="19" y="55" width="0" height="14" rx="3" fill="#5be7b8"/>
+    <circle cx="96" cy="62" r="2" fill="#264a35"/>
+
+    <rect x="15" y="81" width="88" height="26" rx="4" fill="#0a0f18" stroke="#2e405e"/>
+    <rect class="phase1-rack-slot-fill" x="19" y="87" width="0" height="14" rx="3" fill="#5be7b8"/>
+    <circle cx="96" cy="94" r="2" fill="#264a35"/>
+
+    <rect x="15" y="113" width="88" height="26" rx="4" fill="#0a0f18" stroke="#2e405e"/>
+    <rect class="phase1-rack-slot-fill" x="19" y="119" width="0" height="14" rx="3" fill="#5be7b8"/>
+    <circle cx="96" cy="126" r="2" fill="#264a35"/>
+
+    <rect x="15" y="145" width="88" height="26" rx="4" fill="#0a0f18" stroke="#2e405e"/>
+    <rect class="phase1-rack-slot-fill" x="19" y="151" width="0" height="14" rx="3" fill="#5be7b8"/>
+    <circle cx="96" cy="158" r="2" fill="#264a35"/>
+
+    <rect x="15" y="177" width="88" height="26" rx="4" fill="#0a0f18" stroke="#2e405e"/>
+    <rect class="phase1-rack-slot-fill" x="19" y="183" width="0" height="14" rx="3" fill="#5be7b8"/>
+    <circle cx="96" cy="190" r="2" fill="#264a35"/>
+
+    <rect x="15" y="209" width="88" height="26" rx="4" fill="#0a0f18" stroke="#2e405e"/>
+    <rect class="phase1-rack-slot-fill" x="19" y="215" width="0" height="14" rx="3" fill="#5be7b8"/>
+    <circle cx="96" cy="222" r="2" fill="#264a35"/>
+
+    <rect x="15" y="241" width="88" height="26" rx="4" fill="#0a0f18" stroke="#2e405e"/>
+    <rect class="phase1-rack-slot-fill" x="19" y="247" width="0" height="14" rx="3" fill="#5be7b8"/>
+    <circle cx="96" cy="254" r="2" fill="#264a35"/>
+
+    <rect x="15" y="273" width="88" height="26" rx="4" fill="#0a0f18" stroke="#2e405e"/>
+    <rect class="phase1-rack-slot-fill" x="19" y="279" width="0" height="14" rx="3" fill="#5be7b8"/>
+    <circle cx="96" cy="286" r="2" fill="#264a35"/>
+
+    <rect x="15" y="305" width="88" height="26" rx="4" fill="#0a0f18" stroke="#2e405e"/>
+    <rect class="phase1-rack-slot-fill" x="19" y="311" width="0" height="14" rx="3" fill="#5be7b8"/>
+    <circle cx="96" cy="318" r="2" fill="#264a35"/>
+  </g>
+</svg>
