@@ -37,6 +37,13 @@ interface FrontRackRefs {
   slotFillEls: SVGRectElement[];
 }
 
+interface NetworkParticle {
+  lane: number;
+  progress: number;
+  speed: number;
+  size: number;
+}
+
 const GPUS_PER_RACK = 80;
 const SLOT_COUNT = 10;
 const GPUS_PER_SLOT = 8;
@@ -63,6 +70,24 @@ const MIC_MINI_WIDTH_PX = 52;
 const MIC_MINI_HEIGHT_PX = 86;
 const MIC_MINI_GAP_PX = 3;
 const MIC_MINI_SIDE_OFFSET_PX = -50;
+const NETWORK_PARTICLE_MAX_COUNT = 2000;
+const NETWORK_PARTICLE_BASE_COUNT = 4;
+const NETWORK_RACKS_FOR_MAX_INTENSITY = 1_000_000;
+const NETWORK_PARTICLE_MIN_SPEED = 0.1;
+const NETWORK_PARTICLE_MAX_SPEED = 0.1;
+const NETWORK_PARTICLE_MIN_SIZE = 30;
+const NETWORK_PARTICLE_MAX_SIZE = 30;
+const NETWORK_VANISH_Y_RATIO = 0.5;
+const NETWORK_PLANE_NEAR_SCALE = 0.08;
+const NETWORK_PLANE_FAR_SCALE = 1;
+const NETWORK_PLANE_HALF_SPAN_RATIO = 1.4;
+const NETWORK_PLANE_TOP_Y_RATIO = -0.55;
+const DISTANT_GLOW_BASE_ALPHA = 0.08;
+const DISTANT_GLOW_MAX_ALPHA = 1;
+const DISTANT_GLOW_BASE_RADIUS_X_RATIO = 0.8;
+const DISTANT_GLOW_BASE_RADIUS_Y_RATIO = 0.8;
+const DISTANT_GLOW_BREATH_X_RATIO = 0.2;
+const DISTANT_GLOW_BREATH_Y_RATIO = 0.2;
 
 const TERMINAL_BOOT_LINES = [
   'Booting dispatch runtime...',
@@ -140,6 +165,8 @@ export class DatacenterScene implements VisualScene {
   private frontRackGapPx = 12;
   private laptopPixelWidth = LAPTOP_BASE_WIDTH_PX;
   private laptopUiScale = 1;
+  private networkParticles: NetworkParticle[] = [];
+  private lastNetworkUpdateAtMs = 0;
   private layoutResizedSinceLastSample = false;
   private pendingFillAnimEnableFrame: number | null = null;
   private lastFrameDrawCalls = 0;
@@ -265,9 +292,9 @@ export class DatacenterScene implements VisualScene {
       return;
     }
 
-    this.lastFrameDrawCalls = 0;
-    this.renderCanvas();
     const nowMs = performance.now();
+    this.lastFrameDrawCalls = 0;
+    this.renderCanvas(nowMs);
     if (nowMs >= this.nextTerminalRenderAtMs) {
       this.renderTerminal();
       this.nextTerminalRenderAtMs = nowMs + 120;
@@ -642,7 +669,7 @@ export class DatacenterScene implements VisualScene {
     }
   }
 
-  private renderCanvas(): void {
+  private renderCanvas(nowMs: number): void {
     const ctx = this.canvasCtx;
     if (!ctx) {
       return;
@@ -692,7 +719,233 @@ export class DatacenterScene implements VisualScene {
     ctx.fillStyle = bg;
     this.fillRect(ctx, 0, 0, width, height);
 
+    const convergenceY = height * NETWORK_VANISH_Y_RATIO;
+    this.renderDistantGlow(ctx, nowMs, centerX, convergenceY, width, height);
+    this.renderNetworkTraffic(ctx, nowMs, centerX, convergenceY, width, height);
     this.renderDensityRacks(ctx, centerX, floorY);
+  }
+
+  private renderDistantGlow(
+    ctx: CanvasRenderingContext2D,
+    nowMs: number,
+    centerX: number,
+    convergenceY: number,
+    width: number,
+    height: number,
+  ): void {
+    if (!this.sampledPostGpu || this.sampledTotalRacks <= 0) {
+      return;
+    }
+
+    const rackGlow = clamp01(Math.log10(Math.max(1, this.sampledTotalRacks) + 1) / 5);
+    if (rackGlow <= 0) {
+      return;
+    }
+
+    const t = nowMs * 0.004;
+    const pulseA = Math.sin(t);
+    const pulseB = Math.sin((t * 0.61) + 1.7);
+    const pulseC = Math.sin((t * 0.37) + 3.1);
+    const glowAlpha = DISTANT_GLOW_BASE_ALPHA + ((DISTANT_GLOW_MAX_ALPHA - DISTANT_GLOW_BASE_ALPHA) * rackGlow);
+    const glowY = convergenceY;
+    const breathX = 1 + (DISTANT_GLOW_BREATH_X_RATIO * ((0.65 * pulseA) + (0.35 * pulseC)));
+    const breathY = 1 + (DISTANT_GLOW_BREATH_Y_RATIO * ((0.7 * pulseB) + (0.3 * pulseC)));
+    const radiusX = width * DISTANT_GLOW_BASE_RADIUS_X_RATIO * breathX;
+    const radiusY = height * DISTANT_GLOW_BASE_RADIUS_Y_RATIO * breathY;
+
+    ctx.save();
+    ctx.globalAlpha = glowAlpha;
+    ctx.translate(centerX, glowY);
+    ctx.scale(Math.max(1, radiusX), Math.max(1, radiusY));
+    const gradient = ctx.createRadialGradient(0, 0, 0, 0, 0, 1);
+    gradient.addColorStop(0, 'rgba(91, 231, 184, 0.65)');
+    gradient.addColorStop(0.42, 'rgba(70, 182, 196, 0.28)');
+    gradient.addColorStop(0.78, 'rgba(19, 52, 82, 0.1)');
+    gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    ctx.fillStyle = gradient;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 1, 1, 0, 0, Math.PI * 2);
+    ctx.fill();
+    this.lastFrameDrawCalls++;
+    ctx.restore();
+  }
+
+  private renderNetworkTraffic(
+    ctx: CanvasRenderingContext2D,
+    nowMs: number,
+    centerX: number,
+    convergenceY: number,
+    width: number,
+    height: number,
+  ): void {
+    if (!this.sampledPostGpu || this.sampledGpus <= 0) {
+      this.networkParticles.length = 0;
+      this.lastNetworkUpdateAtMs = 0;
+      return;
+    }
+
+    const rackRatio = clamp01(this.sampledTotalRacks / NETWORK_RACKS_FOR_MAX_INTENSITY);
+    const intensity = clamp01(Math.sqrt(rackRatio));
+    const targetCount = Math.round(
+      NETWORK_PARTICLE_BASE_COUNT + ((NETWORK_PARTICLE_MAX_COUNT - NETWORK_PARTICLE_BASE_COUNT) * intensity),
+    );
+
+    while (this.networkParticles.length < targetCount) {
+      this.networkParticles.push(this.makeNetworkParticle(false));
+    }
+    while (this.networkParticles.length > targetCount) {
+      this.networkParticles.pop();
+    }
+
+    const dtSec = this.getNetworkDeltaSeconds(nowMs);
+    for (const particle of this.networkParticles) {
+      particle.progress += particle.speed * dtSec;
+      if (particle.progress >= 1) {
+        this.resetNetworkParticle(particle, true);
+      }
+    }
+
+    const maxOpacity = clamp01(Math.log10(Math.max(1, this.sampledTotalRacks) + 1) / 20);
+    ctx.fillStyle = '#5be7b8';
+    for (const particle of this.networkParticles) {
+      const projection = this.projectNetworkParticle(
+        centerX,
+        convergenceY,
+        width,
+        height,
+        particle.lane,
+        particle.progress,
+      );
+      const projectedScale = NETWORK_PLANE_NEAR_SCALE
+        + ((NETWORK_PLANE_FAR_SCALE - NETWORK_PLANE_NEAR_SCALE) * projection.planeProgress);
+      const thickness = Math.max(0.55, particle.size * projectedScale * 0.42);
+      const length = Math.max(
+        thickness * 2.2,
+        particle.size * projectedScale * (2.2 + (3.8 * projection.planeProgress)),
+      );
+      const opacityRamp = Math.min(1, projection.planeProgress * 2);
+      ctx.globalAlpha = maxOpacity * opacityRamp;
+      this.drawNetworkParticleStreak(
+        ctx,
+        centerX,
+        convergenceY,
+        projection.x,
+        projection.y,
+        projection.dx,
+        projection.dy,
+        length,
+        thickness,
+      );
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  private getNetworkDeltaSeconds(nowMs: number): number {
+    if (this.lastNetworkUpdateAtMs <= 0) {
+      this.lastNetworkUpdateAtMs = nowMs;
+      return 1 / 60;
+    }
+
+    const deltaMs = Math.max(0, Math.min(80, nowMs - this.lastNetworkUpdateAtMs));
+    this.lastNetworkUpdateAtMs = nowMs;
+    return Math.max(1 / 240, deltaMs / 1000);
+  }
+
+  private makeNetworkParticle(startAtOrigin: boolean): NetworkParticle {
+    const particle: NetworkParticle = {
+      lane: 0,
+      progress: 0,
+      speed: NETWORK_PARTICLE_MIN_SPEED,
+      size: NETWORK_PARTICLE_MIN_SIZE,
+    };
+    this.resetNetworkParticle(particle, startAtOrigin);
+    return particle;
+  }
+
+  private resetNetworkParticle(particle: NetworkParticle, startAtOrigin: boolean): void {
+    const laneRandom = (this.rng.next() * 2) - 1;
+    const laneBias = Math.sign(laneRandom) * Math.pow(Math.abs(laneRandom), 0.72);
+    particle.lane = laneBias * NETWORK_PLANE_HALF_SPAN_RATIO;
+    particle.progress = startAtOrigin ? 0 : this.rng.next();
+    particle.speed = this.rng.nextRange(NETWORK_PARTICLE_MIN_SPEED, NETWORK_PARTICLE_MAX_SPEED);
+    particle.size = this.rng.nextRange(NETWORK_PARTICLE_MIN_SIZE, NETWORK_PARTICLE_MAX_SIZE);
+  }
+
+  private projectNetworkParticle(
+    centerX: number,
+    convergenceY: number,
+    width: number,
+    height: number,
+    lane: number,
+    progress: number,
+  ): { x: number; y: number; dx: number; dy: number; planeProgress: number } {
+    const clampedProgress = clamp01(progress);
+    const farDepth = Math.max(1.0001, NETWORK_PLANE_FAR_SCALE / Math.max(0.0001, NETWORK_PLANE_NEAR_SCALE));
+    const depth = farDepth - ((farDepth - 1) * clampedProgress);
+    const projectedScale = NETWORK_PLANE_FAR_SCALE / depth;
+    const planeProgress = clamp01(
+      (projectedScale - NETWORK_PLANE_NEAR_SCALE)
+      / Math.max(0.0001, NETWORK_PLANE_FAR_SCALE - NETWORK_PLANE_NEAR_SCALE),
+    );
+    const topY = height * NETWORK_PLANE_TOP_Y_RATIO;
+    const halfSpan = width * NETWORK_PLANE_HALF_SPAN_RATIO;
+    const targetX = centerX + (lane * halfSpan);
+    const targetY = topY;
+    const x = centerX + ((targetX - centerX) * planeProgress);
+    const y = convergenceY + ((targetY - convergenceY) * planeProgress);
+    return {
+      x,
+      y,
+      dx: targetX - centerX,
+      dy: targetY - convergenceY,
+      planeProgress,
+    };
+  }
+
+  private drawNetworkParticleStreak(
+    ctx: CanvasRenderingContext2D,
+    originX: number,
+    originY: number,
+    x: number,
+    y: number,
+    dx: number,
+    dy: number,
+    length: number,
+    thickness: number,
+  ): void {
+    const vectorLength = Math.hypot(dx, dy);
+    if (vectorLength <= 0.0001) {
+      return;
+    }
+
+    const unitY = dy / vectorLength;
+    const halfLength = Math.max(0.8, length * 0.5);
+    const nearCenterY = y - (unitY * halfLength);
+    const farCenterY = y + (unitY * halfLength);
+    const halfWidthAtCenter = Math.max(0.35, thickness * 0.5);
+    const leftXAtCenter = x - halfWidthAtCenter;
+    const rightXAtCenter = x + halfWidthAtCenter;
+
+    const yDeltaAtCenter = y - originY;
+    if (Math.abs(yDeltaAtCenter) <= 0.0001) {
+      return;
+    }
+
+    const nearT = (nearCenterY - originY) / yDeltaAtCenter;
+    const farT = (farCenterY - originY) / yDeltaAtCenter;
+    const nearLeftX = originX + ((leftXAtCenter - originX) * nearT);
+    const nearRightX = originX + ((rightXAtCenter - originX) * nearT);
+    const farLeftX = originX + ((leftXAtCenter - originX) * farT);
+    const farRightX = originX + ((rightXAtCenter - originX) * farT);
+
+    ctx.beginPath();
+    ctx.moveTo(farLeftX, farCenterY);
+    ctx.lineTo(farRightX, farCenterY);
+    ctx.lineTo(nearRightX, nearCenterY);
+    ctx.lineTo(nearLeftX, nearCenterY);
+    ctx.closePath();
+    ctx.fill();
+    this.lastFrameDrawCalls++;
   }
 
   private renderDensityRacks(
