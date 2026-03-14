@@ -214,6 +214,8 @@ export interface GameState {
   earthLaunchCarry: number;
   moonLaunchCarry: number;
   mercuryLaunchCarry: number;
+  earthLaunchesUsedLastTick: number;
+  earthLaunchCount: bigint;
   rocketLossPct: number;
 
   // API Services
@@ -516,6 +518,8 @@ export function createInitialState(): GameState {
     earthLaunchCarry: 0,
     moonLaunchCarry: 0,
     mercuryLaunchCarry: 0,
+    earthLaunchesUsedLastTick: 0,
+    earthLaunchCount: 0n,
     rocketLossPct: 1,
 
     // Space

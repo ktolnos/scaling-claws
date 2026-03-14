@@ -234,6 +234,8 @@ function launchRoute(state: GameState, route: TransportRouteId, dtMs: number, no
 
   if (route === 'earthOrbit' || route === 'earthMoon') {
     consumeEarthRocketsForLaunches(state, launchesConsumed);
+    state.earthLaunchesUsedLastTick += launchesConsumed;
+    state.earthLaunchCount += BigInt(launchesConsumed);
   }
 }
 
@@ -278,6 +280,7 @@ export function tickSpace(state: GameState, dtMs: number): void {
   ensureLogisticsState(state);
   normalizeLogisticsQuantities(state);
   processDeliveries(state, now);
+  state.earthLaunchesUsedLastTick = 0;
 
   state.spaceUnlocked = state.completedResearch.includes('rocketry');
   if (!state.spaceUnlocked) {

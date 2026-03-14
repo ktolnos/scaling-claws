@@ -1,38 +1,13 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 44" width="48" height="44">
-  <!-- Containment dome -->
-  <ellipse cx="16" cy="24" rx="12" ry="16" fill="#5a6070" stroke="#4a5060" stroke-width="0.5"/>
-  <!-- Dome highlight -->
-  <ellipse cx="13" cy="18" rx="5" ry="8" fill="#6a7080" opacity="0.4"/>
-  <!-- Dome base -->
-  <rect x="4" y="28" width="24" height="8" rx="1" fill="#4a5060"/>
-  <!-- Cooling tower -->
-  <path d="M32,8 Q36,14 34,28 L42,28 Q40,14 44,8 Z" fill="#6a7080" stroke="#5a6070" stroke-width="0.5"/>
-  <!-- Cooling tower top opening -->
-  <ellipse cx="38" cy="8" rx="6" ry="1.5" fill="#556" stroke="#445" stroke-width="0.3"/>
-  <!-- Steam from cooling tower -->
-  <circle cx="38" cy="5" r="3" fill="#aab" opacity="0.2">
-    <animate attributeName="cy" values="5;-4" dur="4s" repeatCount="indefinite"/>
-    <animate attributeName="opacity" values="0.2;0" dur="4s" repeatCount="indefinite"/>
-    <animate attributeName="r" values="3;7" dur="4s" repeatCount="indefinite"/>
-  </circle>
-  <circle cx="37" cy="4" r="2.5" fill="#99a" opacity="0.15">
-    <animate attributeName="cy" values="4;-5" dur="5s" repeatCount="indefinite"/>
-    <animate attributeName="opacity" values="0.15;0" dur="5s" repeatCount="indefinite"/>
-    <animate attributeName="r" values="2.5;6" dur="5s" repeatCount="indefinite"/>
-  </circle>
-  <!-- Reactor glow -->
-  <circle cx="16" cy="22" r="4" fill="#3a8aff" opacity="0.15">
-    <animate attributeName="opacity" values="0.1;0.25;0.1" dur="3s" repeatCount="indefinite"/>
-    <animate attributeName="r" values="3.5;4.5;3.5" dur="3s" repeatCount="indefinite"/>
-  </circle>
-  <!-- Auxiliary building -->
-  <rect x="30" y="28" width="14" height="8" rx="1" fill="#4a5060"/>
-  <!-- Power lines leaving -->
-  <line x1="44" y1="30" x2="48" y2="28" stroke="#888" stroke-width="0.5"/>
-  <line x1="44" y1="32" x2="48" y2="30" stroke="#888" stroke-width="0.5"/>
-  <!-- Ground -->
-  <rect x="0" y="36" width="48" height="8" fill="#2a3a2a"/>
-  <!-- Warning symbol -->
-  <circle cx="16" cy="30" r="2" fill="#e9c845" opacity="0.8"/>
-  <text x="16" y="31.5" text-anchor="middle" font-size="3" fill="#333">☢</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 72 54" width="72" height="54">
+  <path d="M10 39 C10 21, 20 10, 32 10 C44 10, 54 21, 54 39 Z" fill="#687486" stroke="#b0bbca" stroke-width="1.1"/>
+  <ellipse cx="26" cy="21" rx="7" ry="9" fill="#b4bfcd" opacity="0.16"/>
+  <rect x="14" y="39" width="36" height="7" fill="#566272" stroke="#b0bbca" stroke-width="0.8"/>
+  <path d="M57 14 C60 21, 60 31, 58 46 H69 C67 31, 67 21, 70 14 Z" fill="#748193" stroke="#b3bfce" stroke-width="1"/>
+  <ellipse cx="63.5" cy="14" rx="6.5" ry="2" fill="#647181" stroke="#abb8c9" stroke-width="0.7"/>
+  <rect x="16" y="31" width="32" height="5.5" rx="1" fill="#172232" stroke="#546985" stroke-width="0.8"/>
+  <rect x="20" y="33" width="9" height="1.7" rx="0.4" fill="#7ce8ff"/>
+  <rect x="34" y="33" width="8" height="1.7" rx="0.4" fill="#7ce8ff"/>
+  <circle cx="32" cy="27" r="6" fill="#6ed7ff" opacity="0.16"/>
+  <path d="M17 42 H47" stroke="#33485f" stroke-width="1.8"/>
+  <path d="M25 39 V46 M39 39 V46" stroke="#41556d" stroke-width="0.8"/>
 </svg>

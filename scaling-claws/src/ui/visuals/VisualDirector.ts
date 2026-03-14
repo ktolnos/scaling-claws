@@ -2,6 +2,7 @@ import type { GameState } from '../../game/GameState.ts';
 import { VisualClock } from './VisualClock.ts';
 import type { VisualScene } from './VisualScene.ts';
 import { DatacenterScene } from './DatacenterScene.ts';
+import { EarthSurfaceScene } from './EarthSurfaceScene.ts';
 import { hashSeed } from './seededRng.ts';
 
 export interface VisualPanelPerfStat {
@@ -69,18 +70,6 @@ function deriveVisualSeed(state: GameState): number {
   return seed >>> 0;
 }
 
-function buildPlaceholderSlot(label: string): HTMLDivElement {
-  const slot = document.createElement('div');
-  slot.className = 'visual-scene-slot visual-scene-slot-placeholder';
-
-  const text = document.createElement('div');
-  text.className = 'visual-placeholder-label';
-  text.textContent = `${label} (placeholder)`;
-  slot.appendChild(text);
-
-  return slot;
-}
-
 export class VisualDirector {
   private readonly root: HTMLElement;
   private readonly clock: VisualClock;
@@ -100,8 +89,15 @@ export class VisualDirector {
     sceneRoot.appendChild(stack);
 
     for (const placeholder of VISUAL_PLACEHOLDERS) {
-      const slot = buildPlaceholderSlot(placeholder.label);
+      const slot = document.createElement('div');
+      slot.className = 'visual-scene-slot visual-scene-slot-placeholder';
       this.placeholderSlots.set(placeholder.id, slot);
+      if (placeholder.id !== 'earthSurface') {
+        const text = document.createElement('div');
+        text.className = 'visual-placeholder-label';
+        text.textContent = `${placeholder.label} (placeholder)`;
+        slot.appendChild(text);
+      }
       stack.appendChild(slot);
     }
 
@@ -114,18 +110,40 @@ export class VisualDirector {
     datacenterScene.setVisible(true);
 
     const now = performance.now();
-    this.scenes = [{
-      id: 'datacenter',
-      label: 'Datacenter',
-      scene: datacenterScene,
-      fps: 0,
-      renderMs: 0,
-      drawCalls: 0,
-      frameCount: 0,
-      renderTimeTotalMs: 0,
-      drawCallCountTotal: 0,
-      windowStartMs: now,
-    }];
+    const earthSurfaceSlot = this.placeholderSlots.get('earthSurface');
+    const earthSurfaceScene = new EarthSurfaceScene(deriveVisualSeed(initialState));
+    if (earthSurfaceSlot) {
+      earthSurfaceSlot.className = 'visual-scene-slot visual-scene-slot-earth-surface';
+      earthSurfaceScene.build(earthSurfaceSlot);
+      earthSurfaceScene.setVisible(true);
+    }
+
+    this.scenes = [
+      {
+        id: 'earthSurface',
+        label: 'Earth Surface',
+        scene: earthSurfaceScene,
+        fps: 0,
+        renderMs: 0,
+        drawCalls: 0,
+        frameCount: 0,
+        renderTimeTotalMs: 0,
+        drawCallCountTotal: 0,
+        windowStartMs: now,
+      },
+      {
+        id: 'datacenter',
+        label: 'Datacenter',
+        scene: datacenterScene,
+        fps: 0,
+        renderMs: 0,
+        drawCalls: 0,
+        frameCount: 0,
+        renderTimeTotalMs: 0,
+        drawCallCountTotal: 0,
+        windowStartMs: now,
+      },
+    ];
 
     this.clock = new VisualClock({
       fixedStepMs: 1000 / 30,

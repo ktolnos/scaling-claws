@@ -1,46 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 32" width="48" height="32">
-  <!-- Solar panel row 1 -->
-  <g transform="translate(2,4)">
-    <rect x="0" y="0" width="10" height="7" rx="0.3" fill="#2244aa" stroke="#1a3388" stroke-width="0.3" transform="skewY(-8)"/>
-    <!-- Grid lines -->
-    <line x1="2.5" y1="0" x2="2.5" y2="7" stroke="#1a3388" stroke-width="0.2" transform="skewY(-8)"/>
-    <line x1="5" y1="0" x2="5" y2="7" stroke="#1a3388" stroke-width="0.2" transform="skewY(-8)"/>
-    <line x1="7.5" y1="0" x2="7.5" y2="7" stroke="#1a3388" stroke-width="0.2" transform="skewY(-8)"/>
-    <!-- Glint -->
-    <rect x="1" y="1" width="3" height="1.5" rx="0.2" fill="#88aaff" opacity="0.3" transform="skewY(-8)">
-      <animate attributeName="opacity" values="0.1;0.5;0.1" dur="4s" repeatCount="indefinite"/>
-    </rect>
-    <!-- Post -->
-    <line x1="5" y1="7" x2="5" y2="14" stroke="#666" stroke-width="1"/>
-  </g>
-  
-  <!-- Solar panel row 2 -->
-  <g transform="translate(16,4)">
-    <rect x="0" y="0" width="10" height="7" rx="0.3" fill="#2244aa" stroke="#1a3388" stroke-width="0.3" transform="skewY(-8)"/>
-    <line x1="2.5" y1="0" x2="2.5" y2="7" stroke="#1a3388" stroke-width="0.2" transform="skewY(-8)"/>
-    <line x1="5" y1="0" x2="5" y2="7" stroke="#1a3388" stroke-width="0.2" transform="skewY(-8)"/>
-    <line x1="7.5" y1="0" x2="7.5" y2="7" stroke="#1a3388" stroke-width="0.2" transform="skewY(-8)"/>
-    <rect x="6" y="2" width="3" height="1.5" rx="0.2" fill="#88aaff" opacity="0.3" transform="skewY(-8)">
-      <animate attributeName="opacity" values="0.1;0.5;0.1" dur="3.5s" repeatCount="indefinite"/>
-    </rect>
-    <line x1="5" y1="7" x2="5" y2="14" stroke="#666" stroke-width="1"/>
-  </g>
-  
-  <!-- Solar panel row 3 -->
-  <g transform="translate(30,4)">
-    <rect x="0" y="0" width="10" height="7" rx="0.3" fill="#2244aa" stroke="#1a3388" stroke-width="0.3" transform="skewY(-8)"/>
-    <line x1="2.5" y1="0" x2="2.5" y2="7" stroke="#1a3388" stroke-width="0.2" transform="skewY(-8)"/>
-    <line x1="5" y1="0" x2="5" y2="7" stroke="#1a3388" stroke-width="0.2" transform="skewY(-8)"/>
-    <line x1="7.5" y1="0" x2="7.5" y2="7" stroke="#1a3388" stroke-width="0.2" transform="skewY(-8)"/>
-    <rect x="3" y="3" width="3" height="1.5" rx="0.2" fill="#88aaff" opacity="0.3" transform="skewY(-8)">
-      <animate attributeName="opacity" values="0.1;0.5;0.1" dur="4.5s" repeatCount="indefinite"/>
-    </rect>
-    <line x1="5" y1="7" x2="5" y2="14" stroke="#666" stroke-width="1"/>
-  </g>
-  
-  <!-- Ground -->
-  <rect x="0" y="22" width="48" height="10" fill="#3a5a2a"/>
-  <!-- Gravel paths -->
-  <rect x="12" y="22" width="2" height="10" fill="#5a6a4a" opacity="0.5"/>
-  <rect x="28" y="22" width="2" height="10" fill="#5a6a4a" opacity="0.5"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 70 34" width="70" height="34">
+  <path d="M6 28 H64" stroke="#31465d" stroke-width="2"/>
+  <path d="M12 27 L17 12 H30 L25 27 Z" fill="#27496f" stroke="#78a8e1" stroke-width="1"/>
+  <path d="M24 27 L29 12 H42 L37 27 Z" fill="#27496f" stroke="#78a8e1" stroke-width="1"/>
+  <path d="M36 27 L41 12 H54 L49 27 Z" fill="#27496f" stroke="#78a8e1" stroke-width="1"/>
+  <path d="M14 19.5 H27 M16 15.7 H29 M26 19.5 H39 M28 15.7 H41 M38 19.5 H51 M40 15.7 H53" stroke="#90c4ff" stroke-width="0.8" opacity="0.8"/>
+  <path d="M18 12 L18 28 M30 12 L30 28 M42 12 L42 28 M54 12 L54 28" stroke="#4f6580" stroke-width="0.9"/>
 </svg>

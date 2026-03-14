@@ -49,13 +49,13 @@ const SLOT_COUNT = 10;
 const GPUS_PER_SLOT = 8;
 const FRONT_RACK_MIN_CAP = 1;
 const FRONT_RACK_MAX_CAP = 96;
-const MAX_CANVAS_RACKS = 1000;
+const MAX_CANVAS_RACKS = 300;
 const TERMINAL_LINE_COUNT = 4;
 const FOREGROUND_ROW_BOTTOM_OFFSET_PX = 0;
 const BACKGROUND_ROW_BOTTOM_OFFSET_PX = 0;
 const SVG_FRONT_ROW_SIDE_PADDING_PX = 5;
 const CANVAS_START_ROW_OFFSET_AFTER_SVG = 2;
-const ROW_DEPTH_FALLOFF_PER_ROW = 0.94;
+const ROW_DEPTH_FALLOFF_PER_ROW = 0.87;
 const CANVAS_FADE_START_RATIO = 0.5;
 const CANVAS_FADE_MIN_ALPHA = 0;
 const BACKGROUND_DEPTH_SPAN_RACK_HEIGHT_MULTIPLIER = 1;
@@ -70,18 +70,21 @@ const MIC_MINI_WIDTH_PX = 52;
 const MIC_MINI_HEIGHT_PX = 86;
 const MIC_MINI_GAP_PX = 3;
 const MIC_MINI_SIDE_OFFSET_PX = -50;
-const NETWORK_PARTICLE_MAX_COUNT = 2000;
+const NETWORK_PARTICLE_MAX_COUNT = 500;
 const NETWORK_PARTICLE_BASE_COUNT = 4;
 const NETWORK_RACKS_FOR_MAX_INTENSITY = 1_000_000;
 const NETWORK_PARTICLE_MIN_SPEED = 0.1;
-const NETWORK_PARTICLE_MAX_SPEED = 0.1;
+const NETWORK_PARTICLE_MAX_SPEED = 0.2;
 const NETWORK_PARTICLE_MIN_SIZE = 30;
 const NETWORK_PARTICLE_MAX_SIZE = 30;
 const NETWORK_VANISH_Y_RATIO = 0.5;
 const NETWORK_PLANE_NEAR_SCALE = 0.08;
 const NETWORK_PLANE_FAR_SCALE = 1;
-const NETWORK_PLANE_HALF_SPAN_RATIO = 1.4;
+const NETWORK_PLANE_HALF_SPAN_RATIO = 1.7;
 const NETWORK_PLANE_TOP_Y_RATIO = -0.55;
+const NETWORK_PARTICLE_CULL_ABOVE_FLOOR_PX = 250;
+const NETWORK_PARTICLE_SPRITE_WIDTH = 128;
+const NETWORK_PARTICLE_SPRITE_HEIGHT = 20;
 const DISTANT_GLOW_BASE_ALPHA = 0.08;
 const DISTANT_GLOW_MAX_ALPHA = 1;
 const DISTANT_GLOW_BASE_RADIUS_X_RATIO = 0.8;
@@ -165,7 +168,9 @@ export class DatacenterScene implements VisualScene {
   private frontRackGapPx = 12;
   private laptopPixelWidth = LAPTOP_BASE_WIDTH_PX;
   private laptopUiScale = 1;
-  private networkParticles: NetworkParticle[] = [];
+  private outboundNetworkParticles: NetworkParticle[] = [];
+  private inboundNetworkParticles: NetworkParticle[] = [];
+  private networkParticleSprite: HTMLCanvasElement | null = null;
   private lastNetworkUpdateAtMs = 0;
   private layoutResizedSinceLastSample = false;
   private pendingFillAnimEnableFrame: number | null = null;
@@ -721,7 +726,7 @@ export class DatacenterScene implements VisualScene {
 
     const convergenceY = height * NETWORK_VANISH_Y_RATIO;
     this.renderDistantGlow(ctx, nowMs, centerX, convergenceY, width, height);
-    this.renderNetworkTraffic(ctx, nowMs, centerX, convergenceY, width, height);
+    this.renderNetworkTraffic(ctx, nowMs, centerX, convergenceY, width, height, floorY);
     this.renderDensityRacks(ctx, centerX, floorY);
   }
 
@@ -742,7 +747,7 @@ export class DatacenterScene implements VisualScene {
       return;
     }
 
-    const t = nowMs * 0.004;
+    const t = nowMs * 0.003;
     const pulseA = Math.sin(t);
     const pulseB = Math.sin((t * 0.61) + 1.7);
     const pulseC = Math.sin((t * 0.37) + 3.1);
@@ -777,9 +782,11 @@ export class DatacenterScene implements VisualScene {
     convergenceY: number,
     width: number,
     height: number,
+    floorY: number,
   ): void {
     if (!this.sampledPostGpu || this.sampledGpus <= 0) {
-      this.networkParticles.length = 0;
+      this.outboundNetworkParticles.length = 0;
+      this.inboundNetworkParticles.length = 0;
       this.lastNetworkUpdateAtMs = 0;
       return;
     }
@@ -790,24 +797,78 @@ export class DatacenterScene implements VisualScene {
       NETWORK_PARTICLE_BASE_COUNT + ((NETWORK_PARTICLE_MAX_COUNT - NETWORK_PARTICLE_BASE_COUNT) * intensity),
     );
 
-    while (this.networkParticles.length < targetCount) {
-      this.networkParticles.push(this.makeNetworkParticle(false));
-    }
-    while (this.networkParticles.length > targetCount) {
-      this.networkParticles.pop();
-    }
+    this.reconcileNetworkParticlePool(this.outboundNetworkParticles, targetCount, false);
+    this.reconcileNetworkParticlePool(this.inboundNetworkParticles, targetCount, true);
 
     const dtSec = this.getNetworkDeltaSeconds(nowMs);
-    for (const particle of this.networkParticles) {
+    for (const particle of this.outboundNetworkParticles) {
       particle.progress += particle.speed * dtSec;
       if (particle.progress >= 1) {
-        this.resetNetworkParticle(particle, true);
+        this.resetNetworkParticle(particle, true, false);
+      }
+    }
+    for (const particle of this.inboundNetworkParticles) {
+      particle.progress -= particle.speed * dtSec;
+      if (particle.progress <= 0) {
+        this.resetNetworkParticle(particle, true, true);
       }
     }
 
     const maxOpacity = clamp01(Math.log10(Math.max(1, this.sampledTotalRacks) + 1) / 20);
     ctx.fillStyle = '#5be7b8';
-    for (const particle of this.networkParticles) {
+    this.renderNetworkParticlePool(
+      ctx,
+      centerX,
+      convergenceY,
+      width,
+      height,
+      floorY,
+      maxOpacity,
+      this.outboundNetworkParticles,
+      false,
+    );
+    this.renderNetworkParticlePool(
+      ctx,
+      centerX,
+      convergenceY,
+      width,
+      height,
+      floorY,
+      maxOpacity,
+      this.inboundNetworkParticles,
+      true,
+    );
+    ctx.globalAlpha = 1;
+  }
+
+  private reconcileNetworkParticlePool(
+    particles: NetworkParticle[],
+    targetCount: number,
+    spawnAtNearSide: boolean,
+  ): void {
+    while (particles.length < targetCount) {
+      particles.push(this.makeNetworkParticle(false, spawnAtNearSide));
+    }
+    while (particles.length > targetCount) {
+      particles.pop();
+    }
+  }
+
+  private renderNetworkParticlePool(
+    ctx: CanvasRenderingContext2D,
+    centerX: number,
+    convergenceY: number,
+    width: number,
+    height: number,
+    floorY: number,
+    maxOpacity: number,
+    particles: NetworkParticle[],
+    reverseDirection: boolean,
+  ): void {
+    const sprite = this.getNetworkParticleSprite();
+    const cullY = floorY - NETWORK_PARTICLE_CULL_ABOVE_FLOOR_PX;
+    ctx.globalAlpha = maxOpacity;
+    for (const particle of particles) {
       const projection = this.projectNetworkParticle(
         centerX,
         convergenceY,
@@ -816,6 +877,9 @@ export class DatacenterScene implements VisualScene {
         particle.lane,
         particle.progress,
       );
+      if (projection.y >= cullY) {
+        continue;
+      }
       const projectedScale = NETWORK_PLANE_NEAR_SCALE
         + ((NETWORK_PLANE_FAR_SCALE - NETWORK_PLANE_NEAR_SCALE) * projection.planeProgress);
       const thickness = Math.max(0.55, particle.size * projectedScale * 0.42);
@@ -823,21 +887,19 @@ export class DatacenterScene implements VisualScene {
         thickness * 2.2,
         particle.size * projectedScale * (2.2 + (3.8 * projection.planeProgress)),
       );
-      const opacityRamp = Math.min(1, projection.planeProgress * 2);
-      ctx.globalAlpha = maxOpacity * opacityRamp;
-      this.drawNetworkParticleStreak(
+      const motionDx = reverseDirection ? -projection.dx : projection.dx;
+      const motionDy = reverseDirection ? -projection.dy : projection.dy;
+      this.drawNetworkParticleSprite(
         ctx,
-        centerX,
-        convergenceY,
+        sprite,
         projection.x,
         projection.y,
-        projection.dx,
-        projection.dy,
+        motionDx,
+        motionDy,
         length,
         thickness,
       );
     }
-    ctx.globalAlpha = 1;
   }
 
   private getNetworkDeltaSeconds(nowMs: number): number {
@@ -851,22 +913,26 @@ export class DatacenterScene implements VisualScene {
     return Math.max(1 / 240, deltaMs / 1000);
   }
 
-  private makeNetworkParticle(startAtOrigin: boolean): NetworkParticle {
+  private makeNetworkParticle(startAtOrigin: boolean, spawnAtNearSide: boolean): NetworkParticle {
     const particle: NetworkParticle = {
       lane: 0,
       progress: 0,
       speed: NETWORK_PARTICLE_MIN_SPEED,
       size: NETWORK_PARTICLE_MIN_SIZE,
     };
-    this.resetNetworkParticle(particle, startAtOrigin);
+    this.resetNetworkParticle(particle, startAtOrigin, spawnAtNearSide);
     return particle;
   }
 
-  private resetNetworkParticle(particle: NetworkParticle, startAtOrigin: boolean): void {
+  private resetNetworkParticle(
+    particle: NetworkParticle,
+    startAtOrigin: boolean,
+    spawnAtNearSide: boolean,
+  ): void {
     const laneRandom = (this.rng.next() * 2) - 1;
     const laneBias = Math.sign(laneRandom) * Math.pow(Math.abs(laneRandom), 0.72);
     particle.lane = laneBias * NETWORK_PLANE_HALF_SPAN_RATIO;
-    particle.progress = startAtOrigin ? 0 : this.rng.next();
+    particle.progress = startAtOrigin ? (spawnAtNearSide ? 1 : 0) : this.rng.next();
     particle.speed = this.rng.nextRange(NETWORK_PARTICLE_MIN_SPEED, NETWORK_PARTICLE_MAX_SPEED);
     particle.size = this.rng.nextRange(NETWORK_PARTICLE_MIN_SIZE, NETWORK_PARTICLE_MAX_SIZE);
   }
@@ -902,10 +968,38 @@ export class DatacenterScene implements VisualScene {
     };
   }
 
-  private drawNetworkParticleStreak(
+  private getNetworkParticleSprite(): HTMLCanvasElement {
+    if (this.networkParticleSprite) {
+      return this.networkParticleSprite;
+    }
+
+    const sprite = document.createElement('canvas');
+    sprite.width = NETWORK_PARTICLE_SPRITE_WIDTH;
+    sprite.height = NETWORK_PARTICLE_SPRITE_HEIGHT;
+    const spriteCtx = sprite.getContext('2d');
+    if (!spriteCtx) {
+      this.networkParticleSprite = sprite;
+      return sprite;
+    }
+
+    const gradient = spriteCtx.createLinearGradient(0, 0, sprite.width, 0);
+    gradient.addColorStop(0, 'rgba(91, 231, 184, 0)');
+    gradient.addColorStop(0.18, 'rgba(91, 231, 184, 0.22)');
+    gradient.addColorStop(0.5, 'rgba(91, 231, 184, 1)');
+    gradient.addColorStop(0.82, 'rgba(91, 231, 184, 0.22)');
+    gradient.addColorStop(1, 'rgba(91, 231, 184, 0)');
+    spriteCtx.fillStyle = gradient;
+    spriteCtx.beginPath();
+    spriteCtx.roundRect(0, 0, sprite.width, sprite.height, sprite.height * 0.5);
+    spriteCtx.fill();
+
+    this.networkParticleSprite = sprite;
+    return sprite;
+  }
+
+  private drawNetworkParticleSprite(
     ctx: CanvasRenderingContext2D,
-    originX: number,
-    originY: number,
+    sprite: HTMLCanvasElement,
     x: number,
     y: number,
     dx: number,
@@ -917,34 +1011,18 @@ export class DatacenterScene implements VisualScene {
     if (vectorLength <= 0.0001) {
       return;
     }
-
-    const unitY = dy / vectorLength;
-    const halfLength = Math.max(0.8, length * 0.5);
-    const nearCenterY = y - (unitY * halfLength);
-    const farCenterY = y + (unitY * halfLength);
-    const halfWidthAtCenter = Math.max(0.35, thickness * 0.5);
-    const leftXAtCenter = x - halfWidthAtCenter;
-    const rightXAtCenter = x + halfWidthAtCenter;
-
-    const yDeltaAtCenter = y - originY;
-    if (Math.abs(yDeltaAtCenter) <= 0.0001) {
-      return;
-    }
-
-    const nearT = (nearCenterY - originY) / yDeltaAtCenter;
-    const farT = (farCenterY - originY) / yDeltaAtCenter;
-    const nearLeftX = originX + ((leftXAtCenter - originX) * nearT);
-    const nearRightX = originX + ((rightXAtCenter - originX) * nearT);
-    const farLeftX = originX + ((leftXAtCenter - originX) * farT);
-    const farRightX = originX + ((rightXAtCenter - originX) * farT);
-
-    ctx.beginPath();
-    ctx.moveTo(farLeftX, farCenterY);
-    ctx.lineTo(farRightX, farCenterY);
-    ctx.lineTo(nearRightX, nearCenterY);
-    ctx.lineTo(nearLeftX, nearCenterY);
-    ctx.closePath();
-    ctx.fill();
+    const angle = Math.atan2(dy, dx);
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(angle);
+    ctx.drawImage(
+      sprite,
+      -length * 0.5,
+      -thickness * 0.5,
+      length,
+      thickness,
+    );
+    ctx.restore();
     this.lastFrameDrawCalls++;
   }
 
