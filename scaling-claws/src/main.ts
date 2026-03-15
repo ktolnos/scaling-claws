@@ -172,6 +172,9 @@ function configurePanels(state: GameState): void {
 configurePanels(initialState);
 visualDirector.sample(initialState);
 visualDirector.start();
+loop.addTickListener((state) => {
+  visualDirector.sample(state);
+});
 
 // UI update loop
 setInterval(() => {
@@ -215,7 +218,6 @@ setInterval(() => {
   }
 
   panelManager.update(s);
-  visualDirector.sample(s);
   ticker.update(s);
 }, BALANCE.uiUpdateIntervalMs);
 

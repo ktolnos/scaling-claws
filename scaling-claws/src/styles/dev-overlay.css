@@ -10,7 +10,7 @@
   color: var(--text-primary);
   backdrop-filter: blur(4px);
   box-shadow: 0 8px 26px rgba(0, 0, 0, 0.45);
-  user-select: none;
+  user-select: text;
 }
 
 .dev-overlay.minimized {

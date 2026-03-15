@@ -7,4 +7,5 @@ export interface VisualScene {
   render(): void;
   setVisible(visible: boolean): void;
   getDrawCallCount?(): number;
+  getDebugLines?(): string[];
 }

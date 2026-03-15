@@ -1000,6 +1000,9 @@ export class DevOverlay {
       const panelStats = this.getVisualPanelPerfStats();
       for (const panel of panelStats) {
         statusLines.push(`visual ${panel.label}: ${panel.fps.toFixed(1)} FPS | ${panel.renderMs.toFixed(2)} ms | draw calls ${panel.drawCalls}`);
+        for (const debugLine of panel.debugLines) {
+          statusLines.push(`  ${debugLine}`);
+        }
       }
     }
 

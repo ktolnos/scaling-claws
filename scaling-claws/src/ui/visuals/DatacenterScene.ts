@@ -5,7 +5,10 @@ import { fromBigInt } from '../../game/utils.ts';
 import { micMiniSvg, phase1LaptopShellSvg, phase1RackFrontSvg } from '../../assets/sprites.ts';
 import type { VisualScene } from './VisualScene.ts';
 import { clamp01 } from './lod.ts';
+import { createPixiSceneHost, replaceManagedTexture, textureFromCanvas } from './pixiHost.ts';
+import type { PixiSceneHost } from './pixiHost.ts';
 import { SeededRng } from './seededRng.ts';
+import { Container, Sprite, Texture } from 'pixi.js';
 
 interface JobTerminalSample {
   jobType: JobType;
@@ -70,7 +73,7 @@ const MIC_MINI_WIDTH_PX = 52;
 const MIC_MINI_HEIGHT_PX = 86;
 const MIC_MINI_GAP_PX = 3;
 const MIC_MINI_SIDE_OFFSET_PX = -50;
-const NETWORK_PARTICLE_MAX_COUNT = 500;
+const NETWORK_PARTICLE_MAX_COUNT = 4000;
 const NETWORK_PARTICLE_BASE_COUNT = 4;
 const NETWORK_RACKS_FOR_MAX_INTENSITY = 1_000_000;
 const NETWORK_PARTICLE_MIN_SPEED = 0.1;
@@ -82,7 +85,7 @@ const NETWORK_PLANE_NEAR_SCALE = 0.08;
 const NETWORK_PLANE_FAR_SCALE = 1;
 const NETWORK_PLANE_HALF_SPAN_RATIO = 1.7;
 const NETWORK_PLANE_TOP_Y_RATIO = -0.55;
-const NETWORK_PARTICLE_CULL_ABOVE_FLOOR_PX = 250;
+const NETWORK_PARTICLE_CULL_ABOVE_FLOOR_PX = 0;
 const NETWORK_PARTICLE_SPRITE_WIDTH = 128;
 const NETWORK_PARTICLE_SPRITE_HEIGHT = 20;
 const DISTANT_GLOW_BASE_ALPHA = 0.08;
@@ -135,18 +138,17 @@ function averageSampleProgress(pool: JobPool): number {
 export class DatacenterScene implements VisualScene {
   private readonly rng: SeededRng;
 
+  private host!: PixiSceneHost;
   private sceneEl!: HTMLDivElement;
-  private canvasEl!: HTMLCanvasElement;
-  private canvasCtx: CanvasRenderingContext2D | null = null;
   private paneGridEl!: HTMLDivElement;
   private micLaneEl!: HTMLDivElement;
   private rackFrontLaneEl!: HTMLDivElement;
   private laptopStageEl!: HTMLDivElement;
 
   private visible = true;
-  private canvasWidth = 0;
-  private canvasHeight = 0;
-  private canvasDpr = 1;
+  private pixiReady = false;
+  private pixiWidth = 0;
+  private pixiHeight = 0;
 
   private micNodes: HTMLDivElement[] = [];
   private frontRacks: FrontRackRefs[] = [];
@@ -170,7 +172,6 @@ export class DatacenterScene implements VisualScene {
   private laptopUiScale = 1;
   private outboundNetworkParticles: NetworkParticle[] = [];
   private inboundNetworkParticles: NetworkParticle[] = [];
-  private networkParticleSprite: HTMLCanvasElement | null = null;
   private lastNetworkUpdateAtMs = 0;
   private layoutResizedSinceLastSample = false;
   private pendingFillAnimEnableFrame: number | null = null;
@@ -178,6 +179,18 @@ export class DatacenterScene implements VisualScene {
   private lastLayoutWidth = 0;
   private lastLayoutHeight = 0;
   private nextTerminalRenderAtMs = 0;
+
+  private backgroundSprite!: Sprite;
+  private glowSprite!: Sprite;
+  private rackContainer!: Container;
+  private networkContainer!: Container;
+  private backgroundTexture: Texture | null = null;
+  private rackTexture: Texture | null = null;
+  private networkParticleTexture: Texture | null = null;
+  private glowTexture: Texture | null = null;
+  private rackSprites: Sprite[] = [];
+  private outboundParticleSprites: Sprite[] = [];
+  private inboundParticleSprites: Sprite[] = [];
 
   private cursorBlinkMs = 0;
   private cursorVisible = true;
@@ -187,13 +200,8 @@ export class DatacenterScene implements VisualScene {
   }
 
   build(root: HTMLElement): void {
-    this.sceneEl = document.createElement('div');
-    this.sceneEl.className = 'visual-scene dc-scene';
-
-    this.canvasEl = document.createElement('canvas');
-    this.canvasEl.className = 'dc-mass-canvas';
-    this.sceneEl.appendChild(this.canvasEl);
-    this.canvasCtx = this.canvasEl.getContext('2d');
+    this.host = createPixiSceneHost(root, 'visual-scene dc-scene', 'dc-mass-canvas');
+    this.sceneEl = this.host.sceneEl;
 
     const hero = document.createElement('div');
     hero.className = 'dc-hero-layer';
@@ -226,12 +234,31 @@ export class DatacenterScene implements VisualScene {
     hero.appendChild(this.rackFrontLaneEl);
 
     this.sceneEl.appendChild(hero);
-    root.appendChild(this.sceneEl);
+    void this.host.initPromise.then(() => {
+      this.configurePixiStage();
+    });
   }
 
   setVisible(visible: boolean): void {
     this.visible = visible;
     this.sceneEl.classList.toggle('is-hidden', !visible);
+  }
+
+  private configurePixiStage(): void {
+    const stage = this.host.app.stage;
+    stage.removeChildren();
+
+    this.backgroundSprite = new Sprite(Texture.EMPTY);
+    this.glowSprite = new Sprite(this.getGlowTexture());
+    this.glowSprite.anchor.set(0.5, 0.5);
+    this.rackContainer = new Container();
+    this.networkContainer = new Container();
+
+    stage.addChild(this.backgroundSprite);
+    stage.addChild(this.glowSprite);
+    stage.addChild(this.networkContainer);
+    stage.addChild(this.rackContainer);
+    this.pixiReady = true;
   }
 
   sample(state: GameState): void {
@@ -293,13 +320,13 @@ export class DatacenterScene implements VisualScene {
   }
 
   render(): void {
-    if (!this.visible) {
+    if (!this.visible || !this.pixiReady || !this.host.ready) {
       return;
     }
 
     const nowMs = performance.now();
     this.lastFrameDrawCalls = 0;
-    this.renderCanvas(nowMs);
+    this.renderPixi(nowMs);
     if (nowMs >= this.nextTerminalRenderAtMs) {
       this.renderTerminal();
       this.nextTerminalRenderAtMs = nowMs + 120;
@@ -674,64 +701,39 @@ export class DatacenterScene implements VisualScene {
     }
   }
 
-  private renderCanvas(nowMs: number): void {
-    const ctx = this.canvasCtx;
-    if (!ctx) {
+  private renderPixi(nowMs: number): void {
+    const width = this.sceneEl.clientWidth;
+    const height = this.sceneEl.clientHeight;
+    if (width <= 0 || height <= 0) {
       return;
-    }
-
-    const clientWidth = this.canvasEl.clientWidth;
-    const clientHeight = this.canvasEl.clientHeight;
-    const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
-
-    if (clientWidth <= 0 || clientHeight <= 0) {
-      return;
-    }
-
-    if (
-      clientWidth !== this.canvasWidth ||
-      clientHeight !== this.canvasHeight ||
-      dpr !== this.canvasDpr
-    ) {
-      this.canvasWidth = clientWidth;
-      this.canvasHeight = clientHeight;
-      this.canvasDpr = dpr;
-      this.canvasEl.width = Math.floor(clientWidth * dpr);
-      this.canvasEl.height = Math.floor(clientHeight * dpr);
     }
 
     if (
       this.frontRackFloorY === null ||
-      clientWidth !== this.lastLayoutWidth ||
-      clientHeight !== this.lastLayoutHeight
+      width !== this.lastLayoutWidth ||
+      height !== this.lastLayoutHeight
     ) {
       this.updateFrontRackLayout();
     }
 
-    ctx.setTransform(this.canvasDpr, 0, 0, this.canvasDpr, 0, 0);
-    ctx.clearRect(0, 0, this.canvasWidth, this.canvasHeight);
-
-    const width = this.canvasWidth;
-    const height = this.canvasHeight;
+    if (width !== this.pixiWidth || height !== this.pixiHeight) {
+      this.pixiWidth = width;
+      this.pixiHeight = height;
+      this.host.app.renderer.resize(width, height);
+      this.rebuildBackgroundTexture(width, height);
+    }
 
     const floorY = this.frontRackFloorY ?? (height - BACKGROUND_ROW_BOTTOM_OFFSET_PX);
     const centerX = width * 0.5;
-
-    const bg = ctx.createLinearGradient(0, 0, 0, height);
-    bg.addColorStop(0, '#04070f');
-    bg.addColorStop(0.48, '#08101a');
-    bg.addColorStop(1, '#091221');
-    ctx.fillStyle = bg;
-    this.fillRect(ctx, 0, 0, width, height);
-
     const convergenceY = height * NETWORK_VANISH_Y_RATIO;
-    this.renderDistantGlow(ctx, nowMs, centerX, convergenceY, width, height);
-    this.renderNetworkTraffic(ctx, nowMs, centerX, convergenceY, width, height, floorY);
-    this.renderDensityRacks(ctx, centerX, floorY);
+
+    this.updateGlowSprite(nowMs, centerX, convergenceY, width, height);
+    this.updateNetworkSprites(nowMs, centerX, convergenceY, width, height, floorY);
+    this.updateRackSprites(centerX, floorY);
+    this.host.app.render();
   }
 
-  private renderDistantGlow(
-    ctx: CanvasRenderingContext2D,
+  private updateGlowSprite(
     nowMs: number,
     centerX: number,
     convergenceY: number,
@@ -739,11 +741,13 @@ export class DatacenterScene implements VisualScene {
     height: number,
   ): void {
     if (!this.sampledPostGpu || this.sampledTotalRacks <= 0) {
+      this.glowSprite.visible = false;
       return;
     }
 
     const rackGlow = clamp01(Math.log10(Math.max(1, this.sampledTotalRacks) + 1) / 5);
     if (rackGlow <= 0) {
+      this.glowSprite.visible = false;
       return;
     }
 
@@ -757,26 +761,16 @@ export class DatacenterScene implements VisualScene {
     const breathY = 1 + (DISTANT_GLOW_BREATH_Y_RATIO * ((0.7 * pulseB) + (0.3 * pulseC)));
     const radiusX = width * DISTANT_GLOW_BASE_RADIUS_X_RATIO * breathX;
     const radiusY = height * DISTANT_GLOW_BASE_RADIUS_Y_RATIO * breathY;
-
-    ctx.save();
-    ctx.globalAlpha = glowAlpha;
-    ctx.translate(centerX, glowY);
-    ctx.scale(Math.max(1, radiusX), Math.max(1, radiusY));
-    const gradient = ctx.createRadialGradient(0, 0, 0, 0, 0, 1);
-    gradient.addColorStop(0, 'rgba(91, 231, 184, 0.65)');
-    gradient.addColorStop(0.42, 'rgba(70, 182, 196, 0.28)');
-    gradient.addColorStop(0.78, 'rgba(19, 52, 82, 0.1)');
-    gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
-    ctx.fillStyle = gradient;
-    ctx.beginPath();
-    ctx.ellipse(0, 0, 1, 1, 0, 0, Math.PI * 2);
-    ctx.fill();
+    this.glowSprite.visible = true;
+    this.glowSprite.x = centerX;
+    this.glowSprite.y = glowY;
+    this.glowSprite.width = Math.max(2, radiusX * 2);
+    this.glowSprite.height = Math.max(2, radiusY * 2);
+    this.glowSprite.alpha = glowAlpha;
     this.lastFrameDrawCalls++;
-    ctx.restore();
   }
 
-  private renderNetworkTraffic(
-    ctx: CanvasRenderingContext2D,
+  private updateNetworkSprites(
     nowMs: number,
     centerX: number,
     convergenceY: number,
@@ -788,6 +782,8 @@ export class DatacenterScene implements VisualScene {
       this.outboundNetworkParticles.length = 0;
       this.inboundNetworkParticles.length = 0;
       this.lastNetworkUpdateAtMs = 0;
+      this.hideUnusedPixiSprites(this.outboundParticleSprites, 0);
+      this.hideUnusedPixiSprites(this.inboundParticleSprites, 0);
       return;
     }
 
@@ -815,30 +811,28 @@ export class DatacenterScene implements VisualScene {
     }
 
     const maxOpacity = clamp01(Math.log10(Math.max(1, this.sampledTotalRacks) + 1) / 20);
-    ctx.fillStyle = '#5be7b8';
-    this.renderNetworkParticlePool(
-      ctx,
+    this.updateNetworkParticlePoolSprites(
+      this.outboundParticleSprites,
+      this.outboundNetworkParticles,
       centerX,
       convergenceY,
       width,
       height,
       floorY,
       maxOpacity,
-      this.outboundNetworkParticles,
       false,
     );
-    this.renderNetworkParticlePool(
-      ctx,
+    this.updateNetworkParticlePoolSprites(
+      this.inboundParticleSprites,
+      this.inboundNetworkParticles,
       centerX,
       convergenceY,
       width,
       height,
       floorY,
       maxOpacity,
-      this.inboundNetworkParticles,
       true,
     );
-    ctx.globalAlpha = 1;
   }
 
   private reconcileNetworkParticlePool(
@@ -854,20 +848,24 @@ export class DatacenterScene implements VisualScene {
     }
   }
 
-  private renderNetworkParticlePool(
-    ctx: CanvasRenderingContext2D,
+  private updateNetworkParticlePoolSprites(
+    spritePool: Sprite[],
+    particles: NetworkParticle[],
     centerX: number,
     convergenceY: number,
     width: number,
     height: number,
     floorY: number,
     maxOpacity: number,
-    particles: NetworkParticle[],
     reverseDirection: boolean,
   ): void {
-    const sprite = this.getNetworkParticleSprite();
     const cullY = floorY - NETWORK_PARTICLE_CULL_ABOVE_FLOOR_PX;
-    ctx.globalAlpha = maxOpacity;
+    this.syncPixiSpritePool(this.networkContainer, spritePool, particles.length, () => {
+      const sprite = new Sprite(this.getNetworkParticleTexture());
+      sprite.anchor.set(0.5, 0.5);
+      return sprite;
+    });
+    let visibleCount = 0;
     for (const particle of particles) {
       const projection = this.projectNetworkParticle(
         centerX,
@@ -889,17 +887,21 @@ export class DatacenterScene implements VisualScene {
       );
       const motionDx = reverseDirection ? -projection.dx : projection.dx;
       const motionDy = reverseDirection ? -projection.dy : projection.dy;
-      this.drawNetworkParticleSprite(
-        ctx,
-        sprite,
-        projection.x,
-        projection.y,
-        motionDx,
-        motionDy,
-        length,
-        thickness,
-      );
+      const sprite = spritePool[visibleCount];
+      if (!sprite) {
+        continue;
+      }
+      sprite.visible = true;
+      sprite.x = projection.x;
+      sprite.y = projection.y;
+      sprite.width = length;
+      sprite.height = thickness;
+      sprite.rotation = Math.atan2(motionDy, motionDx);
+      sprite.alpha = maxOpacity;
+      visibleCount++;
+      this.lastFrameDrawCalls++;
     }
+    this.hideUnusedPixiSprites(spritePool, visibleCount);
   }
 
   private getNetworkDeltaSeconds(nowMs: number): number {
@@ -968,9 +970,9 @@ export class DatacenterScene implements VisualScene {
     };
   }
 
-  private getNetworkParticleSprite(): HTMLCanvasElement {
-    if (this.networkParticleSprite) {
-      return this.networkParticleSprite;
+  private getNetworkParticleTexture(): Texture {
+    if (this.networkParticleTexture) {
+      return this.networkParticleTexture;
     }
 
     const sprite = document.createElement('canvas');
@@ -978,8 +980,8 @@ export class DatacenterScene implements VisualScene {
     sprite.height = NETWORK_PARTICLE_SPRITE_HEIGHT;
     const spriteCtx = sprite.getContext('2d');
     if (!spriteCtx) {
-      this.networkParticleSprite = sprite;
-      return sprite;
+      this.networkParticleTexture = Texture.EMPTY;
+      return this.networkParticleTexture;
     }
 
     const gradient = spriteCtx.createLinearGradient(0, 0, sprite.width, 0);
@@ -993,45 +995,16 @@ export class DatacenterScene implements VisualScene {
     spriteCtx.roundRect(0, 0, sprite.width, sprite.height, sprite.height * 0.5);
     spriteCtx.fill();
 
-    this.networkParticleSprite = sprite;
-    return sprite;
+    this.networkParticleTexture = textureFromCanvas(sprite);
+    return this.networkParticleTexture;
   }
 
-  private drawNetworkParticleSprite(
-    ctx: CanvasRenderingContext2D,
-    sprite: HTMLCanvasElement,
-    x: number,
-    y: number,
-    dx: number,
-    dy: number,
-    length: number,
-    thickness: number,
-  ): void {
-    const vectorLength = Math.hypot(dx, dy);
-    if (vectorLength <= 0.0001) {
-      return;
-    }
-    const angle = Math.atan2(dy, dx);
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.rotate(angle);
-    ctx.drawImage(
-      sprite,
-      -length * 0.5,
-      -thickness * 0.5,
-      length,
-      thickness,
-    );
-    ctx.restore();
-    this.lastFrameDrawCalls++;
-  }
-
-  private renderDensityRacks(
-    ctx: CanvasRenderingContext2D,
+  private updateRackSprites(
     centerX: number,
     floorY: number,
   ): void {
     if (!this.sampledPostGpu) {
+      this.hideUnusedPixiSprites(this.rackSprites, 0);
       return;
     }
 
@@ -1078,7 +1051,7 @@ export class DatacenterScene implements VisualScene {
       const rowGap = Math.max(2, firstGap * scale);
 
       const rowBaseCount = firstRowSlotCount + (2 * Math.floor(logicalRow / 3));
-      const fittedCount = Math.max(1, Math.ceil(this.canvasWidth / Math.max(1, rackWidth + rowGap)));
+      const fittedCount = Math.max(1, Math.ceil(this.pixiWidth / Math.max(1, rackWidth + rowGap)));
       let rowSlotCount = fittedCount + 2;
       if (rowSlotCount > 1 && rowSlotCount % 2 === 0) {
         rowSlotCount += 1;
@@ -1107,67 +1080,142 @@ export class DatacenterScene implements VisualScene {
 
     const fadeStartIndex = MAX_CANVAS_RACKS * CANVAS_FADE_START_RATIO;
     const fadeSpan = Math.max(1, MAX_CANVAS_RACKS - fadeStartIndex);
+    let visibleSpriteCount = 0;
+    this.syncPixiSpritePool(this.rackContainer, this.rackSprites, drawnRacks, () => {
+      const sprite = new Sprite(this.getRackTexture());
+      sprite.anchor.set(0.5, 1);
+      return sprite;
+    });
 
     for (let rowIdx = rows.length - 1; rowIdx >= 0; rowIdx--) {
       const row = rows[rowIdx];
       const rowMidIndex = row.rackStartIndex + (row.renderCount * 0.5);
       const fadeT = clamp01((rowMidIndex - fadeStartIndex) / fadeSpan);
       const rowAlpha = 1 - ((1 - CANVAS_FADE_MIN_ALPHA) * fadeT);
-      ctx.globalAlpha = rowAlpha;
 
       const step = row.rackWidth + row.rowGap;
       for (let col = 0; col < row.renderCount; col++) {
         const x = row.firstCenterX + (col * step);
-
-        ctx.fillStyle = '#131e30';
-        this.fillRect(ctx, x - (row.rackWidth * 0.5), row.y - row.rackHeight, row.rackWidth, row.rackHeight);
-        ctx.strokeStyle = '#2e405e';
-        ctx.lineWidth = 1;
-        this.strokeRect(
-          ctx,
-          x - (row.rackWidth * 0.5) + 0.5,
-          row.y - row.rackHeight + 0.5,
-          Math.max(1, row.rackWidth - 1),
-          Math.max(1, row.rackHeight - 1),
-        );
-
-        const indicatorSize = Math.max(1, row.rackWidth * 0.08);
-        const indicatorMargin = Math.max(1, row.rackWidth * 0.02);
-        const indicatorX = x + (row.rackWidth * 0.5) - indicatorMargin - indicatorSize;
-        const indicatorY = row.y - row.rackHeight + indicatorMargin;
-        ctx.fillStyle = '#5be7b8';
-        this.fillRect(
-          ctx,
-          indicatorX,
-          indicatorY,
-          indicatorSize,
-          indicatorSize,
-        );
+        const sprite = this.rackSprites[visibleSpriteCount];
+        if (!sprite) {
+          continue;
+        }
+        sprite.visible = true;
+        sprite.x = x;
+        sprite.y = row.y;
+        sprite.width = row.rackWidth;
+        sprite.height = row.rackHeight;
+        sprite.alpha = rowAlpha;
+        visibleSpriteCount++;
+        this.lastFrameDrawCalls++;
       }
     }
-
-    ctx.globalAlpha = 1;
+    this.hideUnusedPixiSprites(this.rackSprites, visibleSpriteCount);
   }
 
-  private fillRect(
-    ctx: CanvasRenderingContext2D,
-    x: number,
-    y: number,
-    width: number,
-    height: number,
-  ): void {
+  private rebuildBackgroundTexture(width: number, height: number): void {
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.floor(width));
+    canvas.height = Math.max(1, Math.floor(height));
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      return;
+    }
+
+    const bg = ctx.createLinearGradient(0, 0, 0, height);
+    bg.addColorStop(0, '#04070f');
+    bg.addColorStop(0.48, '#08101a');
+    bg.addColorStop(1, '#091221');
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, width, height);
+
+    this.backgroundTexture = replaceManagedTexture(this.backgroundTexture, textureFromCanvas(canvas));
+    this.backgroundSprite.texture = this.backgroundTexture;
+    this.backgroundSprite.x = 0;
+    this.backgroundSprite.y = 0;
+    this.backgroundSprite.width = width;
+    this.backgroundSprite.height = height;
     this.lastFrameDrawCalls++;
-    ctx.fillRect(x, y, width, height);
   }
 
-  private strokeRect(
-    ctx: CanvasRenderingContext2D,
-    x: number,
-    y: number,
-    width: number,
-    height: number,
+  private getRackTexture(): Texture {
+    if (this.rackTexture) {
+      return this.rackTexture;
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = 118;
+    canvas.height = 350;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      this.rackTexture = Texture.EMPTY;
+      return this.rackTexture;
+    }
+
+    ctx.fillStyle = '#131e30';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.strokeStyle = '#2e405e';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(1.5, 1.5, canvas.width - 3, canvas.height - 3);
+
+    const indicatorSize = canvas.width * 0.08;
+    const indicatorMargin = canvas.width * 0.02;
+    ctx.fillStyle = '#5be7b8';
+    ctx.fillRect(
+      canvas.width - indicatorMargin - indicatorSize,
+      indicatorMargin,
+      indicatorSize,
+      indicatorSize,
+    );
+
+    this.rackTexture = textureFromCanvas(canvas);
+    return this.rackTexture;
+  }
+
+  private getGlowTexture(): Texture {
+    if (this.glowTexture) {
+      return this.glowTexture;
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 256;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      this.glowTexture = Texture.EMPTY;
+      return this.glowTexture;
+    }
+
+    const gradient = ctx.createRadialGradient(128, 128, 0, 128, 128, 128);
+    gradient.addColorStop(0, 'rgba(91, 231, 184, 0.65)');
+    gradient.addColorStop(0.42, 'rgba(70, 182, 196, 0.28)');
+    gradient.addColorStop(0.78, 'rgba(19, 52, 82, 0.1)');
+    gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    ctx.fillStyle = gradient;
+    ctx.beginPath();
+    ctx.arc(128, 128, 128, 0, Math.PI * 2);
+    ctx.fill();
+
+    this.glowTexture = textureFromCanvas(canvas);
+    return this.glowTexture;
+  }
+
+  private syncPixiSpritePool(
+    container: Container,
+    pool: Sprite[],
+    targetCount: number,
+    createSprite: () => Sprite,
   ): void {
-    this.lastFrameDrawCalls++;
-    ctx.strokeRect(x, y, width, height);
+    while (pool.length < targetCount) {
+      const sprite = createSprite();
+      container.addChild(sprite);
+      pool.push(sprite);
+    }
+  }
+
+  private hideUnusedPixiSprites(pool: Sprite[], usedCount: number): void {
+    for (let i = usedCount; i < pool.length; i++) {
+      pool[i].visible = false;
+    }
   }
 }

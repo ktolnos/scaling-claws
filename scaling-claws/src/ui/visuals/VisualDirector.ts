@@ -3,6 +3,7 @@ import { VisualClock } from './VisualClock.ts';
 import type { VisualScene } from './VisualScene.ts';
 import { DatacenterScene } from './DatacenterScene.ts';
 import { EarthSurfaceScene } from './EarthSurfaceScene.ts';
+import { NearEarthSpaceScene } from './NearEarthSpaceScene.ts';
 import { hashSeed } from './seededRng.ts';
 
 export interface VisualPanelPerfStat {
@@ -11,6 +12,7 @@ export interface VisualPanelPerfStat {
   fps: number;
   renderMs: number;
   drawCalls: number;
+  debugLines: string[];
 }
 
 export const VISUAL_PLACEHOLDERS = [
@@ -92,7 +94,7 @@ export class VisualDirector {
       const slot = document.createElement('div');
       slot.className = 'visual-scene-slot visual-scene-slot-placeholder';
       this.placeholderSlots.set(placeholder.id, slot);
-      if (placeholder.id !== 'earthSurface') {
+      if (placeholder.id !== 'earthSurface' && placeholder.id !== 'nearEarthSpace') {
         const text = document.createElement('div');
         text.className = 'visual-placeholder-label';
         text.textContent = `${placeholder.label} (placeholder)`;
@@ -110,6 +112,14 @@ export class VisualDirector {
     datacenterScene.setVisible(true);
 
     const now = performance.now();
+    const nearEarthSpaceSlot = this.placeholderSlots.get('nearEarthSpace');
+    const nearEarthSpaceScene = new NearEarthSpaceScene(deriveVisualSeed(initialState));
+    if (nearEarthSpaceSlot) {
+      nearEarthSpaceSlot.className = 'visual-scene-slot visual-scene-slot-near-earth-space';
+      nearEarthSpaceScene.build(nearEarthSpaceSlot);
+      nearEarthSpaceScene.setVisible(true);
+    }
+
     const earthSurfaceSlot = this.placeholderSlots.get('earthSurface');
     const earthSurfaceScene = new EarthSurfaceScene(deriveVisualSeed(initialState));
     if (earthSurfaceSlot) {
@@ -119,6 +129,18 @@ export class VisualDirector {
     }
 
     this.scenes = [
+      {
+        id: 'nearEarthSpace',
+        label: 'Near-Earth Space',
+        scene: nearEarthSpaceScene,
+        fps: 0,
+        renderMs: 0,
+        drawCalls: 0,
+        frameCount: 0,
+        renderTimeTotalMs: 0,
+        drawCallCountTotal: 0,
+        windowStartMs: now,
+      },
       {
         id: 'earthSurface',
         label: 'Earth Surface',
@@ -200,6 +222,7 @@ export class VisualDirector {
       fps: entry.fps,
       renderMs: entry.renderMs,
       drawCalls: entry.drawCalls,
+      debugLines: entry.scene.getDebugLines?.() ?? [],
     }));
   }
 
