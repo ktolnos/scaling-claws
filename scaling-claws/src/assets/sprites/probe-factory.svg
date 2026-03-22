@@ -1,0 +1,23 @@
+<svg width="96" height="96" viewBox="0 0 96 96" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="probe-factory-body" x1="18" y1="18" x2="78" y2="78" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#51627E"/>
+      <stop offset="1" stop-color="#2A3448"/>
+    </linearGradient>
+    <linearGradient id="probe-factory-glow" x1="48" y1="22" x2="48" y2="74" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFE08A"/>
+      <stop offset="1" stop-color="#FF9E5E"/>
+    </linearGradient>
+  </defs>
+  <rect x="14" y="24" width="68" height="44" rx="8" fill="url(#probe-factory-body)" stroke="#7E8DAA" stroke-width="2"/>
+  <rect x="22" y="34" width="28" height="18" rx="3" fill="#1A2130" stroke="#6C7C98" stroke-width="1.5"/>
+  <rect x="28" y="39" width="16" height="8" rx="2" fill="#6AA7FF"/>
+  <path d="M58 54L69 35L75 39L64 58L58 54Z" fill="url(#probe-factory-glow)"/>
+  <path d="M69 35L73.5 23L82 26.5L75 39L69 35Z" fill="#DDE7FF"/>
+  <circle cx="72.5" cy="24.5" r="4" fill="#A7D8FF"/>
+  <path d="M60 16L69 9L73 14L65 21L60 16Z" fill="#DDE7FF"/>
+  <path d="M57 60H77" stroke="#93A4C4" stroke-width="2.5" stroke-linecap="round"/>
+  <path d="M25 73H72" stroke="#55627A" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="28" cy="73" r="3" fill="#8897B2"/>
+  <circle cx="69" cy="73" r="3" fill="#8897B2"/>
+</svg>

@@ -1,4 +1,5 @@
 import type { GameState } from '../game/GameState.ts';
+import { hasCompletedResearch } from '../game/BalanceConfig.ts';
 
 export interface Panel {
   readonly el: HTMLElement;
@@ -287,7 +288,9 @@ export class PanelManager {
     const selectedTabId = this.getSelectedTabId();
     const selectedTabExists = selectedTabId !== null && tabSlots.some((slot) => slot.id === selectedTabId);
     const visibleTabId = selectedTabExists ? selectedTabId : tabSlots[0]?.id ?? null;
-    const moonUnlocked = this.currentState?.completedResearch.includes('payloadToMoon') ?? false;
+    const moonUnlocked = this.currentState
+      ? hasCompletedResearch(this.currentState.researchLevels, 'payloadToMoon')
+      : false;
 
     for (const slot of tabSlots) {
       const selected = slot.id === visibleTabId;

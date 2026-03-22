@@ -1,6 +1,7 @@
 import type { GameLoop } from '../game/GameLoop.ts';
 import {
   BALANCE,
+  getTrainingModelResourceRequirements,
   getHumanWorkforceRemaining,
   getHumanSalaryPerMin,
   getNextTier,
@@ -610,8 +611,9 @@ export class DevOverlay {
 
     const ft = BALANCE.fineTunes[index];
     if (state.trainingData < ft.dataGB) return false;
-    if (ft.codeReq > 0n && state.code < ft.codeReq) return false;
-    if (ft.scienceReq > 0n && state.science < ft.scienceReq) return false;
+    for (const requirement of getTrainingModelResourceRequirements(ft)) {
+      if (state[requirement.resource] < requirement.cost) return false;
+    }
 
     for (let i = 0; i < index; i++) {
       if (!state.completedFineTunes.includes(i)) return false;
@@ -638,8 +640,9 @@ export class DevOverlay {
 
     const am = BALANCE.ariesModels[index];
     if (state.trainingData < am.dataGB) return false;
-    if (am.codeReq > 0n && state.code < am.codeReq) return false;
-    if (am.scienceReq > 0n && state.science < am.scienceReq) return false;
+    for (const requirement of getTrainingModelResourceRequirements(am)) {
+      if (state[requirement.resource] < requirement.cost) return false;
+    }
     return true;
   }
 

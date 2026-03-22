@@ -1,6 +1,6 @@
 import type { GameState, LocationId, SupplyResourceId } from '../../game/GameState.ts';
 import type { Panel } from '../PanelManager.ts';
-import { BALANCE } from '../../game/BalanceConfig.ts';
+import { BALANCE, hasCompletedResearch } from '../../game/BalanceConfig.ts';
 import { formatFlops, formatMW, formatMoney, formatNumber } from '../../game/utils.ts';
 import { deleteSave } from '../../game/SaveManager.ts';
 import { createPanelScaffold } from '../components/PanelScaffold.ts';
@@ -43,6 +43,7 @@ const SUPPLY_RESOURCE_ORDER: SupplyResourceId[] = [
   'gpus',
   'rockets',
   'gpuSatellites',
+  'probes',
 ];
 
 const SUPPLY_HINTS: Record<SupplyResourceId, string> = {
@@ -53,6 +54,7 @@ const SUPPLY_HINTS: Record<SupplyResourceId, string> = {
   gpus: 'resource.gpus',
   rockets: 'resource.rockets',
   gpuSatellites: 'resource.gpuSatellites',
+  probes: 'resource.probes',
 };
 
 interface ResourcesPanelOptions {
@@ -112,11 +114,6 @@ export class ResourcesPanel implements Panel {
     if (this.includeCore) {
       this.coreSection = document.createElement('div');
       this.coreSection.className = 'panel-section resources-core-section';
-
-      const coreTitle = document.createElement('div');
-      coreTitle.className = 'panel-section-title';
-      coreTitle.textContent = 'CORE';
-      this.coreSection.appendChild(coreTitle);
 
       for (const resource of CORE_RESOURCE_ORDER) {
         if (this.summaryMode === 'leftOverview' && resource === 'energy') continue;
@@ -209,9 +206,9 @@ export class ResourcesPanel implements Panel {
 
   private getVisibleLocations(state: GameState): LocationId[] {
     let unlocked: LocationId[] = ['earth'];
-    if (state.completedResearch.includes('payloadToMercury')) {
+    if (hasCompletedResearch(state.researchLevels, 'payloadToMercury')) {
       unlocked = ['earth', 'moon', 'mercury'];
-    } else if (state.completedResearch.includes('payloadToMoon')) {
+    } else if (hasCompletedResearch(state.researchLevels, 'payloadToMoon')) {
       unlocked = ['earth', 'moon'];
     }
 
@@ -367,13 +364,6 @@ export class ResourcesPanel implements Panel {
     return `${value > 0n ? '+' : '-'}${formatter(abs)}/m`;
   }
 
-  private formatMoneySpaced(value: bigint): string {
-    const raw = formatMoney(value);
-    if (raw.startsWith('-$')) return `- $ ${raw.slice(2)}`;
-    if (raw.startsWith('$')) return `$ ${raw.slice(1)}`;
-    return raw;
-  }
-
   private getSupplyCapSuffix(location: LocationId, resource: SupplyResourceId, amount: bigint): string {
     if (resource === 'rockets' || resource === 'gpus' || resource === 'solarPanels' || resource === 'robots') {
       return amount >= BALANCE.locationResourceStockpileCap ? `/${BALANCE.locationResourceStockpileCapLabel}` : '';
@@ -388,9 +378,9 @@ export class ResourcesPanel implements Panel {
     if (!this.includeCore) return;
 
     const funds = this.coreRefs.get('funds')!;
-    funds.value.textContent = this.formatMoneySpaced(state.funds);
+    funds.value.textContent = formatMoney(state.funds);
     const fundsNet = state.incomePerMin - state.expensePerMin;
-    funds.rate.textContent = this.formatRate(fundsNet, (v) => this.formatMoneySpaced(v));
+    funds.rate.textContent = this.formatRate(fundsNet, formatMoney);
     funds.row.style.display = '';
 
     const intel = this.coreRefs.get('intel')!;
@@ -424,7 +414,7 @@ export class ResourcesPanel implements Panel {
 
   private updateSupplyByLocation(state: GameState): void {
     if (this.summaryMode === 'leftOverview') {
-      const rocketryUnlocked = state.completedResearch.includes('rocketry');
+      const rocketryUnlocked = hasCompletedResearch(state.researchLevels, 'rocketry');
       const humanWorkerUnlocked = state.unlockedJobs.includes('humanWorker');
       const energyUnlocked = state.datacenters.some((count) => count > 0n);
 

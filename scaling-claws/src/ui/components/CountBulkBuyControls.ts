@@ -37,6 +37,9 @@ export class CountBulkBuyControls {
   }
 
   setCount(count: number | bigint): void {
-    this.countEl.textContent = `${this.countPrefix}${formatNumber(count)}`;
+    const next = `${this.countPrefix}${formatNumber(count)}`;
+    if (this.countEl.textContent !== next) {
+      this.countEl.textContent = next;
+    }
   }
 }

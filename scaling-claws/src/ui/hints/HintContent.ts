@@ -119,6 +119,13 @@ export const HINTS = {
       <p>They consume panel/GPU/rocket supply-chain capacity before paying off in sustained output.</p>
     `,
   },
+  'resource.probes': {
+    title: 'Von Neumann Probes',
+    bodyHtml: `
+      <p>Self-replicating seed craft produced on Mercury for the final launch.</p>
+      <p>One finished probe is consumed when you trigger the endgame launch.</p>
+    `,
+  },
   'mechanic.jobs': {
     title: 'Jobs',
     bodyHtml: `

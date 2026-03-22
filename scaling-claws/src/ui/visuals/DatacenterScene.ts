@@ -8,7 +8,7 @@ import { clamp01 } from './lod.ts';
 import { createPixiSceneHost, replaceManagedTexture, textureFromCanvas } from './pixiHost.ts';
 import type { PixiSceneHost } from './pixiHost.ts';
 import { SeededRng } from './seededRng.ts';
-import { Container, Sprite, Texture } from 'pixi.js';
+import { Container, Particle, ParticleContainer, Sprite, Texture } from 'pixi.js';
 
 interface JobTerminalSample {
   jobType: JobType;
@@ -45,6 +45,23 @@ interface NetworkParticle {
   progress: number;
   speed: number;
   size: number;
+  rotation: number;
+}
+
+interface NetworkParticleProjection {
+  x: number;
+  y: number;
+  planeProgress: number;
+}
+
+interface CanvasRow {
+  firstCenterX: number;
+  y: number;
+  rackWidth: number;
+  rackHeight: number;
+  renderCount: number;
+  rowGap: number;
+  rackStartIndex: number;
 }
 
 const GPUS_PER_RACK = 80;
@@ -73,7 +90,7 @@ const MIC_MINI_WIDTH_PX = 52;
 const MIC_MINI_HEIGHT_PX = 86;
 const MIC_MINI_GAP_PX = 3;
 const MIC_MINI_SIDE_OFFSET_PX = -50;
-const NETWORK_PARTICLE_MAX_COUNT = 4000;
+const NETWORK_PARTICLE_MAX_COUNT = 2000;
 const NETWORK_PARTICLE_BASE_COUNT = 4;
 const NETWORK_RACKS_FOR_MAX_INTENSITY = 1_000_000;
 const NETWORK_PARTICLE_MIN_SPEED = 0.1;
@@ -183,14 +200,18 @@ export class DatacenterScene implements VisualScene {
   private backgroundSprite!: Sprite;
   private glowSprite!: Sprite;
   private rackContainer!: Container;
-  private networkContainer!: Container;
+  private outboundNetworkContainer!: ParticleContainer<Particle>;
+  private inboundNetworkContainer!: ParticleContainer<Particle>;
   private backgroundTexture: Texture | null = null;
   private rackTexture: Texture | null = null;
   private networkParticleTexture: Texture | null = null;
   private glowTexture: Texture | null = null;
   private rackSprites: Sprite[] = [];
-  private outboundParticleSprites: Sprite[] = [];
-  private inboundParticleSprites: Sprite[] = [];
+  private outboundParticleSprites: Particle[] = [];
+  private inboundParticleSprites: Particle[] = [];
+  private readonly rackRows: CanvasRow[] = [];
+  private rackRowCount = 0;
+  private readonly networkProjection: NetworkParticleProjection = { x: 0, y: 0, planeProgress: 0 };
 
   private cursorBlinkMs = 0;
   private cursorVisible = true;
@@ -252,11 +273,29 @@ export class DatacenterScene implements VisualScene {
     this.glowSprite = new Sprite(this.getGlowTexture());
     this.glowSprite.anchor.set(0.5, 0.5);
     this.rackContainer = new Container();
-    this.networkContainer = new Container();
+    this.outboundNetworkContainer = new ParticleContainer<Particle>({
+      dynamicProperties: {
+        position: true,
+        rotation: true,
+        vertex: true,
+        color: true,
+      },
+      texture: this.getNetworkParticleTexture(),
+    });
+    this.inboundNetworkContainer = new ParticleContainer<Particle>({
+      dynamicProperties: {
+        position: true,
+        rotation: true,
+        vertex: true,
+        color: true,
+      },
+      texture: this.getNetworkParticleTexture(),
+    });
 
     stage.addChild(this.backgroundSprite);
     stage.addChild(this.glowSprite);
-    stage.addChild(this.networkContainer);
+    stage.addChild(this.outboundNetworkContainer);
+    stage.addChild(this.inboundNetworkContainer);
     stage.addChild(this.rackContainer);
     this.pixiReady = true;
   }
@@ -399,7 +438,7 @@ export class DatacenterScene implements VisualScene {
       stale?.remove();
     }
 
-    this.updateMicMiniLayout(this.sceneEl.clientWidth);
+    this.updateMicMiniLayout(this.host.width);
   }
 
   private reconcileRackRow(
@@ -456,8 +495,8 @@ export class DatacenterScene implements VisualScene {
   }
 
   private updateFrontRackLayout(): boolean {
-    const sceneWidth = this.sceneEl.clientWidth;
-    const sceneHeight = this.sceneEl.clientHeight;
+    const sceneWidth = this.host.width;
+    const sceneHeight = this.host.height;
     if (sceneWidth <= 0 || sceneHeight <= 0) {
       return false;
     }
@@ -702,8 +741,8 @@ export class DatacenterScene implements VisualScene {
   }
 
   private renderPixi(nowMs: number): void {
-    const width = this.sceneEl.clientWidth;
-    const height = this.sceneEl.clientHeight;
+    const width = this.host.width;
+    const height = this.host.height;
     if (width <= 0 || height <= 0) {
       return;
     }
@@ -719,8 +758,8 @@ export class DatacenterScene implements VisualScene {
     if (width !== this.pixiWidth || height !== this.pixiHeight) {
       this.pixiWidth = width;
       this.pixiHeight = height;
-      this.host.app.renderer.resize(width, height);
       this.rebuildBackgroundTexture(width, height);
+      this.refreshNetworkParticleRotations(width, height);
     }
 
     const floorY = this.frontRackFloorY ?? (height - BACKGROUND_ROW_BOTTOM_OFFSET_PX);
@@ -782,8 +821,8 @@ export class DatacenterScene implements VisualScene {
       this.outboundNetworkParticles.length = 0;
       this.inboundNetworkParticles.length = 0;
       this.lastNetworkUpdateAtMs = 0;
-      this.hideUnusedPixiSprites(this.outboundParticleSprites, 0);
-      this.hideUnusedPixiSprites(this.inboundParticleSprites, 0);
+      this.hideUnusedParticles(this.outboundParticleSprites, 0);
+      this.hideUnusedParticles(this.inboundParticleSprites, 0);
       return;
     }
 
@@ -793,25 +832,28 @@ export class DatacenterScene implements VisualScene {
       NETWORK_PARTICLE_BASE_COUNT + ((NETWORK_PARTICLE_MAX_COUNT - NETWORK_PARTICLE_BASE_COUNT) * intensity),
     );
 
-    this.reconcileNetworkParticlePool(this.outboundNetworkParticles, targetCount, false);
-    this.reconcileNetworkParticlePool(this.inboundNetworkParticles, targetCount, true);
+    this.reconcileNetworkParticlePool(this.outboundNetworkParticles, targetCount, false, width, height, false);
+    this.reconcileNetworkParticlePool(this.inboundNetworkParticles, targetCount, true, width, height, true);
 
     const dtSec = this.getNetworkDeltaSeconds(nowMs);
     for (const particle of this.outboundNetworkParticles) {
       particle.progress += particle.speed * dtSec;
       if (particle.progress >= 1) {
         this.resetNetworkParticle(particle, true, false);
+        this.updateNetworkParticleRotation(particle, width, height, false);
       }
     }
     for (const particle of this.inboundNetworkParticles) {
       particle.progress -= particle.speed * dtSec;
       if (particle.progress <= 0) {
         this.resetNetworkParticle(particle, true, true);
+        this.updateNetworkParticleRotation(particle, width, height, true);
       }
     }
 
     const maxOpacity = clamp01(Math.log10(Math.max(1, this.sampledTotalRacks) + 1) / 20);
     this.updateNetworkParticlePoolSprites(
+      this.outboundNetworkContainer,
       this.outboundParticleSprites,
       this.outboundNetworkParticles,
       centerX,
@@ -823,6 +865,7 @@ export class DatacenterScene implements VisualScene {
       false,
     );
     this.updateNetworkParticlePoolSprites(
+      this.inboundNetworkContainer,
       this.inboundParticleSprites,
       this.inboundNetworkParticles,
       centerX,
@@ -839,9 +882,14 @@ export class DatacenterScene implements VisualScene {
     particles: NetworkParticle[],
     targetCount: number,
     spawnAtNearSide: boolean,
+    width: number,
+    height: number,
+    reverseDirection: boolean,
   ): void {
     while (particles.length < targetCount) {
-      particles.push(this.makeNetworkParticle(false, spawnAtNearSide));
+      const particle = this.makeNetworkParticle(false, spawnAtNearSide);
+      this.updateNetworkParticleRotation(particle, width, height, reverseDirection);
+      particles.push(particle);
     }
     while (particles.length > targetCount) {
       particles.pop();
@@ -849,7 +897,8 @@ export class DatacenterScene implements VisualScene {
   }
 
   private updateNetworkParticlePoolSprites(
-    spritePool: Sprite[],
+    container: ParticleContainer<Particle>,
+    spritePool: Particle[],
     particles: NetworkParticle[],
     centerX: number,
     convergenceY: number,
@@ -857,23 +906,26 @@ export class DatacenterScene implements VisualScene {
     height: number,
     floorY: number,
     maxOpacity: number,
-    reverseDirection: boolean,
+    _reverseDirection: boolean,
   ): void {
     const cullY = floorY - NETWORK_PARTICLE_CULL_ABOVE_FLOOR_PX;
-    this.syncPixiSpritePool(this.networkContainer, spritePool, particles.length, () => {
-      const sprite = new Sprite(this.getNetworkParticleTexture());
-      sprite.anchor.set(0.5, 0.5);
-      return sprite;
-    });
+    const texture = this.getNetworkParticleTexture();
+    container.texture = texture;
+    this.syncParticlePool(container, spritePool, particles.length, this.createNetworkParticleSprite);
+    const scaleX = 1 / Math.max(1, texture.orig.width);
+    const scaleY = 1 / Math.max(1, texture.orig.height);
+    const projection = this.networkProjection;
     let visibleCount = 0;
-    for (const particle of particles) {
-      const projection = this.projectNetworkParticle(
+    for (let idx = 0; idx < particles.length; idx++) {
+      const particle = particles[idx];
+      this.projectNetworkParticle(
         centerX,
         convergenceY,
         width,
         height,
         particle.lane,
         particle.progress,
+        projection,
       );
       if (projection.y >= cullY) {
         continue;
@@ -885,23 +937,20 @@ export class DatacenterScene implements VisualScene {
         thickness * 2.2,
         particle.size * projectedScale * (2.2 + (3.8 * projection.planeProgress)),
       );
-      const motionDx = reverseDirection ? -projection.dx : projection.dx;
-      const motionDy = reverseDirection ? -projection.dy : projection.dy;
       const sprite = spritePool[visibleCount];
       if (!sprite) {
         continue;
       }
-      sprite.visible = true;
       sprite.x = projection.x;
       sprite.y = projection.y;
-      sprite.width = length;
-      sprite.height = thickness;
-      sprite.rotation = Math.atan2(motionDy, motionDx);
+      sprite.scaleX = length * scaleX;
+      sprite.scaleY = thickness * scaleY;
+      sprite.rotation = particle.rotation;
       sprite.alpha = maxOpacity;
       visibleCount++;
       this.lastFrameDrawCalls++;
     }
-    this.hideUnusedPixiSprites(spritePool, visibleCount);
+    this.hideUnusedParticles(spritePool, visibleCount);
   }
 
   private getNetworkDeltaSeconds(nowMs: number): number {
@@ -921,6 +970,7 @@ export class DatacenterScene implements VisualScene {
       progress: 0,
       speed: NETWORK_PARTICLE_MIN_SPEED,
       size: NETWORK_PARTICLE_MIN_SIZE,
+      rotation: 0,
     };
     this.resetNetworkParticle(particle, startAtOrigin, spawnAtNearSide);
     return particle;
@@ -939,6 +989,28 @@ export class DatacenterScene implements VisualScene {
     particle.size = this.rng.nextRange(NETWORK_PARTICLE_MIN_SIZE, NETWORK_PARTICLE_MAX_SIZE);
   }
 
+  private refreshNetworkParticleRotations(width: number, height: number): void {
+    for (const particle of this.outboundNetworkParticles) {
+      this.updateNetworkParticleRotation(particle, width, height, false);
+    }
+    for (const particle of this.inboundNetworkParticles) {
+      this.updateNetworkParticleRotation(particle, width, height, true);
+    }
+  }
+
+  private updateNetworkParticleRotation(
+    particle: NetworkParticle,
+    width: number,
+    height: number,
+    reverseDirection: boolean,
+  ): void {
+    const halfSpan = width * NETWORK_PLANE_HALF_SPAN_RATIO;
+    const direction = reverseDirection ? -1 : 1;
+    const motionDx = direction * particle.lane * halfSpan;
+    const motionDy = direction * ((height * NETWORK_PLANE_TOP_Y_RATIO) - (height * NETWORK_VANISH_Y_RATIO));
+    particle.rotation = Math.atan2(motionDy, motionDx);
+  }
+
   private projectNetworkParticle(
     centerX: number,
     convergenceY: number,
@@ -946,7 +1018,8 @@ export class DatacenterScene implements VisualScene {
     height: number,
     lane: number,
     progress: number,
-  ): { x: number; y: number; dx: number; dy: number; planeProgress: number } {
+    out: NetworkParticleProjection,
+  ): void {
     const clampedProgress = clamp01(progress);
     const farDepth = Math.max(1.0001, NETWORK_PLANE_FAR_SCALE / Math.max(0.0001, NETWORK_PLANE_NEAR_SCALE));
     const depth = farDepth - ((farDepth - 1) * clampedProgress);
@@ -959,15 +1032,9 @@ export class DatacenterScene implements VisualScene {
     const halfSpan = width * NETWORK_PLANE_HALF_SPAN_RATIO;
     const targetX = centerX + (lane * halfSpan);
     const targetY = topY;
-    const x = centerX + ((targetX - centerX) * planeProgress);
-    const y = convergenceY + ((targetY - convergenceY) * planeProgress);
-    return {
-      x,
-      y,
-      dx: targetX - centerX,
-      dy: targetY - convergenceY,
-      planeProgress,
-    };
+    out.x = centerX + ((targetX - centerX) * planeProgress);
+    out.y = convergenceY + ((targetY - convergenceY) * planeProgress);
+    out.planeProgress = planeProgress;
   }
 
   private getNetworkParticleTexture(): Texture {
@@ -1025,17 +1092,7 @@ export class DatacenterScene implements VisualScene {
     const firstGap = this.frontRackGapPx;
     const depthSpan = Math.max(1, firstRackHeight * BACKGROUND_DEPTH_SPAN_RACK_HEIGHT_MULTIPLIER);
 
-    interface CanvasRow {
-      firstCenterX: number;
-      y: number;
-      rackWidth: number;
-      rackHeight: number;
-      renderCount: number;
-      rowGap: number;
-      rackStartIndex: number;
-    }
-
-    const rows: CanvasRow[] = [];
+    this.rackRowCount = 0;
     let drawnRacks = 0;
 
     for (let row = 0; row < 2048; row++) {
@@ -1065,15 +1122,15 @@ export class DatacenterScene implements VisualScene {
 
       const firstCenterX = centerX - (((colCount - 1) * (rackWidth + rowGap)) * 0.5);
       const y = floorY - (depth * depthSpan);
-      rows.push({
-        firstCenterX,
-        y,
-        rackWidth,
-        rackHeight,
-        renderCount,
-        rowGap,
-        rackStartIndex: drawnRacks,
-      });
+      const rowState = this.getRackRow(this.rackRowCount);
+      rowState.firstCenterX = firstCenterX;
+      rowState.y = y;
+      rowState.rackWidth = rackWidth;
+      rowState.rackHeight = rackHeight;
+      rowState.renderCount = renderCount;
+      rowState.rowGap = rowGap;
+      rowState.rackStartIndex = drawnRacks;
+      this.rackRowCount++;
 
       drawnRacks += renderCount;
     }
@@ -1081,14 +1138,10 @@ export class DatacenterScene implements VisualScene {
     const fadeStartIndex = MAX_CANVAS_RACKS * CANVAS_FADE_START_RATIO;
     const fadeSpan = Math.max(1, MAX_CANVAS_RACKS - fadeStartIndex);
     let visibleSpriteCount = 0;
-    this.syncPixiSpritePool(this.rackContainer, this.rackSprites, drawnRacks, () => {
-      const sprite = new Sprite(this.getRackTexture());
-      sprite.anchor.set(0.5, 1);
-      return sprite;
-    });
+    this.syncPixiSpritePool(this.rackContainer, this.rackSprites, drawnRacks, this.createRackSprite);
 
-    for (let rowIdx = rows.length - 1; rowIdx >= 0; rowIdx--) {
-      const row = rows[rowIdx];
+    for (let rowIdx = this.rackRowCount - 1; rowIdx >= 0; rowIdx--) {
+      const row = this.rackRows[rowIdx];
       const rowMidIndex = row.rackStartIndex + (row.renderCount * 0.5);
       const fadeT = clamp01((rowMidIndex - fadeStartIndex) / fadeSpan);
       const rowAlpha = 1 - ((1 - CANVAS_FADE_MIN_ALPHA) * fadeT);
@@ -1200,6 +1253,38 @@ export class DatacenterScene implements VisualScene {
     return this.glowTexture;
   }
 
+  private getRackRow(index: number): CanvasRow {
+    const existing = this.rackRows[index];
+    if (existing) {
+      return existing;
+    }
+    const created: CanvasRow = {
+      firstCenterX: 0,
+      y: 0,
+      rackWidth: 0,
+      rackHeight: 0,
+      renderCount: 0,
+      rowGap: 0,
+      rackStartIndex: 0,
+    };
+    this.rackRows.push(created);
+    return created;
+  }
+
+  private readonly createRackSprite = (): Sprite => {
+    const sprite = new Sprite(this.getRackTexture());
+    sprite.anchor.set(0.5, 1);
+    return sprite;
+  };
+
+  private readonly createNetworkParticleSprite = (): Particle => {
+    return new Particle({
+      texture: this.getNetworkParticleTexture(),
+      anchorX: 0.5,
+      anchorY: 0.5,
+    });
+  };
+
   private syncPixiSpritePool(
     container: Container,
     pool: Sprite[],
@@ -1213,9 +1298,30 @@ export class DatacenterScene implements VisualScene {
     }
   }
 
+  private syncParticlePool(
+    container: ParticleContainer<Particle>,
+    pool: Particle[],
+    targetCount: number,
+    createParticle: () => Particle,
+  ): void {
+    while (pool.length < targetCount) {
+      const particle = createParticle();
+      container.addParticle(particle);
+      pool.push(particle);
+    }
+  }
+
   private hideUnusedPixiSprites(pool: Sprite[], usedCount: number): void {
     for (let i = usedCount; i < pool.length; i++) {
       pool[i].visible = false;
+    }
+  }
+
+  private hideUnusedParticles(pool: Particle[], usedCount: number): void {
+    for (let i = usedCount; i < pool.length; i++) {
+      pool[i].alpha = 0;
+      pool[i].scaleX = 0;
+      pool[i].scaleY = 0;
     }
   }
 }

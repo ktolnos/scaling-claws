@@ -38,14 +38,6 @@
   <rect x="62.5" y="71" width="7" height="2.8" rx="0.6" fill="#9dd4ff"/>
   <rect x="62.5" y="75.5" width="7" height="2.8" rx="0.6" fill="#67dfba"/>
 
-  <rect x="25" y="3.8" width="8" height="2.2" rx="0.8" fill="#8eb5ec"/>
-  <rect x="36" y="3.8" width="8" height="2.2" rx="0.8" fill="#8eb5ec"/>
-  <rect x="47" y="3.8" width="8" height="2.2" rx="0.8" fill="#8eb5ec"/>
-  <rect x="58" y="3.8" width="8" height="2.2" rx="0.8" fill="#8eb5ec"/>
-  <rect x="69" y="3.8" width="8" height="2.2" rx="0.8" fill="#8eb5ec"/>
-  <rect x="80" y="3.8" width="8" height="2.2" rx="0.8" fill="#8eb5ec"/>
-  <rect x="91" y="3.8" width="8" height="2.2" rx="0.8" fill="#8eb5ec"/>
-
   <circle cx="46" cy="12.5" r="1.4" fill="#67dfba"/>
   <circle cx="86" cy="12.5" r="1.4" fill="#67dfba"/>
   <path d="M20 85 H112" stroke="#23364f" stroke-width="3"/>

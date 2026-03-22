@@ -148,7 +148,7 @@ function tickGpuEra(state: GameState, dtMs: number): void {
     }
   }
 
-  if (state.computeAutoAllocationEnabled && isComputeAutoAllocationUnlocked(state.completedResearch)) {
+  if (state.computeAutoAllocationEnabled && isComputeAutoAllocationUnlocked(state.researchLevels)) {
     autoAdjustComputeAllocations(state);
   }
 
@@ -194,7 +194,7 @@ function tickGpuEra(state: GameState, dtMs: number): void {
 
   // API Services
   if (state.apiUnlocked) {
-    if (state.apiAutoPriceEnabled && isApiAutoPricingUnlocked(state.completedResearch)) {
+    if (state.apiAutoPriceEnabled && isApiAutoPricingUnlocked(state.researchLevels)) {
       autoAdjustApiPrice(state);
     }
 
@@ -384,10 +384,6 @@ export function goSelfHosted(state: GameState): boolean {
 
   state.subscriptionTier = 'basic';
 
-  state.pendingFlavorTexts.push(
-    '"Subscriptions cancelled. You are no longer ClawedCode\'s best customer. You are their competitor."'
-  );
-
   return true;
 }
 
@@ -403,12 +399,6 @@ export function buyGpu(state: GameState, amount: number): boolean {
   state.funds -= cost;
   state.locationResources.earth.gpus = earthGpuCount + amountB;
   reconcileEarthGpuInstallation(state);
-
-  if (earthGpuCount <= 0n) {
-    state.pendingFlavorTexts.push(
-      '"GPU #1 has arrived. Your apartment\'s circuit breaker has opinions about this."'
-    );
-  }
 
   return true;
 }
@@ -529,7 +519,7 @@ export function setApiAutoPriceEnabled(state: GameState, enabled: boolean): bool
     return true;
   }
 
-  if (!isApiAutoPricingUnlocked(state.completedResearch)) return false;
+  if (!isApiAutoPricingUnlocked(state.researchLevels)) return false;
   state.apiAutoPriceEnabled = true;
   return true;
 }
@@ -603,7 +593,7 @@ export function setComputeAutoAllocationEnabled(state: GameState, enabled: boole
     return true;
   }
 
-  if (!isComputeAutoAllocationUnlocked(state.completedResearch)) return false;
+  if (!isComputeAutoAllocationUnlocked(state.researchLevels)) return false;
   state.computeAutoAllocationEnabled = true;
   return true;
 }

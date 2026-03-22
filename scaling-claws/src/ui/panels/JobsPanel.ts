@@ -6,6 +6,7 @@ import {
   getGpuSatellitePflopsPerUnit,
   getHumanWorkforceRemaining,
   getHumanSalaryPerMin,
+  hasCompletedResearch,
   getNextTier,
 } from '../../game/BalanceConfig.ts';
 import type { HumanJobType, JobType } from '../../game/BalanceConfig.ts';
@@ -759,7 +760,7 @@ export class JobsPanel implements Panel {
       let requirementsMet = true;
       if (!isHuman && !isRobotWorker) {
         const agentEligible = state.intelligence >= config.agentIntelReq &&
-          (!config.agentResearchReq || config.agentResearchReq.every(r => state.completedResearch.includes(r)));
+          (!config.agentResearchReq || config.agentResearchReq.every(r => hasCompletedResearch(state.researchLevels, r)));
 
         if (!agentEligible) {
           refs.reqEl.innerHTML = `(req ${resourceLabelHtml('intel')} ${config.agentIntelReq})`;
@@ -796,7 +797,7 @@ export class JobsPanel implements Panel {
         const countNum = Math.floor(fromBigInt(count));
         refs.addGroup.update(countNum, (amount) => {
           const totalCost = mulB(toBigInt(amount), BALANCE.robotImportCost);
-          return state.completedResearch.includes('robotics1') && state.funds >= totalCost;
+          return hasCompletedResearch(state.researchLevels, 'robotics1') && state.funds >= totalCost;
         }, BALANCE.robotWorkerBuyLimit, () => {
           flashElement(refs.countEl);
         });
@@ -911,7 +912,7 @@ export class JobsPanel implements Panel {
 
         const countNum = Math.floor(fromBigInt(count));
         const agentEligible = state.intelligence >= config.agentIntelReq &&
-          (!config.agentResearchReq || config.agentResearchReq.every(r => state.completedResearch.includes(r)));
+          (!config.agentResearchReq || config.agentResearchReq.every(r => hasCompletedResearch(state.researchLevels, r)));
 
         const unassignedHired = state.agentPools['unassigned'].totalCount;
 

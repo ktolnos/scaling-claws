@@ -1,4 +1,5 @@
 import type { GameState } from '../game/GameState.ts';
+import { hasCompletedResearch } from '../game/BalanceConfig.ts';
 import { formatFlops, formatNumber, formatMW } from '../game/utils.ts';
 import { deleteSave } from '../game/SaveManager.ts';
 import { emojiHtml, locationLabelHtml, moneyWithEmojiHtml, resourceLabelHtml } from './emoji.ts';
@@ -170,7 +171,7 @@ export class TopBar {
 
   update(state: GameState): void {
     const energyPanelUnlocked = state.isPostGpuTransition &&
-      (state.completedResearch.includes('rocketry') || state.datacenters.some(c => c > 0n));
+      (hasCompletedResearch(state.researchLevels, 'rocketry') || state.datacenters.some(c => c > 0n));
 
     this.fundsValueEl.innerHTML = moneyWithEmojiHtml(state.funds, 'funds');
     this.fundsIncomeEl.innerHTML = state.incomePerMin > 0n ? '+' + moneyWithEmojiHtml(state.incomePerMin, 'funds') + '/m' : '';
@@ -244,7 +245,7 @@ export class TopBar {
     html += this.renderBreakdownSection(`${resourceLabelHtml('labor')} (u/min)`, state.resourceBreakdown.labor, (v) => formatNumber(v));
 
     const energyPanelUnlocked = state.isPostGpuTransition &&
-      (state.completedResearch.includes('rocketry') || state.datacenters.some(c => c > 0n));
+      (hasCompletedResearch(state.researchLevels, 'rocketry') || state.datacenters.some(c => c > 0n));
 
     if (energyPanelUnlocked) {
       html += '<div class="breakdown-section">';

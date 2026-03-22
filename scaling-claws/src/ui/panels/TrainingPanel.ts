@@ -1,6 +1,6 @@
 import type { GameState } from '../../game/GameState.ts';
 import type { Panel } from '../PanelManager.ts';
-import { BALANCE } from '../../game/BalanceConfig.ts';
+import { BALANCE, getResearchCurrentLevel, getResearchMaxLevel } from '../../game/BalanceConfig.ts';
 import type { ResearchId } from '../../game/BalanceConfig.ts';
 import { formatNumber } from '../../game/utils.ts';
 import { dispatchGameAction } from '../../game/ActionDispatcher.ts';
@@ -12,8 +12,48 @@ import {
 } from '../../game/systems/ResearchSystem.ts';
 import { createPanelScaffold } from '../components/PanelScaffold.ts';
 import { emojiHtml } from '../emoji.ts';
+import type { UiEmojiKey } from '../emoji.ts';
 import { setHintTarget } from '../hints/HintUtils.ts';
 import { flashElement } from '../UIUtils.ts';
+
+const RESEARCH_ICON_BY_ID: Record<ResearchId, UiEmojiKey> = {
+  algoEfficiency1: 'flops',
+  algoEfficiency2: 'flops',
+  algoEfficiency3: 'flops',
+  algoEfficiency4: 'flops',
+  apiAutoPricing: 'users',
+  computeAutoAllocation: 'flops',
+  synthData2: 'data',
+  synthData3: 'data',
+  syntheticData1: 'data',
+  syntheticData2: 'data',
+  syntheticData3: 'data',
+  gpuArch1: 'gpus',
+  gpuArch2: 'gpus',
+  gpuArch3: 'gpus',
+  solarTechnology: 'solarPanels',
+  chipManufacturing: 'gpus',
+  robotics1: 'robots',
+  robotFactoryEngineering1: 'robots',
+  moonRobotics: 'moon',
+  mercuryRobotics: 'mercury',
+  rocketry: 'rockets',
+  payloadToMoon: 'moon',
+  payloadToMercury: 'mercury',
+  moonMineEngineering: 'moon',
+  moonChipManufacturing: 'moon',
+  moonMassDrivers: 'moon',
+  reusableRockets1: 'rockets',
+  reusableRockets2: 'rockets',
+  reusableRockets3: 'rockets',
+  robotics2: 'robots',
+  robotics3: 'robots',
+  facilityThroughput1: 'supply',
+  facilityThroughput2: 'supply',
+  jobThroughput1: 'code',
+  jobThroughput2: 'code',
+  vonNeumannProbes: 'probes',
+};
 
 export class TrainingPanel implements Panel {
   readonly el: HTMLElement;
@@ -27,6 +67,9 @@ export class TrainingPanel implements Panel {
     btn: HTMLButtonElement;
     descEl: HTMLDivElement;
     metricEl: HTMLDivElement;
+    costAmountEl: HTMLSpanElement;
+    costIconEl: HTMLSpanElement;
+    costLabelEl: HTMLSpanElement;
   }> = new Map();
 
   constructor(state: GameState) {
@@ -113,8 +156,17 @@ export class TrainingPanel implements Panel {
         }
 
         const nameEl = document.createElement('strong');
-        nameEl.textContent = r.name;
+        nameEl.style.display = 'inline-flex';
+        nameEl.style.alignItems = 'center';
+        nameEl.style.gap = '6px';
         nameEl.style.lineHeight = '1.2';
+        const iconEl = document.createElement('span');
+        iconEl.innerHTML = emojiHtml(RESEARCH_ICON_BY_ID[r.id]);
+        iconEl.setAttribute('aria-hidden', 'true');
+        const nameTextEl = document.createElement('span');
+        nameTextEl.textContent = r.name;
+        nameEl.appendChild(iconEl);
+        nameEl.appendChild(nameTextEl);
 
         const descEl = document.createElement('div');
         descEl.style.fontSize = '0.72rem';
@@ -138,30 +190,46 @@ export class TrainingPanel implements Panel {
         btn.style.flex = '0 0 132px';
         btn.style.textAlign = 'center';
         btn.style.whiteSpace = 'nowrap';
+        const costAmountEl = document.createElement('span');
+        const costIconEl = document.createElement('span');
+        const costLabelEl = document.createElement('span');
+        btn.appendChild(costAmountEl);
+        btn.appendChild(document.createTextNode(' '));
+        btn.appendChild(costIconEl);
+        btn.appendChild(document.createTextNode(' '));
+        btn.appendChild(costLabelEl);
         row.appendChild(btn);
 
         this.researchListEl.appendChild(row);
-        refs = { row, btn, descEl, metricEl };
+        refs = { row, btn, descEl, metricEl, costAmountEl, costIconEl, costLabelEl };
         this.researchRows.set(r.id, refs);
       }
 
       refs.descEl.textContent = r.description;
       const quantityPreview = getResearchQuantityPreview(state, r.id);
+      const currentLevel = getResearchCurrentLevel(state.researchLevels, r.id);
+      const maxLevel = getResearchMaxLevel(r);
+      const nextLevel = Math.min(currentLevel + 1, maxLevel);
+      const levelText = Number.isFinite(maxLevel)
+        ? `Lv ${currentLevel} -> ${nextLevel}/${maxLevel}`
+        : `Lv ${currentLevel} -> ${currentLevel + 1}`;
       if (quantityPreview) {
         refs.metricEl.style.display = '';
         refs.metricEl.innerHTML =
-          `${quantityPreview.label}: ` +
+          `${levelText} | ${quantityPreview.label}: ` +
           `${emojiHtml(quantityPreview.emoji)} ${formatNumber(quantityPreview.current)}${quantityPreview.unit} ` +
           `-> ${emojiHtml(quantityPreview.emoji)} ${formatNumber(quantityPreview.next)}${quantityPreview.unit}`;
       } else {
-        refs.metricEl.style.display = 'none';
-        refs.metricEl.innerHTML = '';
+        refs.metricEl.style.display = '';
+        refs.metricEl.textContent = levelText;
       }
 
       const currentCost = getResearchCurrentCost(state, r.id);
       const costResource = r.costResource ?? 'science';
       const costLabel = costResource === 'code' ? 'Code' : 'Science';
-      refs.btn.innerHTML = `${formatNumber(currentCost)} ${emojiHtml(costResource)} ${costLabel}`;
+      refs.costAmountEl.textContent = formatNumber(currentCost);
+      refs.costIconEl.innerHTML = emojiHtml(costResource);
+      refs.costLabelEl.textContent = costLabel;
       const rowBtn = refs.btn;
       refs.btn.onclick = () => {
         const actionResult = dispatchGameAction(this.state, { type: 'purchaseResearch', id: r.id });

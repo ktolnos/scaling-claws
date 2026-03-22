@@ -1,5 +1,5 @@
 import { BALANCE, getGpuTargetPrice } from './BalanceConfig.ts';
-import type { SubscriptionTier, JobType } from './BalanceConfig.ts';
+import type { SubscriptionTier, JobType, ResearchLevelState } from './BalanceConfig.ts';
 import { toBigInt, scaleBigInt } from './utils.ts';
 
 export interface JobPool {
@@ -35,7 +35,7 @@ export interface HumanPool {
 }
 
 export type LocationId = 'earth' | 'moon' | 'mercury';
-export type SupplyResourceId = 'material' | 'solarPanels' | 'robots' | 'gpus' | 'rockets' | 'gpuSatellites' | 'labor';
+export type SupplyResourceId = 'material' | 'solarPanels' | 'robots' | 'gpus' | 'rockets' | 'gpuSatellites' | 'labor' | 'probes';
 export type FacilityId =
   | 'earthMaterialMine'
   | 'earthSolarFactory'
@@ -51,7 +51,8 @@ export type FacilityId =
   | 'moonMassDriver'
   | 'mercuryMaterialMine'
   | 'mercuryRobotFactory'
-  | 'mercuryDysonSwarmFacility';
+  | 'mercuryDysonSwarmFacility'
+  | 'mercuryProbeFactory';
 export type TransportRouteId = 'earthOrbit' | 'earthMoon' | 'moonOrbit' | 'moonMercury' | 'mercurySun';
 export type TransportPayloadId = 'gpuSatellites' | 'gpus' | 'solarPanels' | 'robots';
 
@@ -63,6 +64,7 @@ export interface LocationResourceState {
   rockets: bigint;
   gpuSatellites: bigint;
   labor: bigint;
+  probes: bigint;
   installedGpus: bigint;
   installedSolarPanels: bigint;
 }
@@ -75,6 +77,7 @@ export interface LocationRateState {
   rockets: bigint;
   gpuSatellites: bigint;
   labor: bigint;
+  probes: bigint;
 }
 
 export interface LocationFacilityState {
@@ -93,6 +96,7 @@ export interface LocationFacilityState {
   mercuryMaterialMine: bigint;
   mercuryRobotFactory: bigint;
   mercuryDysonSwarmFacility: bigint;
+  mercuryProbeFactory: bigint;
 }
 
 export interface LocationFacilityRateState {
@@ -111,6 +115,7 @@ export interface LocationFacilityRateState {
   mercuryMaterialMine: number;
   mercuryRobotFactory: number;
   mercuryDysonSwarmFacility: number;
+  mercuryProbeFactory: number;
 }
 
 export interface TransportBatch {
@@ -200,7 +205,7 @@ export interface GameState {
   sciencePerMin: bigint;
 
   // Research
-  completedResearch: string[];
+  researchLevels: ResearchLevelState;
   synthDataRate: bigint;          // computed
   algoEfficiencyBonus: number;    // computed: multiplier for training speed
   gpuFlopsBonus: number;          // computed: multiplier for GPU PFLOPS
@@ -215,7 +220,12 @@ export interface GameState {
   moonLaunchCarry: number;
   mercuryLaunchCarry: number;
   earthLaunchesUsedLastTick: number;
+  earthOrbitLaunchesUsedLastTick: number;
+  earthMoonLaunchesUsedLastTick: number;
   earthLaunchCount: bigint;
+  earthOrbitLaunchCount: bigint;
+  earthMoonLaunchCount: bigint;
+  moonMercuryLaunchCount: bigint;
   rocketLossPct: number;
 
   // API Services
@@ -276,10 +286,6 @@ export interface GameState {
   // End state
   gameWon: boolean;
 
-  // Flavor text
-  pendingFlavorTexts: string[];
-  shownFlavorTexts: string[];
-
   // UI state - GameState is the single source of truth for UI persistence.
   // Do not mirror this state in separate UI manager fields.
   openedTabs: Record<string, boolean>;
@@ -296,6 +302,7 @@ function createEmptyLocationResources(): LocationResourceState {
     rockets: 0n,
     gpuSatellites: 0n,
     labor: 0n,
+    probes: 0n,
     installedGpus: 0n,
     installedSolarPanels: 0n,
   };
@@ -310,6 +317,7 @@ function createEmptyLocationRates(): LocationRateState {
     rockets: 0n,
     gpuSatellites: 0n,
     labor: 0n,
+    probes: 0n,
   };
 }
 
@@ -330,6 +338,7 @@ function createEmptyLocationFacilities(): LocationFacilityState {
     mercuryMaterialMine: 0n,
     mercuryRobotFactory: 0n,
     mercuryDysonSwarmFacility: 0n,
+    mercuryProbeFactory: 0n,
   };
 }
 
@@ -350,6 +359,7 @@ function createEmptyFacilityRates(): LocationFacilityRateState {
     mercuryMaterialMine: 0,
     mercuryRobotFactory: 0,
     mercuryDysonSwarmFacility: 0,
+    mercuryProbeFactory: 0,
   };
 }
 
@@ -395,6 +405,7 @@ function createInitialPausedFacilities(): Record<FacilityId, boolean> {
     mercuryMaterialMine: false,
     mercuryRobotFactory: false,
     mercuryDysonSwarmFacility: false,
+    mercuryProbeFactory: false,
   };
 }
 
@@ -505,7 +516,7 @@ export function createInitialState(): GameState {
     sciencePerMin: 0n,
 
     // Research
-    completedResearch: [],
+    researchLevels: {},
     synthDataRate: 0n,
     algoEfficiencyBonus: 1,
     gpuFlopsBonus: 1,
@@ -519,7 +530,12 @@ export function createInitialState(): GameState {
     moonLaunchCarry: 0,
     mercuryLaunchCarry: 0,
     earthLaunchesUsedLastTick: 0,
+    earthOrbitLaunchesUsedLastTick: 0,
+    earthMoonLaunchesUsedLastTick: 0,
     earthLaunchCount: 0n,
+    earthOrbitLaunchCount: 0n,
+    earthMoonLaunchCount: 0n,
+    moonMercuryLaunchCount: 0n,
     rocketLossPct: 1,
 
     // Space
@@ -574,9 +590,6 @@ export function createInitialState(): GameState {
     usedCores: toBigInt(1),
 
     gameWon: false,
-
-    pendingFlavorTexts: [],
-    shownFlavorTexts: [],
     openedTabs: {},
     tabAlerts: {},
     selectedTabId: null,

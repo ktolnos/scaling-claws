@@ -1,6 +1,13 @@
 import type { GameState } from '../GameState.ts';
-import { BALANCE } from '../BalanceConfig.ts';
+import { BALANCE, getTrainingModelResourceRequirements } from '../BalanceConfig.ts';
 import { toBigInt, divB, scaleB, mulB } from '../utils.ts';
+
+function canAffordTrainingModelResources(state: GameState, indexConfig: typeof BALANCE.fineTunes[number]): boolean {
+  for (const requirement of getTrainingModelResourceRequirements(indexConfig)) {
+    if (state[requirement.resource] < requirement.cost) return false;
+  }
+  return true;
+}
 
 export function tickTraining(state: GameState, dtMs: number): void {
   if (!state.isPostGpuTransition) return;
@@ -20,10 +27,6 @@ export function tickTraining(state: GameState, dtMs: number): void {
       state.intelligence = ft.intel;
       state.currentFineTuneIndex = -1;
       state.fineTuneProgress = 0n;
-
-      state.pendingFlavorTexts.push(
-        '"' + ft.name + ' passed every benchmark. The clients are impressed."'
-      );
     }
   }
 
@@ -38,10 +41,6 @@ export function tickTraining(state: GameState, dtMs: number): void {
       state.intelligence = am.intel;
       state.ariesModelIndex = -1;
       state.ariesProgress = 0n;
-
-      state.pendingFlavorTexts.push(
-        '"' + am.name + ' is online. Intelligence: ' + am.intel + '."'
-      );
     }
   }
 }
@@ -54,8 +53,7 @@ export function startFineTune(state: GameState, index: number): boolean {
 
   const ft = BALANCE.fineTunes[index];
   if (state.trainingData < ft.dataGB) return false;
-  if (ft.codeReq > 0n && state.code < ft.codeReq) return false;
-  if (ft.scienceReq > 0n && state.science < ft.scienceReq) return false;
+  if (!canAffordTrainingModelResources(state, ft)) return false;
 
   for (let i = 0; i < index; i++) {
     if (!state.completedFineTunes.includes(i)) return false;
@@ -81,8 +79,7 @@ export function startAriesTraining(state: GameState, index: number): boolean {
 
   const am = BALANCE.ariesModels[index];
   if (state.trainingData < am.dataGB) return false;
-  if (am.codeReq > 0n && state.code < am.codeReq) return false;
-  if (am.scienceReq > 0n && state.science < am.scienceReq) return false;
+  if (!canAffordTrainingModelResources(state, am)) return false;
 
   state.ariesModelIndex = index;
   state.ariesProgress = 0n;

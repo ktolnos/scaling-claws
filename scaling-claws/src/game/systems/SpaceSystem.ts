@@ -1,4 +1,4 @@
-import { BALANCE, getGpuSatellitePowerMWPerUnit } from '../BalanceConfig.ts';
+import { BALANCE, getGpuSatellitePowerMWPerUnit, hasCompletedResearch } from '../BalanceConfig.ts';
 import type { GameState, TransportPayloadId, TransportRouteId } from '../GameState.ts';
 import { fromBigInt, mulB, SCALE, toBigInt } from '../utils.ts';
 import { reconcileEarthGpuInstallation } from './GpuState.ts';
@@ -40,6 +40,11 @@ function ensureLogisticsState(state: GameState): void {
     ...defaults,
     ...(state.logisticsAutoQueue ?? {}),
   };
+  state.earthOrbitLaunchesUsedLastTick = state.earthOrbitLaunchesUsedLastTick ?? 0;
+  state.earthOrbitLaunchCount = state.earthOrbitLaunchCount ?? 0n;
+  state.earthMoonLaunchesUsedLastTick = state.earthMoonLaunchesUsedLastTick ?? 0;
+  state.earthMoonLaunchCount = state.earthMoonLaunchCount ?? 0n;
+  state.moonMercuryLaunchCount = state.moonMercuryLaunchCount ?? 0n;
 }
 
 function normalizeLogisticsQuantities(state: GameState): void {
@@ -91,6 +96,31 @@ function getTransitMs(route: TransportRouteId): number {
   if (route === 'earthMoon') return BALANCE.routeEarthMoonTransitMs;
   if (route === 'mercurySun') return BALANCE.routeEarthOrbitTransitMs;
   return BALANCE.routeMoonMercuryTransitMs;
+}
+
+function flushInstantMercurySunRoute(state: GameState): void {
+  const key = orderKey('mercurySun', 'gpuSatellites');
+  const queued = toWholeUnits(state.logisticsOrders[key] || 0n);
+  const inTransit = toWholeUnits(state.logisticsInTransit[key] || 0n);
+  let recovered = queued + inTransit;
+
+  if (state.transportBatches.length > 0) {
+    const remaining = [] as typeof state.transportBatches;
+    for (const batch of state.transportBatches) {
+      if (batch.route === 'mercurySun' && batch.payload === 'gpuSatellites') {
+        recovered += toWholeUnits(batch.amount);
+      } else {
+        remaining.push(batch);
+      }
+    }
+    state.transportBatches = remaining;
+  }
+
+  state.logisticsOrders[key] = 0n;
+  state.logisticsInTransit[key] = 0n;
+  if (recovered > 0n) {
+    addToDestination(state, 'mercurySun', 'gpuSatellites', recovered);
+  }
 }
 
 function getRouteLaunchesPerMin(state: GameState, route: TransportRouteId): number {
@@ -236,6 +266,16 @@ function launchRoute(state: GameState, route: TransportRouteId, dtMs: number, no
     consumeEarthRocketsForLaunches(state, launchesConsumed);
     state.earthLaunchesUsedLastTick += launchesConsumed;
     state.earthLaunchCount += BigInt(launchesConsumed);
+    if (route === 'earthOrbit') {
+      state.earthOrbitLaunchesUsedLastTick += launchesConsumed;
+      state.earthOrbitLaunchCount += BigInt(launchesConsumed);
+    }
+    if (route === 'earthMoon') {
+      state.earthMoonLaunchesUsedLastTick += launchesConsumed;
+      state.earthMoonLaunchCount += BigInt(launchesConsumed);
+    }
+  } else if (route === 'moonMercury') {
+    state.moonMercuryLaunchCount += BigInt(launchesConsumed);
   }
 }
 
@@ -261,8 +301,15 @@ function autoQueuePayload(state: GameState, route: TransportRouteId, payload: Tr
   if (payload === 'solarPanels') source.solarPanels -= available;
   if (payload === 'robots') source.robots -= available;
 
-  state.logisticsOrders[key] = toWholeUnits(state.logisticsOrders[key] || 0n) + available;
   state.logisticsSent[key] = toWholeUnits(state.logisticsSent[key] || 0n) + available;
+  if (route === 'mercurySun' && payload === 'gpuSatellites') {
+    addToDestination(state, route, payload, available);
+    state.logisticsOrders[key] = 0n;
+    state.logisticsInTransit[key] = 0n;
+    return;
+  }
+
+  state.logisticsOrders[key] = toWholeUnits(state.logisticsOrders[key] || 0n) + available;
 }
 
 function autoQueueEnabledPayloads(state: GameState): void {
@@ -279,10 +326,13 @@ export function tickSpace(state: GameState, dtMs: number): void {
   const now = state.time;
   ensureLogisticsState(state);
   normalizeLogisticsQuantities(state);
+  flushInstantMercurySunRoute(state);
   processDeliveries(state, now);
   state.earthLaunchesUsedLastTick = 0;
+  state.earthOrbitLaunchesUsedLastTick = 0;
+  state.earthMoonLaunchesUsedLastTick = 0;
 
-  state.spaceUnlocked = state.completedResearch.includes('rocketry');
+  state.spaceUnlocked = hasCompletedResearch(state.researchLevels, 'rocketry');
   if (!state.spaceUnlocked) {
     state.orbitalPowerMW = 0n;
     state.dysonSwarmPowerMW = 0n;
@@ -361,17 +411,13 @@ export function clearQueuedPayload(state: GameState, route: TransportRouteId, pa
 }
 
 export function launchVonNeumannProbe(state: GameState): boolean {
-  if (!state.completedResearch.includes('vonNeumannProbes')) return false;
+  if (!hasCompletedResearch(state.researchLevels, 'vonNeumannProbes')) return false;
   if (state.gameWon) return false;
+  if (state.locationResources.mercury.probes < toBigInt(1)) return false;
 
-  const moonHasLaunch = state.locationFacilities.moon.moonMassDriver > 0n;
-  if (!moonHasLaunch) {
-    if (state.locationResources.earth.rockets <= 0n) return false;
-    state.locationResources.earth.rockets -= toBigInt(1);
-  }
+  state.locationResources.mercury.probes -= toBigInt(1);
 
   state.gameWon = true;
-  state.pendingFlavorTexts.push('"Von Neumann probe launch confirmed. Expansion is now irreversible."');
   reconcileEarthGpuInstallation(state);
   return true;
 }

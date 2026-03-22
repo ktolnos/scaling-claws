@@ -7,7 +7,7 @@ import { createInitialState } from './game/GameState.ts';
 import type { GameState } from './game/GameState.ts';
 // NOTE: DO NOT add migrations here. The game is in active development and breaking changes to saves are currently acceptable.
 import { GameLoop } from './game/GameLoop.ts';
-import { BALANCE } from './game/BalanceConfig.ts';
+import { BALANCE, hasCompletedResearch } from './game/BalanceConfig.ts';
 import { saveGame, loadGame } from './game/SaveManager.ts';
 import { PanelManager } from './ui/PanelManager.ts';
 import type { PanelPlacement } from './ui/PanelManager.ts';
@@ -20,11 +20,12 @@ import { ResourcesPanel } from './ui/panels/ResourcesPanel.ts';
 import { LocationPanel } from './ui/panels/LocationPanel.ts';
 import { UI_EMOJI } from './ui/emoji.ts';
 import { VisualDirector } from './ui/visuals/VisualDirector.ts';
-import { Ticker } from './ui/components/Ticker.ts';
 import { HintOverlay } from './ui/hints/HintOverlay.ts';
+import { EndgameOverlay } from './ui/EndgameOverlay.ts';
 import { DevOverlay } from './dev/DevOverlay.ts';
 import { setGameRandomSeed } from './game/Random.ts';
 import { toBigInt } from './game/utils.ts';
+import { addActionObserver } from './game/ActionDispatcher.ts';
 
 // Load or create state
 const initialState = loadGame() ?? createInitialState();
@@ -46,8 +47,8 @@ const { leftRegion, tabsRegion } = createWorkspaceLayout(panelContainer, visualA
 });
 const panelManager = new PanelManager(tabsRegion, { left: leftRegion }, initialState);
 const visualDirector = new VisualDirector(visualArea, initialState);
-const ticker = new Ticker(document.getElementById('ticker')!);
 new HintOverlay(document.body);
+const endgameOverlay = new EndgameOverlay(document.body);
 
 const PANEL_LAYOUT = {
   resources: { kind: 'static', region: 'left' },
@@ -77,15 +78,15 @@ let computePanelActive = false;
 
 function hasSupplyPanelUnlock(state: GameState): boolean {
   return state.isPostGpuTransition &&
-    (state.completedResearch.includes('rocketry') || state.datacenters.some((count) => count > 0n));
+    (hasCompletedResearch(state.researchLevels, 'rocketry') || state.datacenters.some((count) => count > 0n));
 }
 
 function hasMoonPanelUnlock(state: GameState): boolean {
-  return state.isPostGpuTransition && state.completedResearch.includes('payloadToMoon');
+  return state.isPostGpuTransition && hasCompletedResearch(state.researchLevels, 'payloadToMoon');
 }
 
 function hasMercuryPanelUnlock(state: GameState): boolean {
-  return state.isPostGpuTransition && state.completedResearch.includes('payloadToMercury');
+  return state.isPostGpuTransition && hasCompletedResearch(state.researchLevels, 'payloadToMercury');
 }
 
 function ensureTabAlerts(state: GameState): void {
@@ -149,8 +150,8 @@ function configurePanels(state: GameState): void {
       showLocationHeaders: false,
       showResources: true,
       resourcesTitle: null,
-      sectionTitle: 'Facilities',
-      logisticsTitle: 'Launching',
+      sectionTitle: null,
+      logisticsTitle: `${UI_EMOJI.rockets} Launching`,
       logisticsRoutes: ['earthOrbit', 'earthMoon'],
     }), PANEL_LAYOUT.supply);
   }
@@ -170,10 +171,14 @@ function configurePanels(state: GameState): void {
 }
 
 configurePanels(initialState);
+endgameOverlay.update(initialState);
 visualDirector.sample(initialState);
 visualDirector.start();
 loop.addTickListener((state) => {
   visualDirector.sample(state);
+});
+addActionObserver((event) => {
+  endgameOverlay.update(event.state);
 });
 
 // UI update loop
@@ -200,8 +205,8 @@ setInterval(() => {
       showLocationHeaders: false,
       showResources: true,
       resourcesTitle: null,
-      sectionTitle: 'Facilities',
-      logisticsTitle: 'Launching',
+      sectionTitle: null,
+      logisticsTitle: `${UI_EMOJI.rockets} Launching`,
       logisticsRoutes: ['earthOrbit', 'earthMoon'],
     }), PANEL_LAYOUT.supply);
     supplyPanelAdded = true;
@@ -218,7 +223,7 @@ setInterval(() => {
   }
 
   panelManager.update(s);
-  ticker.update(s);
+  endgameOverlay.update(s);
 }, BALANCE.uiUpdateIntervalMs);
 
 // Dev controls overlay
@@ -233,7 +238,7 @@ new DevOverlay({
     configurePanels(state);
     panelManager.update(state);
     visualDirector.sample(state);
-    ticker.update(state);
+    endgameOverlay.update(state);
   },
 });
 

@@ -6,9 +6,11 @@ import {
   getApiOptimalPrice,
   getApiPflopsPerUser,
   getAgentsRequiredAllocationPct,
+  getTrainingModelResourceRequirements,
   isApiAutoPricingUnlocked,
   isComputeAutoAllocationUnlocked,
 } from '../../game/BalanceConfig.ts';
+import type { TrainingModelConfig, TrainingResourceRequirement } from '../../game/BalanceConfig.ts';
 import { formatNumber, formatMoney, fromBigInt, toBigInt, divB, scaleB, mulB, scaleBigInt } from '../../game/utils.ts';
 import { dispatchGameAction } from '../../game/ActionDispatcher.ts';
 import { BulkBuyGroup, getVisibleBuyTiers } from '../components/BulkBuyGroup.ts';
@@ -29,6 +31,7 @@ interface TrainingProgressRefs {
 interface TrainingNextRefs {
   container: HTMLDivElement;
   info: HTMLDivElement;
+  desc: HTMLDivElement;
   reqs: HTMLDivElement;
   btn: HTMLButtonElement;
 }
@@ -38,6 +41,7 @@ export class ComputePanel implements Panel {
   private state: GameState;
 
   private modelNameEl!: HTMLSpanElement;
+  private modelDescEl!: HTMLDivElement;
   private gpuStatusEl!: HTMLSpanElement;
   private gpuStockBarFill!: HTMLDivElement;
   private computeAllocationWrap!: HTMLDivElement;
@@ -138,6 +142,13 @@ export class ComputePanel implements Panel {
     modelRow.appendChild(modelLabel);
     modelRow.appendChild(this.modelNameEl);
     body.appendChild(modelRow);
+
+    this.modelDescEl = document.createElement('div');
+    this.modelDescEl.style.fontSize = '0.72rem';
+    this.modelDescEl.style.color = 'var(--text-secondary)';
+    this.modelDescEl.style.marginTop = '-2px';
+    this.modelDescEl.style.marginBottom = '4px';
+    body.appendChild(this.modelDescEl);
 
     // Unified compute allocation slider
     this.computeAllocationWrap = document.createElement('div');
@@ -652,6 +663,57 @@ export class ComputePanel implements Panel {
       `${formatNumber(progress)} ${emojiHtml('flops')} / ${formatNumber(required)} PFLOPS-hrs`;
   }
 
+  private getCurrentTrainingModel(state: GameState): TrainingModelConfig | null {
+    if (state.ariesModelIndex >= 0) {
+      return BALANCE.ariesModels[state.ariesModelIndex];
+    }
+    if (state.currentFineTuneIndex >= 0) {
+      return BALANCE.fineTunes[state.currentFineTuneIndex];
+    }
+    for (let i = BALANCE.ariesModels.length - 1; i >= 0; i--) {
+      if (state.intelligence >= BALANCE.ariesModels[i].intel) {
+        return BALANCE.ariesModels[i];
+      }
+    }
+    for (let i = BALANCE.fineTunes.length - 1; i >= 0; i--) {
+      if (state.completedFineTunes.includes(i)) {
+        return BALANCE.fineTunes[i];
+      }
+    }
+    return null;
+  }
+
+  private canAffordTrainingModelRequirements(state: GameState, model: TrainingModelConfig): boolean {
+    for (const requirement of getTrainingModelResourceRequirements(model)) {
+      if (state[requirement.resource] < requirement.cost) return false;
+    }
+    return true;
+  }
+
+  private formatTrainingRequirement(req: TrainingResourceRequirement, state: GameState): string {
+    const blocking = state[req.resource] < req.cost;
+    const resourceLabel = req.resource === 'code' ? 'Code' : 'Science';
+    return `<span style="${blocking ? 'color: var(--accent-red);' : ''}">L${req.level} ${emojiHtml(req.resource)} ${resourceLabel} (${formatNumber(req.cost)})</span>`;
+  }
+
+  private buildTrainingRequirementsHtml(state: GameState, model: TrainingModelConfig): string {
+    const dataBlocking = state.trainingData < model.dataGB;
+    const parts = [
+      `${formatNumber(model.pflopsHrs)} ${emojiHtml('flops')} PFLOPS-hrs`,
+      `<span style="${dataBlocking ? 'color: var(--accent-red);' : ''}">${formatNumber(model.dataGB)} ${emojiHtml('data')} GB data</span>`,
+    ];
+    for (const requirement of getTrainingModelResourceRequirements(model)) {
+      parts.push(this.formatTrainingRequirement(requirement, state));
+    }
+    return parts.join(' + ');
+  }
+
+  private setTrainingDescription(el: HTMLDivElement, description: string | undefined): void {
+    const text = description?.trim() ?? '';
+    el.textContent = text;
+    el.style.display = text ? '' : 'none';
+  }
+
   private buildTrainingNextView(parent: HTMLElement): TrainingNextRefs {
     const container = document.createElement('div');
     container.style.fontSize = '0.82rem';
@@ -661,9 +723,16 @@ export class ComputePanel implements Panel {
     const info = document.createElement('div');
     container.appendChild(info);
 
+    const desc = document.createElement('div');
+    desc.style.color = 'var(--text-secondary)';
+    desc.style.fontSize = '0.74rem';
+    desc.style.marginTop = '2px';
+    container.appendChild(desc);
+
     const reqs = document.createElement('div');
     reqs.style.color = 'var(--text-secondary)';
     reqs.style.fontSize = '0.75rem';
+    reqs.style.marginTop = '2px';
     container.appendChild(reqs);
 
     const btn = document.createElement('button');
@@ -679,7 +748,7 @@ export class ComputePanel implements Panel {
     container.appendChild(btn);
 
     parent.appendChild(container);
-    return { container, info, reqs, btn };
+    return { container, info, desc, reqs, btn };
   }
 
   private buildTrainingAllocationHint(parent: HTMLElement): void {
@@ -805,7 +874,7 @@ export class ComputePanel implements Panel {
     this.allocHandleLeft.style.display = '';
     this.allocHandleRight.style.display = dual ? '' : 'none';
 
-    const autoAllocationUnlocked = isComputeAutoAllocationUnlocked(state.completedResearch);
+    const autoAllocationUnlocked = isComputeAutoAllocationUnlocked(state.researchLevels);
     this.computeAutoAllocRow.style.display = autoAllocationUnlocked ? '' : 'none';
     this.computeAutoAllocBtn.classList.toggle('is-on', autoAllocationUnlocked && state.computeAutoAllocationEnabled);
     this.computeAutoAllocBtn.setAttribute(
@@ -908,23 +977,7 @@ export class ComputePanel implements Panel {
   }
 
   private getCurrentModelName(state: GameState): string {
-    if (state.ariesModelIndex >= 0) {
-      return BALANCE.ariesModels[state.ariesModelIndex].name;
-    }
-    if (state.currentFineTuneIndex >= 0) {
-      return BALANCE.fineTunes[state.currentFineTuneIndex].name;
-    }
-    for (let i = BALANCE.ariesModels.length - 1; i >= 0; i--) {
-      if (state.intelligence >= BALANCE.ariesModels[i].intel) {
-        return BALANCE.ariesModels[i].name;
-      }
-    }
-    for (let i = BALANCE.fineTunes.length - 1; i >= 0; i--) {
-      if (state.completedFineTunes.includes(i)) {
-        return BALANCE.fineTunes[i].name;
-      }
-    }
-    return BALANCE.models[state.currentModelIndex].name;
+    return this.getCurrentTrainingModel(state)?.name ?? BALANCE.models[state.currentModelIndex].name;
   }
 
   private getNextFineTune(state: GameState): number | null {
@@ -962,25 +1015,13 @@ export class ComputePanel implements Panel {
         this.trainingNextRefs.info.innerHTML = `${ft.name} (${resourceLabelHtml('intel')} ${ft.intel})`;
         this.trainingNextRefs.info.style.color = 'var(--accent-green)';
         this.trainingNextRefs.info.style.fontWeight = 'bold';
-
-        const dataBlocking = state.trainingData < ft.dataGB;
-        const dataStr = `<span style="${dataBlocking ? 'color: var(--accent-red);' : ''}">${formatNumber(ft.dataGB)} ${emojiHtml('data')} GB data</span>`;
-        let reqHtml = `${formatNumber(ft.pflopsHrs)} ${emojiHtml('flops')} PFLOPS-hrs + ${dataStr}`;
-        if (ft.codeReq > 0n) {
-          const codeBlocking = state.code < ft.codeReq;
-          reqHtml += ` + <span style="${codeBlocking ? 'color: var(--accent-red);' : ''}">${formatNumber(ft.codeReq)} ${emojiHtml('code')} Code</span>`;
-        }
-        if (ft.scienceReq > 0n) {
-          const scienceBlocking = state.science < ft.scienceReq;
-          reqHtml += ` + <span style="${scienceBlocking ? 'color: var(--accent-red);' : ''}">${formatNumber(ft.scienceReq)} ${emojiHtml('science')} Science</span>`;
-        }
-        this.trainingNextRefs.reqs.innerHTML = reqHtml;
+        this.setTrainingDescription(this.trainingNextRefs.desc, ft.unlockDescription);
+        this.trainingNextRefs.reqs.innerHTML = this.buildTrainingRequirementsHtml(state, ft);
         this.trainingNextRefs.btn.textContent = 'Start Fine-tune';
         this.nextTrainingType = 'ft';
         this.nextTrainingIdx = nextFT;
         this.trainingNextRefs.btn.disabled = state.trainingData < ft.dataGB ||
-          (ft.codeReq > 0n && state.code < ft.codeReq) ||
-          (ft.scienceReq > 0n && state.science < ft.scienceReq);
+          !this.canAffordTrainingModelRequirements(state, ft);
       } else {
         const nextAries = this.getNextAries(state);
         if (nextAries !== null) {
@@ -989,25 +1030,13 @@ export class ComputePanel implements Panel {
           this.trainingNextRefs.info.innerHTML = `${am.name} (${resourceLabelHtml('intel')} ~${am.intel})`;
           this.trainingNextRefs.info.style.color = 'var(--accent-purple)';
           this.trainingNextRefs.info.style.fontWeight = 'bold';
-
-          const dataBlocking = state.trainingData < am.dataGB;
-          const dataStr = `<span style="${dataBlocking ? 'color: var(--accent-red);' : ''}">${formatNumber(am.dataGB)} ${emojiHtml('data')} GB data</span>`;
-          let reqHtml = `${formatNumber(am.pflopsHrs)} ${emojiHtml('flops')} PFLOPS-hrs + ${dataStr}`;
-          if (am.codeReq > 0n) {
-            const codeBlocking = state.code < am.codeReq;
-            reqHtml += ` + <span style="${codeBlocking ? 'color: var(--accent-red);' : ''}">${formatNumber(am.codeReq)} ${emojiHtml('code')} Code</span>`;
-          }
-          if (am.scienceReq > 0n) {
-            const scienceBlocking = state.science < am.scienceReq;
-            reqHtml += ` + <span style="${scienceBlocking ? 'color: var(--accent-red);' : ''}">${formatNumber(am.scienceReq)} ${emojiHtml('science')} Science</span>`;
-          }
-          this.trainingNextRefs.reqs.innerHTML = reqHtml;
+          this.setTrainingDescription(this.trainingNextRefs.desc, am.unlockDescription);
+          this.trainingNextRefs.reqs.innerHTML = this.buildTrainingRequirementsHtml(state, am);
           this.trainingNextRefs.btn.textContent = 'Start Training';
           this.nextTrainingType = 'aries';
           this.nextTrainingIdx = nextAries;
           this.trainingNextRefs.btn.disabled = state.trainingData < am.dataGB ||
-            (am.codeReq > 0n && state.code < am.codeReq) ||
-            (am.scienceReq > 0n && state.science < am.scienceReq);
+            !this.canAffordTrainingModelRequirements(state, am);
         } else {
           this.trainingNextRefs.container.style.display = 'none';
           this.nextTrainingType = null;
@@ -1025,6 +1054,11 @@ export class ComputePanel implements Panel {
     const earthGpuCount = state.locationResources.earth.gpus;
     const modelName = this.getCurrentModelName(state);
     this.modelNameEl.innerHTML = `${modelName} (${resourceLabelHtml('intel')} ${(Math.round(state.intelligence * 10) / 10).toString()})`;
+    const currentModel = this.getCurrentTrainingModel(state);
+    this.setTrainingDescription(
+      this.modelDescEl,
+      currentModel?.unlockDescription ?? 'Scale up compute and training to reach the first research-capable model.',
+    );
     this.buyGpuControls.setCount(earthGpuCount);
     this.gpuPricePart.textContent = `Cost: ${formatMoney(state.gpuMarketPrice)} each`;
 
@@ -1273,7 +1307,7 @@ export class ComputePanel implements Panel {
 
     // Price
     this.apiPriceVal.innerHTML = moneyWithEmojiHtml(state.apiPrice, 'funds');
-    const autoPricingUnlocked = isApiAutoPricingUnlocked(state.completedResearch);
+    const autoPricingUnlocked = isApiAutoPricingUnlocked(state.researchLevels);
     const autoPricingEnabled = autoPricingUnlocked && state.apiAutoPriceEnabled;
     const manualPriceEnabled = !autoPricingEnabled;
     this.priceDecreaseGroup.el.style.opacity = manualPriceEnabled ? '' : '0.45';

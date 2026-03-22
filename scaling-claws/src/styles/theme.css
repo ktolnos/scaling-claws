@@ -16,6 +16,11 @@
   --accent-blue: #3388ff;
   --accent-purple: #9966ff;
 
+  --scrollbar-thumb: linear-gradient(180deg, rgba(88, 124, 214, 0.95), rgba(78, 204, 163, 0.82));
+  --scrollbar-thumb-hover: linear-gradient(180deg, rgba(118, 154, 235, 0.98), rgba(101, 225, 182, 0.9));
+  --scrollbar-track: rgba(255, 255, 255, 0.05);
+  --scrollbar-corner: transparent;
+
   --font-main: system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-mono: 'Courier New', 'Consolas', monospace;
   --font-emoji: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', 'Twemoji Mozilla', sans-serif;
@@ -54,10 +59,12 @@ body {
 #app {
   display: flex;
   flex-direction: column;
+  height: 100vh;
   min-height: 100vh;
   max-width: 1600px;
   margin: 0 auto;
   padding: 0 var(--spacing-sm);
+  overflow: hidden;
 }
 
 button {

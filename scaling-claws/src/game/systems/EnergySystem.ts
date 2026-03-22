@@ -1,5 +1,5 @@
 import type { GameState, LocationId } from '../GameState.ts';
-import { BALANCE, getSolarPanelPowerMW } from '../BalanceConfig.ts';
+import { BALANCE, getSolarPanelPowerMW, hasCompletedResearch } from '../BalanceConfig.ts';
 import { toBigInt, mulB, fromBigInt } from '../utils.ts';
 
 function getEarthLaborPool(state: GameState): bigint {
@@ -23,7 +23,7 @@ export function tickEnergy(state: GameState): void {
   supply += mulB(state.nuclearPlants, BALANCE.powerPlants.nuclear.outputMW);
 
   const earthInstalledSolar = state.locationResources?.earth?.installedSolarPanels ?? 0n;
-  supply += mulB(earthInstalledSolar, toBigInt(getSolarPanelPowerMW('earth', state.completedResearch)));
+  supply += mulB(earthInstalledSolar, toBigInt(getSolarPanelPowerMW('earth', state.researchLevels)));
   state.powerSupplyMW = supply;
 
   if (state.powerDemandMW > 0n && state.powerSupplyMW < state.powerDemandMW) {
@@ -37,7 +37,7 @@ export function tickEnergy(state: GameState): void {
   const moonInstalledSolar = state.locationResources.moon.installedSolarPanels;
 
   state.lunarPowerDemandMW = mulB(moonInstalledGpus, toBigInt(BALANCE.gpuPowerMW));
-  state.lunarPowerSupplyMW = mulB(moonInstalledSolar, toBigInt(getSolarPanelPowerMW('moon', state.completedResearch)));
+  state.lunarPowerSupplyMW = mulB(moonInstalledSolar, toBigInt(getSolarPanelPowerMW('moon', state.researchLevels)));
 
   if (state.lunarPowerDemandMW > 0n && state.lunarPowerSupplyMW < state.lunarPowerDemandMW) {
     state.lunarPowerThrottle = Number(state.lunarPowerSupplyMW) / Number(state.lunarPowerDemandMW);
@@ -49,7 +49,7 @@ export function tickEnergy(state: GameState): void {
   const mercuryInstalledSolar = state.locationResources?.mercury?.installedSolarPanels ?? 0n;
 
   state.mercuryPowerDemandMW = mulB(mercuryInstalledGpus, toBigInt(BALANCE.gpuPowerMW));
-  state.mercuryPowerSupplyMW = mulB(mercuryInstalledSolar, toBigInt(getSolarPanelPowerMW('mercury', state.completedResearch)));
+  state.mercuryPowerSupplyMW = mulB(mercuryInstalledSolar, toBigInt(getSolarPanelPowerMW('mercury', state.researchLevels)));
   if (state.mercuryPowerDemandMW > 0n && state.mercuryPowerSupplyMW < state.mercuryPowerDemandMW) {
     state.mercuryPowerThrottle = Number(state.mercuryPowerSupplyMW) / Number(state.mercuryPowerDemandMW);
   } else {
@@ -131,8 +131,8 @@ export function buySolarFarm(state: GameState, location: LocationId, amount: num
   const installedFarms = state.locationResources[location].installedSolarPanels / solarPanelsPerFarm;
   if (installedFarms + amountUnits > BigInt(BALANCE.solarFarmLimit)) return false;
 
-  if (location === 'earth' && !state.completedResearch.includes('solarTechnology')) return false;
-  if (location === 'moon' && !state.completedResearch.includes('payloadToMoon')) return false;
+  if (location === 'earth' && !hasCompletedResearch(state.researchLevels, 'solarTechnology')) return false;
+  if (location === 'moon' && !hasCompletedResearch(state.researchLevels, 'payloadToMoon')) return false;
 
   const locationResources = state.locationResources[location];
   const panelCost = mulB(amountB, solarPanelsPerFarm);
@@ -150,7 +150,7 @@ export function buySolarFarm(state: GameState, location: LocationId, amount: num
 }
 
 export function buyMoonDatacenter(state: GameState, amount: number = 1): boolean {
-  if (!state.completedResearch.includes('payloadToMoon')) return false;
+  if (!hasCompletedResearch(state.researchLevels, 'payloadToMoon')) return false;
 
   const amountB = toBigInt(amount);
   const amountUnits = BigInt(Math.floor(amount));

@@ -94,3 +94,27 @@
   max-height: 88px;
   overflow-y: auto;
 }
+
+.dev-overlay-status {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(96, 142, 226, 0.92) var(--scrollbar-track);
+}
+
+.dev-overlay-status::-webkit-scrollbar {
+  width: 10px;
+}
+
+.dev-overlay-status::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+  border-radius: 999px;
+}
+
+.dev-overlay-status::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 999px;
+  border: 2px solid rgba(10, 14, 22, 0.85);
+}
+
+.dev-overlay-status::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}

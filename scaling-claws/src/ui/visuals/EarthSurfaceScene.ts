@@ -1,4 +1,4 @@
-import { Container, Sprite, Texture } from 'pixi.js';
+import { Container, Particle, ParticleContainer, Sprite, Texture } from 'pixi.js';
 import { BALANCE } from '../../game/BalanceConfig.ts';
 import type { GameState } from '../../game/GameState.ts';
 import {
@@ -9,6 +9,7 @@ import {
   gasPlantSvg,
   gpuFactorySvg,
   gpuSatelliteFactorySvg,
+  launchRocketTrailSvg,
   nuclearPlantSvg,
   robotFactorySvg,
   rocketSiloSvg,
@@ -55,20 +56,21 @@ interface LaunchTrail {
   directionBias: number;
 }
 
+interface ReturnTrail {
+  delaySec: number;
+  progress: number;
+  speed: number;
+  targetSeed: number;
+  targetIndex: number;
+  driftBias: number;
+  heightBias: number;
+}
+
 interface StackProjection {
   centerX: number;
   y: number;
   width: number;
   height: number;
-}
-
-interface CloudPlacement {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  alpha: number;
-  variant: number;
 }
 
 interface BuildingPlacement {
@@ -122,6 +124,13 @@ interface LaunchPadPlacement {
   slotInFactory: number;
 }
 
+interface LandingZonePlacement {
+  centerX: number;
+  baseY: number;
+  rocketHeight: number;
+  depthRow: number;
+}
+
 interface MultiRowLayout {
   frontWidthRatio: number;
   frontHeightRatio: number;
@@ -148,11 +157,11 @@ const BUILDING_COLUMNS: BuildingConfig[] = [
 ];
 
 const EARTH_STACK_DEPTH_FALLOFF = 0.85;
-const EARTH_STACK_SCALE_FALLOFF = 0.82;
+const EARTH_STACK_SCALE_FALLOFF = 1;
 const MAX_LAUNCH_TRAILS = 180;
 const MAX_BUILDINGS_PER_COLUMN = 15;
 const MAX_SMOKE_ROWS = 5;
-const EARTH_HORIZON_Y_RATIO = 0.34;
+const EARTH_HORIZON_Y_RATIO = 0.33;
 const COLUMN_SIDE_PADDING_PX = 3;
 const COLUMN_GROUND_OFFSET_PX = 0;
 const COLUMN_BASE_SCALE = 1;
@@ -160,6 +169,7 @@ const COLUMN_SMOKE_KEYS: BuildingKey[] = ['gas', 'nuclear'];
 const EARTH_STACK_DEPTH_SPAN_RATIO = 0.38;
 const COLUMN_PERSPECTIVE_PULL = 0.8;
 const BUILDING_TEXTURE_SCALE = 4;
+const ROCKET_TRAIL_TEXTURE_SCALE = 1.5;
 const CENTER_COLUMNS_WIDTH_RATIO = 0.56;
 const SIDE_FIELD_INNER_GAP_PX = -20;
 const ROCKET_PADS_PER_FACTORY = 3;
@@ -175,12 +185,18 @@ const ROCKET_PAD_SINK_RATIO = 0.5;
 const ROCKET_LAUNCH_DIRECTION_DRIFT_RATIO = 0.1;
 const ROCKET_LAUNCH_TILT_MAX = 0.16;
 const PEOPLE_WORKERS_PER_DOT = 4;
-const MAX_PEOPLE_DOTS = 4000;
+const MAX_PEOPLE_DOTS = 1000;
 const PEOPLE_MIN_SIZE = 1;
 const PEOPLE_MAX_SIZE = 3.8;
 const BUILDING_ROW_FADE_START = 0.8;
 const BUILDING_ROW_FADE_MIN_ALPHA = 0.35;
+const MAX_NEW_LAUNCH_TRAILS_PER_SAMPLE = 12;
+const MAX_RETURN_TRAILS = 84;
+const MAX_NEW_RETURN_TRAILS_PER_SAMPLE = 7;
+const MAX_RENDERED_RETURN_TRAILS = 84;
+const LANDING_ZONE_COUNT = 18;
 const MULTI_ROW_KEYS = new Set<BuildingKey>(['solar', 'datacenterMega']);
+const MULTI_ROW_BUILDING_KEYS = ['datacenterMega', 'solar'] as const;
 const MULTI_ROW_LAYOUTS: Record<'solar' | 'datacenterMega', MultiRowLayout> = {
   solar: {
     frontWidthRatio: 0.48,
@@ -199,6 +215,27 @@ const MULTI_ROW_LAYOUTS: Record<'solar' | 'datacenterMega', MultiRowLayout> = {
     side: 'left',
   },
 };
+const SINGLE_ROW_BUILDING_COLUMNS = BUILDING_COLUMNS.filter(config => !MULTI_ROW_KEYS.has(config.key));
+const BUILDING_CONFIG_BY_KEY = new Map<BuildingKey, BuildingConfig>(
+  BUILDING_COLUMNS.map(config => [config.key, config]),
+);
+const SINGLE_ROW_BUILDING_TOTAL_WEIGHT = SINGLE_ROW_BUILDING_COLUMNS.reduce(
+  (sum, config) => sum + config.columnWeight,
+  0,
+);
+const CLOUD_ROWS = [
+  { yRatio: -0.25, alpha: 0.1, scale: 4.15, speed: 5, offset: 0.1 },
+  { yRatio: -0.15, alpha: 0.08, scale: 3.9, speed: 8, offset: 0.4 },
+  { yRatio: 0, alpha: 0.06, scale: 2.7, speed: 11, offset: 0.7 },
+] as const;
+
+function compareByZ<T extends { z: number }>(a: T, b: T): number {
+  return a.z - b.z;
+}
+
+function compareByDepthRow<T extends { depthRow: number }>(a: T, b: T): number {
+  return a.depthRow - b.depthRow;
+}
 
 function toCount(value: bigint): number {
   const numeric = fromBigInt(value);
@@ -222,9 +259,11 @@ export class EarthSurfaceScene implements VisualScene {
   private sampledCounts = new Map<BuildingKey, number>();
   private sampledRocketInventory = 0;
   private sampledHumanWorkers = 0;
-  private pendingLaunchSpawns = 0;
+  private sampledRocketReuseRatio = 0;
   private launchTrails: LaunchTrail[] = [];
+  private returnTrails: ReturnTrail[] = [];
   private nextLaunchSourceIndex = 0;
+  private nextReturnTargetIndex = 0;
   private lastSampledEarthLaunchesUsed = 0;
   private lastSeenEarthLaunchCount: bigint | null = null;
   private lastVisibleLaunchPadCount = 0;
@@ -238,10 +277,12 @@ export class EarthSurfaceScene implements VisualScene {
   private backgroundSprite!: Sprite;
   private cloudContainer!: Container;
   private buildingContainer!: Container;
-  private peopleContainer!: Container;
-  private smokeContainer!: Container;
-  private pumpjackContainer!: Container;
-  private rocketContainer!: Container;
+  private peopleContainer!: ParticleContainer<Particle>;
+  private smokeContainer!: ParticleContainer<Particle>;
+  private pumpjackBaseContainer!: ParticleContainer<Particle>;
+  private pumpjackBeamContainer!: ParticleContainer<Particle>;
+  private rocketTrailContainer!: ParticleContainer<Particle>;
+  private parkedRocketContainer!: ParticleContainer<Particle>;
 
   private backgroundTexture: Texture | null = null;
   private cloudTextures: Texture[] = [];
@@ -250,16 +291,41 @@ export class EarthSurfaceScene implements VisualScene {
   private pumpjackBaseTexture: Texture | null = null;
   private pumpjackBeamTexture: Texture | null = null;
   private launchRocketTexture: Texture | null = null;
-  private launchFlameTexture: Texture | null = null;
+  private launchRocketTrailTexture: Texture | null = null;
 
   private cloudSprites: Sprite[] = [];
   private buildingSprites: Sprite[] = [];
-  private peopleSprites: Sprite[] = [];
-  private smokeSprites: Sprite[] = [];
-  private pumpjackBaseSprites: Sprite[] = [];
-  private pumpjackBeamSprites: Sprite[] = [];
-  private rocketSprites: Sprite[] = [];
-  private flameSprites: Sprite[] = [];
+  private peopleParticles: Particle[] = [];
+  private smokeParticles: Particle[] = [];
+  private pumpjackBaseParticles: Particle[] = [];
+  private pumpjackBeamParticles: Particle[] = [];
+  private rocketTrailParticles: Particle[] = [];
+  private parkedRocketParticles: Particle[] = [];
+  private readonly buildingPlacements: BuildingPlacement[] = [];
+  private buildingPlacementCount = 0;
+  private readonly peoplePlacements: PeoplePlacement[] = [];
+  private peoplePlacementCount = 0;
+  private readonly smokePlacements: SmokePlacement[] = [];
+  private smokePlacementCount = 0;
+  private readonly pumpPlacements: PumpPlacement[] = [];
+  private pumpPlacementCount = 0;
+  private readonly launchPads: LaunchPadPlacement[] = [];
+  private launchPadCount = 0;
+  private readonly landingZones: LandingZonePlacement[] = [];
+  private landingZoneCount = 0;
+  private readonly rocketTrailPlacements: BuildingPlacement[] = [];
+  private rocketTrailPlacementCount = 0;
+  private readonly parkedRocketPlacements: BuildingPlacement[] = [];
+  private parkedRocketPlacementCount = 0;
+  private readonly launchPadOrder: number[] = [];
+  private readonly parkedPadOrder: number[] = [];
+  private readonly occupiedPadFlags: boolean[] = [];
+  private readonly stackProjectionScratch: StackProjection = {
+    centerX: 0,
+    y: 0,
+    width: 0,
+    height: 0,
+  };
 
   constructor(seed: number) {
     this.rng = new SeededRng(seed ^ 0x5a3e91d7);
@@ -269,6 +335,7 @@ export class EarthSurfaceScene implements VisualScene {
     this.host = createPixiSceneHost(root, 'visual-scene es-scene', 'es-mass-canvas');
     this.sceneEl = this.host.sceneEl;
     this.primeSpriteCache();
+    this.primeLaunchEffectTextures();
     void this.host.initPromise.then(() => {
       this.configureStage();
     });
@@ -315,29 +382,47 @@ export class EarthSurfaceScene implements VisualScene {
     this.sampledCounts.set('datacenterMega', datacenterTier3);
     this.sampledRocketInventory = rocketInventory;
     this.sampledHumanWorkers = toCount(humanWorkers);
-    if (this.lastSeenEarthLaunchCount === null) {
-      this.lastSampledEarthLaunchesUsed = Math.max(0, state.earthLaunchesUsedLastTick);
-      this.pendingLaunchSpawns += this.lastSampledEarthLaunchesUsed;
-    } else {
-      const launchesDelta = state.earthLaunchCount - this.lastSeenEarthLaunchCount;
-      this.lastSampledEarthLaunchesUsed = Math.max(0, Number(launchesDelta));
-      this.pendingLaunchSpawns += this.lastSampledEarthLaunchesUsed;
-    }
+    this.sampledRocketReuseRatio = clamp01(1 - state.rocketLossPct);
+    const launchesDelta = this.lastSeenEarthLaunchCount === null
+      ? 0
+      : Math.max(0, Number(state.earthLaunchCount - this.lastSeenEarthLaunchCount));
+    const launchesUsed = Math.max(
+      Math.max(0, state.earthLaunchesUsedLastTick),
+      launchesDelta,
+    );
+    this.lastSampledEarthLaunchesUsed = launchesUsed;
     this.lastSeenEarthLaunchCount = state.earthLaunchCount;
+
+    const visualBurst = this.getLaunchVisualBurst(launchesUsed);
+    for (let i = 0; i < visualBurst && this.launchTrails.length < MAX_LAUNCH_TRAILS; i++) {
+      this.launchTrails.push(this.makeLaunchTrail());
+    }
+    const returnBurst = this.getReturnVisualBurst(launchesUsed, this.sampledRocketReuseRatio);
+    for (let i = 0; i < returnBurst && this.returnTrails.length < MAX_RETURN_TRAILS; i++) {
+      this.returnTrails.push(this.makeReturnTrail());
+    }
   }
 
   simulate(dtMs: number): void {
     const dtSec = dtMs / 1000;
-    if (
-      this.pendingLaunchSpawns > 0
-      && this.launchTrails.length < MAX_LAUNCH_TRAILS
-    ) {
-      this.launchTrails.push(this.makeLaunchTrail());
-      this.pendingLaunchSpawns -= 1;
-    }
-
     for (const trail of this.launchTrails) {
       trail.progress += trail.speed * dtSec;
+    }
+    for (let i = this.returnTrails.length - 1; i >= 0; i--) {
+      const trail = this.returnTrails[i];
+      let activeDt = dtSec;
+      if (trail.delaySec > 0) {
+        trail.delaySec -= dtSec;
+        if (trail.delaySec > 0) {
+          continue;
+        }
+        activeDt = Math.max(0, -trail.delaySec);
+        trail.delaySec = 0;
+      }
+      trail.progress += trail.speed * activeDt;
+      if (trail.progress >= 1.16) {
+        this.returnTrails.splice(i, 1);
+      }
     }
   }
 
@@ -346,8 +431,8 @@ export class EarthSurfaceScene implements VisualScene {
       return;
     }
 
-    const width = this.sceneEl.clientWidth;
-    const height = this.sceneEl.clientHeight;
+    const width = this.host.width;
+    const height = this.host.height;
     if (width <= 0 || height <= 0) {
       return;
     }
@@ -355,7 +440,6 @@ export class EarthSurfaceScene implements VisualScene {
     if (width !== this.lastWidth || height !== this.lastHeight) {
       this.lastWidth = width;
       this.lastHeight = height;
-      this.host.app.renderer.resize(width, height);
       this.rebuildBackground(width, height);
     }
 
@@ -372,10 +456,30 @@ export class EarthSurfaceScene implements VisualScene {
 
   getDebugLines(): string[] {
     return [
-      `launches/tick=${this.lastSampledEarthLaunchesUsed} | queue=${this.pendingLaunchSpawns} | active=${this.launchTrails.length}`,
+      `launches/tick=${this.lastSampledEarthLaunchesUsed} | active=${this.launchTrails.length}`,
       `rockets=${this.sampledRocketInventory} | pads=${this.lastVisibleLaunchPadCount} | sources=${this.lastVisibleLaunchSourceCount}`,
       `humans=${this.sampledHumanWorkers} | peopleDots=${this.lastVisiblePeopleCount}`,
     ];
+  }
+
+  private getLaunchVisualBurst(launchesUsed: number): number {
+    if (launchesUsed <= 0) {
+      return 0;
+    }
+    return Math.max(1, Math.min(
+      MAX_NEW_LAUNCH_TRAILS_PER_SAMPLE,
+      Math.round(Math.sqrt(launchesUsed) * 4),
+    ));
+  }
+
+  private getReturnVisualBurst(launchesUsed: number, rocketReuseRatio: number): number {
+    if (launchesUsed <= 0 || rocketReuseRatio <= 0) {
+      return 0;
+    }
+    return Math.max(0, Math.min(
+      MAX_NEW_RETURN_TRAILS_PER_SAMPLE,
+      Math.round(Math.sqrt(launchesUsed) * 2.2 * rocketReuseRatio),
+    ));
   }
 
   private configureStage(): void {
@@ -385,24 +489,70 @@ export class EarthSurfaceScene implements VisualScene {
     this.backgroundSprite = new Sprite(Texture.EMPTY);
     this.cloudContainer = new Container();
     this.buildingContainer = new Container();
-    this.peopleContainer = new Container();
-    this.smokeContainer = new Container();
-    this.pumpjackContainer = new Container();
-    this.rocketContainer = new Container();
-
-    this.buildingContainer.sortableChildren = true;
-    this.peopleContainer.sortableChildren = true;
-    this.smokeContainer.sortableChildren = true;
-    this.pumpjackContainer.sortableChildren = true;
-    this.rocketContainer.sortableChildren = true;
+    this.peopleContainer = new ParticleContainer<Particle>({
+      dynamicProperties: {
+        position: true,
+        rotation: false,
+        vertex: true,
+        color: true,
+      },
+      texture: this.getPeopleTexture(),
+    });
+    this.smokeContainer = new ParticleContainer<Particle>({
+      dynamicProperties: {
+        position: true,
+        rotation: false,
+        vertex: true,
+        color: true,
+      },
+      texture: this.getSmokeTexture(),
+    });
+    this.pumpjackBaseContainer = new ParticleContainer<Particle>({
+      dynamicProperties: {
+        position: true,
+        rotation: false,
+        vertex: true,
+        color: true,
+      },
+      texture: this.getPumpjackBaseTexture(),
+    });
+    this.pumpjackBeamContainer = new ParticleContainer<Particle>({
+      dynamicProperties: {
+        position: true,
+        rotation: true,
+        vertex: true,
+        color: true,
+      },
+      texture: this.getPumpjackBeamTexture(),
+    });
+    this.rocketTrailContainer = new ParticleContainer<Particle>({
+      dynamicProperties: {
+        position: true,
+        rotation: true,
+        vertex: true,
+        color: true,
+      },
+      texture: this.getLaunchRocketTrailTexture(),
+    });
+    this.parkedRocketContainer = new ParticleContainer<Particle>({
+      dynamicProperties: {
+        position: true,
+        rotation: false,
+        vertex: true,
+        color: true,
+      },
+      texture: this.getLaunchRocketTexture(),
+    });
 
     stage.addChild(this.backgroundSprite);
     stage.addChild(this.cloudContainer);
     stage.addChild(this.peopleContainer);
     stage.addChild(this.buildingContainer);
     stage.addChild(this.smokeContainer);
-    stage.addChild(this.pumpjackContainer);
-    stage.addChild(this.rocketContainer);
+    stage.addChild(this.pumpjackBaseContainer);
+    stage.addChild(this.pumpjackBeamContainer);
+    stage.addChild(this.parkedRocketContainer);
+    stage.addChild(this.rocketTrailContainer);
 
     this.stageReady = true;
   }
@@ -518,15 +668,18 @@ export class EarthSurfaceScene implements VisualScene {
   }
 
   private updateCloudSprites(width: number, height: number, horizonY: number): void {
-    const placements: CloudPlacement[] = [];
     const nowSec = performance.now() / 1000;
-    const cloudRows = [
-      { y: horizonY - (height * 0.25), alpha: 0.1, scale: 4.15, speed: 5, offset: 0.1 },
-      { y: horizonY - (height * 0.15), alpha: 0.08, scale: 3.9, speed: 8, offset: 0.4 },
-      { y: horizonY - (height * 0.0), alpha: 0.06, scale: 2.7, speed: 11, offset: 0.7 },
-    ];
+    let placementCount = 0;
+    for (const row of CLOUD_ROWS) {
+      const spacing = width * 0.1 * row.scale;
+      const visibleCount = Math.ceil(width / spacing) + 4;
+      placementCount += visibleCount + 2;
+    }
 
-    for (const row of cloudRows) {
+    this.syncSpritePool(this.cloudContainer, this.cloudSprites, placementCount, this.createCloudSprite);
+
+    let placementIndex = 0;
+    for (const row of CLOUD_ROWS) {
       const spacing = width * 0.1 * row.scale;
       const drift = ((nowSec * row.speed) + (width * row.offset)) % spacing;
       const visibleCount = Math.ceil(width / spacing) + 4;
@@ -536,36 +689,23 @@ export class EarthSurfaceScene implements VisualScene {
         const centerX = (localIdx * spacing) - drift;
         const widthJitter = 0.82 + (0.22 * Math.sin((worldIdx * 1.73) + (row.offset * 9)));
         const heightJitter = 0.78 + (0.26 * Math.cos((worldIdx * 1.11) + (row.offset * 13)));
-        placements.push({
-          x: centerX,
-          y: row.y + (Math.sin((worldIdx * 0.9) + (nowSec * 0.2)) * height * 0.008),
-          width: width * 0.13 * row.scale * widthJitter,
-          height: height * 0.05 * row.scale * heightJitter,
-          alpha: row.alpha,
-          variant: Math.abs(worldIdx + Math.floor(row.offset * 100)) % 4,
-        });
+        const sprite = this.cloudSprites[placementIndex];
+        if (!sprite) {
+          continue;
+        }
+        const texture = this.getCloudTexture(Math.abs(worldIdx + Math.floor(row.offset * 100)) % 4);
+        sprite.visible = true;
+        sprite.texture = texture;
+        sprite.x = centerX;
+        sprite.y = horizonY + (height * row.yRatio) + (Math.sin((worldIdx * 0.9) + (nowSec * 0.2)) * height * 0.008);
+        sprite.scale.x = (width * 0.13 * row.scale * widthJitter) / Math.max(1, texture.orig.width);
+        sprite.scale.y = (height * 0.05 * row.scale * heightJitter) / Math.max(1, texture.orig.height);
+        sprite.alpha = row.alpha;
+        placementIndex++;
+        this.lastFrameDrawCalls++;
       }
     }
-
-    this.syncSpritePool(this.cloudContainer, this.cloudSprites, placements.length, () => {
-      const sprite = new Sprite(Texture.EMPTY);
-      sprite.anchor.set(0.5, 0.5);
-      return sprite;
-    });
-
-    for (let i = 0; i < placements.length; i++) {
-      const placement = placements[i];
-      const sprite = this.cloudSprites[i];
-      sprite.visible = true;
-      sprite.texture = this.getCloudTexture(placement.variant);
-      sprite.x = placement.x;
-      sprite.y = placement.y;
-      sprite.width = placement.width;
-      sprite.height = placement.height;
-      sprite.alpha = placement.alpha;
-      this.lastFrameDrawCalls++;
-    }
-    this.hideUnusedSprites(this.cloudSprites, placements.length);
+    this.hideUnusedSprites(this.cloudSprites, placementIndex);
   }
 
   private updateForegroundSprites(width: number, height: number, baseY: number): void {
@@ -576,21 +716,19 @@ export class EarthSurfaceScene implements VisualScene {
     const centerLaneLeft = outerLeft + ((totalUsableWidth - centerLaneWidth) * 0.5);
     const centerLaneRight = centerLaneLeft + centerLaneWidth;
     const laneWidth = centerLaneWidth;
-    const columnConfigs = BUILDING_COLUMNS.filter(config => !MULTI_ROW_KEYS.has(config.key));
-    const totalWeight = columnConfigs.reduce((sum, config) => sum + config.columnWeight, 0);
     const perspectiveX = width * 0.5;
     const depthSpan = Math.max(36, height * EARTH_STACK_DEPTH_SPAN_RATIO);
     const topLimit = height * 0.1;
     const timeSec = performance.now() / 1000;
+    this.buildingPlacementCount = 0;
+    this.peoplePlacementCount = 0;
+    this.smokePlacementCount = 0;
+    this.pumpPlacementCount = 0;
+    this.launchPadCount = 0;
+    this.landingZoneCount = 0;
 
-    const buildingPlacements: BuildingPlacement[] = [];
-    const peoplePlacements: PeoplePlacement[] = [];
-    const smokePlacements: SmokePlacement[] = [];
-    const pumpPlacements: PumpPlacement[] = [];
-    const launchPads: LaunchPadPlacement[] = [];
-
-    for (const key of ['datacenterMega', 'solar'] as const) {
-      const config = BUILDING_COLUMNS.find(candidate => candidate.key === key);
+    for (const key of MULTI_ROW_BUILDING_KEYS) {
+      const config = BUILDING_CONFIG_BY_KEY.get(key);
       if (!config) {
         continue;
       }
@@ -608,7 +746,6 @@ export class EarthSurfaceScene implements VisualScene {
       const spanLeft = layout.side === 'left' ? outerLeft : centerLaneRight + SIDE_FIELD_INNER_GAP_PX;
       const spanRight = layout.side === 'left' ? centerLaneLeft - SIDE_FIELD_INNER_GAP_PX : outerRight;
       this.collectMultiRowPlacements(
-        buildingPlacements,
         config,
         texture,
         count,
@@ -624,9 +761,9 @@ export class EarthSurfaceScene implements VisualScene {
     }
 
     let columnLeft = centerLaneLeft;
-    for (const config of columnConfigs) {
+    for (const config of SINGLE_ROW_BUILDING_COLUMNS) {
       const count = Math.min(MAX_BUILDINGS_PER_COLUMN, this.sampledCounts.get(config.key) ?? 0);
-      const columnWidth = laneWidth * (config.columnWeight / Math.max(0.0001, totalWeight));
+      const columnWidth = laneWidth * (config.columnWeight / Math.max(0.0001, SINGLE_ROW_BUILDING_TOTAL_WEIGHT));
       const centerX = columnLeft + (columnWidth * 0.5);
       const frontWidth = Math.max(20, columnWidth * COLUMN_BASE_SCALE);
       columnLeft += columnWidth;
@@ -643,43 +780,61 @@ export class EarthSurfaceScene implements VisualScene {
 
       let visibleCount = 0;
       for (let logicalRow = 0; logicalRow < count; logicalRow++) {
-        const projected = this.projectStackInstance(centerX, floorY, frontWidth, frontHeight, logicalRow, perspectiveX, depthSpan);
-        if (projected.y + projected.height < topLimit) {
+        this.fillStackProjection(
+          this.stackProjectionScratch,
+          centerX,
+          floorY,
+          frontWidth,
+          frontHeight,
+          logicalRow,
+          perspectiveX,
+          depthSpan,
+        );
+        if (this.stackProjectionScratch.y + this.stackProjectionScratch.height < topLimit) {
           break;
         }
         visibleCount++;
       }
 
       for (let row = 0; row < visibleCount; row++) {
-        const projected = this.projectStackInstance(centerX, floorY, frontWidth, frontHeight, row, perspectiveX, depthSpan);
+        this.fillStackProjection(
+          this.stackProjectionScratch,
+          centerX,
+          floorY,
+          frontWidth,
+          frontHeight,
+          row,
+          perspectiveX,
+          depthSpan,
+        );
+        const projected = this.stackProjectionScratch;
         const drawWidth = projected.width * config.stackScale;
         const drawHeight = projected.height * config.stackScale;
         const depthOrder = (100000 - (row * 1000)) + projected.y;
-        buildingPlacements.push({
-          texture,
-          x: projected.centerX - (drawWidth * 0.5),
-          y: projected.y - drawHeight,
-          width: drawWidth,
-          height: drawHeight,
-          z: depthOrder,
-          alpha: this.getBuildingRowAlpha(row, visibleCount),
-        });
+        const buildingPlacement = this.acquireBuildingPlacement();
+        buildingPlacement.texture = texture;
+        buildingPlacement.x = projected.centerX - (drawWidth * 0.5);
+        buildingPlacement.y = projected.y - drawHeight;
+        buildingPlacement.width = drawWidth;
+        buildingPlacement.height = drawHeight;
+        buildingPlacement.z = depthOrder;
+        buildingPlacement.alpha = this.getBuildingRowAlpha(row);
+        buildingPlacement.rotation = undefined;
 
         if (config.key === 'mine') {
           const bodyWidth = projected.width * 0.62;
           const bodyHeight = projected.width * 0.42;
-          pumpPlacements.push({
-            x: projected.centerX - (bodyWidth * 0.33),
-            y: (projected.y - (projected.height * 0.1)) - bodyHeight,
-            width: bodyWidth * 0.66,
-            height: bodyHeight,
-            pivotX: projected.centerX - (bodyWidth * 0.04),
-            pivotY: (projected.y - (projected.height * 0.1)) - (projected.width * 0.34),
-            beamWidth: bodyWidth * 0.9,
-            beamHeight: projected.width * 0.38,
-            angle: Math.sin(timeSec * 1.3) * 0.24,
-            z: depthOrder + 4,
-          });
+          const pumpPlacement = this.acquirePumpPlacement();
+          pumpPlacement.x = projected.centerX - (bodyWidth * 0.33);
+          pumpPlacement.y = (projected.y - (projected.height * 0.1)) - bodyHeight;
+          pumpPlacement.width = bodyWidth * 0.66;
+          pumpPlacement.height = bodyHeight;
+          pumpPlacement.pivotX = projected.centerX - (bodyWidth * 0.04);
+          pumpPlacement.pivotY = (projected.y - (projected.height * 0.1)) - (projected.width * 0.34);
+          pumpPlacement.beamWidth = bodyWidth * 0.9;
+          pumpPlacement.beamHeight = projected.width * 0.38;
+          pumpPlacement.angle = Math.sin(timeSec * 1.3) * 0.24;
+          pumpPlacement.z = depthOrder + 4;
         }
 
         if (config.key === 'rocket') {
@@ -692,15 +847,14 @@ export class EarthSurfaceScene implements VisualScene {
           for (let padIndex = 0; padIndex < ROCKET_PADS_PER_FACTORY; padIndex++) {
             const t = padIndex / (ROCKET_PADS_PER_FACTORY - 1);
             const xOffset = ((t - 0.5) * 2) * projected.width * ROCKET_PAD_SPREAD;
-            launchPads.push({
-              centerX: projected.centerX + xOffset,
-              baseY: padBaseY,
-              width: padWidth,
-              rocketHeight,
-              speedScale,
-              depthRow: row,
-              slotInFactory: padIndex,
-            });
+            const launchPad = this.acquireLaunchPad();
+            launchPad.centerX = projected.centerX + xOffset;
+            launchPad.baseY = padBaseY;
+            launchPad.width = padWidth;
+            launchPad.rocketHeight = rocketHeight;
+            launchPad.speedScale = speedScale;
+            launchPad.depthRow = row;
+            launchPad.slotInFactory = padIndex;
           }
         }
       }
@@ -710,7 +864,17 @@ export class EarthSurfaceScene implements VisualScene {
         const emitterRows = Math.min(MAX_SMOKE_ROWS, visibleCount);
         const puffCount = dense ? 7 : 6;
         for (let smokeRow = 0; smokeRow < emitterRows; smokeRow++) {
-          const projected = this.projectStackInstance(centerX, floorY, frontWidth, frontHeight, smokeRow, perspectiveX, depthSpan);
+          this.fillStackProjection(
+            this.stackProjectionScratch,
+            centerX,
+            floorY,
+            frontWidth,
+            frontHeight,
+            smokeRow,
+            perspectiveX,
+            depthSpan,
+          );
+          const projected = this.stackProjectionScratch;
           const depthOrder = (100000 - (smokeRow * 1000)) + projected.y;
           for (let i = 0; i < puffCount; i++) {
             const phase = (timeSec * (dense ? 0.085 : 0.11)) + (i / puffCount);
@@ -718,126 +882,118 @@ export class EarthSurfaceScene implements VisualScene {
             const smoothT = Math.sin(phaseT * Math.PI);
             const radiusX = projected.width * (dense ? 0.22 : 0.18) * (0.72 + (smoothT * 0.78));
             const radiusY = radiusX * (dense ? 0.68 : 0.54);
-            smokePlacements.push({
-              x: projected.centerX + (Math.sin((timeSec * 0.8) + (i * 1.7)) * projected.width * 0.12),
-              y: projected.y - (projected.height * 0.82) - (phaseT * projected.width * (dense ? 1.1 : 0.9)),
-              width: radiusX * 2,
-              height: radiusY * 2,
-              alpha: (dense ? 0.5 : 0.36) * smoothT * smoothT,
-              z: depthOrder + 20,
-            });
+            const smokePlacement = this.acquireSmokePlacement();
+            smokePlacement.x = projected.centerX + (Math.sin((timeSec * 0.8) + (i * 1.7)) * projected.width * 0.12);
+            smokePlacement.y = projected.y - (projected.height * 0.82) - (phaseT * projected.width * (dense ? 1.1 : 0.9));
+            smokePlacement.width = radiusX * 2;
+            smokePlacement.height = radiusY * 2;
+            smokePlacement.alpha = (dense ? 0.5 : 0.36) * smoothT * smoothT;
+            smokePlacement.z = depthOrder + 20;
           }
         }
       }
     }
 
-    this.collectPeoplePlacements(
-      peoplePlacements,
-      width,
-      height,
-      height - 1,
-      timeSec,
-    );
+    this.collectPeoplePlacements(width, height, height - 1, timeSec);
+    this.collectLandingZones(width, baseY, perspectiveX, depthSpan);
 
-    buildingPlacements.sort((a, b) => a.z - b.z);
-    this.syncSpritePool(this.buildingContainer, this.buildingSprites, buildingPlacements.length, () => new Sprite(Texture.EMPTY));
-    for (let i = 0; i < buildingPlacements.length; i++) {
-      const placement = buildingPlacements[i];
+    this.buildingPlacements.length = this.buildingPlacementCount;
+    this.buildingPlacements.sort(compareByZ);
+    this.syncSpritePool(this.buildingContainer, this.buildingSprites, this.buildingPlacementCount, this.createBuildingSprite);
+    for (let i = 0; i < this.buildingPlacementCount; i++) {
+      const placement = this.buildingPlacements[i];
       const sprite = this.buildingSprites[i];
       sprite.visible = true;
       sprite.texture = placement.texture;
-      sprite.anchor.set(0, 0);
       sprite.x = placement.x;
       sprite.y = placement.y;
-      sprite.width = placement.width;
-      sprite.height = placement.height;
+      sprite.scale.x = placement.width / Math.max(1, placement.texture.orig.width);
+      sprite.scale.y = placement.height / Math.max(1, placement.texture.orig.height);
       sprite.alpha = placement.alpha ?? 1;
-      sprite.zIndex = placement.z;
       this.lastFrameDrawCalls++;
     }
-    this.hideUnusedSprites(this.buildingSprites, buildingPlacements.length);
+    this.hideUnusedSprites(this.buildingSprites, this.buildingPlacementCount);
 
-    this.lastVisiblePeopleCount = peoplePlacements.length;
-    this.syncSpritePool(this.peopleContainer, this.peopleSprites, peoplePlacements.length, () => {
-      const sprite = new Sprite(this.getPeopleTexture());
-      sprite.anchor.set(0.5, 0.5);
-      return sprite;
-    });
-    for (let i = 0; i < peoplePlacements.length; i++) {
-      const placement = peoplePlacements[i];
-      const sprite = this.peopleSprites[i];
-      sprite.visible = true;
-      sprite.x = placement.x;
-      sprite.y = placement.y;
-      sprite.width = placement.size;
-      sprite.height = placement.size;
-      sprite.alpha = placement.alpha;
-      sprite.zIndex = placement.z;
+    this.peoplePlacements.length = this.peoplePlacementCount;
+    this.lastVisiblePeopleCount = this.peoplePlacementCount;
+    this.peoplePlacements.sort(compareByZ);
+    const peopleTexture = this.getPeopleTexture();
+    this.peopleContainer.texture = peopleTexture;
+    this.syncParticlePool(this.peopleContainer, this.peopleParticles, this.peoplePlacementCount, this.createPeopleParticle);
+    const peopleScaleX = 1 / Math.max(1, peopleTexture.orig.width);
+    const peopleScaleY = 1 / Math.max(1, peopleTexture.orig.height);
+    for (let i = 0; i < this.peoplePlacementCount; i++) {
+      const placement = this.peoplePlacements[i];
+      const particle = this.peopleParticles[i];
+      particle.x = placement.x;
+      particle.y = placement.y;
+      particle.scaleX = placement.size * peopleScaleX;
+      particle.scaleY = placement.size * peopleScaleY;
+      particle.alpha = placement.alpha;
       this.lastFrameDrawCalls++;
     }
-    this.hideUnusedSprites(this.peopleSprites, peoplePlacements.length);
+    this.hideUnusedParticles(this.peopleParticles, this.peoplePlacementCount);
 
-    smokePlacements.sort((a, b) => a.z - b.z);
-    this.syncSpritePool(this.smokeContainer, this.smokeSprites, smokePlacements.length, () => {
-      const sprite = new Sprite(this.getSmokeTexture());
-      sprite.anchor.set(0.5, 0.5);
-      return sprite;
-    });
-    for (let i = 0; i < smokePlacements.length; i++) {
-      const placement = smokePlacements[i];
-      const sprite = this.smokeSprites[i];
-      sprite.visible = true;
-      sprite.x = placement.x;
-      sprite.y = placement.y;
-      sprite.width = placement.width;
-      sprite.height = placement.height;
-      sprite.alpha = placement.alpha;
-      sprite.zIndex = placement.z;
+    this.smokePlacements.length = this.smokePlacementCount;
+    this.smokePlacements.sort(compareByZ);
+    const smokeTexture = this.getSmokeTexture();
+    this.smokeContainer.texture = smokeTexture;
+    this.syncParticlePool(this.smokeContainer, this.smokeParticles, this.smokePlacementCount, this.createSmokeParticle);
+    const smokeScaleX = 1 / Math.max(1, smokeTexture.orig.width);
+    const smokeScaleY = 1 / Math.max(1, smokeTexture.orig.height);
+    for (let i = 0; i < this.smokePlacementCount; i++) {
+      const placement = this.smokePlacements[i];
+      const particle = this.smokeParticles[i];
+      particle.x = placement.x;
+      particle.y = placement.y;
+      particle.scaleX = placement.width * smokeScaleX;
+      particle.scaleY = placement.height * smokeScaleY;
+      particle.alpha = placement.alpha;
       this.lastFrameDrawCalls++;
     }
-    this.hideUnusedSprites(this.smokeSprites, smokePlacements.length);
+    this.hideUnusedParticles(this.smokeParticles, this.smokePlacementCount);
 
-    pumpPlacements.sort((a, b) => a.z - b.z);
-    this.syncSpritePool(this.pumpjackContainer, this.pumpjackBaseSprites, pumpPlacements.length, () => {
-      const sprite = new Sprite(this.getPumpjackBaseTexture());
-      sprite.anchor.set(0, 0);
-      return sprite;
-    });
-    this.syncSpritePool(this.pumpjackContainer, this.pumpjackBeamSprites, pumpPlacements.length, () => {
-      const sprite = new Sprite(this.getPumpjackBeamTexture());
-      sprite.anchor.set(0.5, 32 / 90);
-      return sprite;
-    });
-    for (let i = 0; i < pumpPlacements.length; i++) {
-      const placement = pumpPlacements[i];
-      const baseSprite = this.pumpjackBaseSprites[i];
-      baseSprite.visible = true;
-      baseSprite.x = placement.x;
-      baseSprite.y = placement.y;
-      baseSprite.width = placement.width;
-      baseSprite.height = placement.height;
-      baseSprite.rotation = 0;
-      baseSprite.zIndex = placement.z;
+    this.pumpPlacements.length = this.pumpPlacementCount;
+    this.pumpPlacements.sort(compareByZ);
+    const pumpjackBaseTexture = this.getPumpjackBaseTexture();
+    const pumpjackBeamTexture = this.getPumpjackBeamTexture();
+    this.pumpjackBaseContainer.texture = pumpjackBaseTexture;
+    this.pumpjackBeamContainer.texture = pumpjackBeamTexture;
+    this.syncParticlePool(this.pumpjackBaseContainer, this.pumpjackBaseParticles, this.pumpPlacementCount, this.createPumpjackBaseParticle);
+    this.syncParticlePool(this.pumpjackBeamContainer, this.pumpjackBeamParticles, this.pumpPlacementCount, this.createPumpjackBeamParticle);
+    const pumpjackBaseScaleX = 1 / Math.max(1, pumpjackBaseTexture.orig.width);
+    const pumpjackBaseScaleY = 1 / Math.max(1, pumpjackBaseTexture.orig.height);
+    const pumpjackBeamScaleX = 1 / Math.max(1, pumpjackBeamTexture.orig.width);
+    const pumpjackBeamScaleY = 1 / Math.max(1, pumpjackBeamTexture.orig.height);
+    for (let i = 0; i < this.pumpPlacementCount; i++) {
+      const placement = this.pumpPlacements[i];
+      const baseParticle = this.pumpjackBaseParticles[i];
+      baseParticle.x = placement.x;
+      baseParticle.y = placement.y;
+      baseParticle.scaleX = placement.width * pumpjackBaseScaleX;
+      baseParticle.scaleY = placement.height * pumpjackBaseScaleY;
+      baseParticle.rotation = 0;
+      baseParticle.alpha = 1;
 
-      const beamSprite = this.pumpjackBeamSprites[i];
-      beamSprite.visible = true;
-      beamSprite.x = placement.pivotX;
-      beamSprite.y = placement.pivotY;
-      beamSprite.width = placement.beamWidth;
-      beamSprite.height = placement.beamHeight;
-      beamSprite.rotation = placement.angle;
-      beamSprite.zIndex = placement.z + 0.1;
+      const beamParticle = this.pumpjackBeamParticles[i];
+      beamParticle.x = placement.pivotX;
+      beamParticle.y = placement.pivotY;
+      beamParticle.scaleX = placement.beamWidth * pumpjackBeamScaleX;
+      beamParticle.scaleY = placement.beamHeight * pumpjackBeamScaleY;
+      beamParticle.rotation = placement.angle;
+      beamParticle.alpha = 1;
       this.lastFrameDrawCalls += 2;
     }
-    this.hideUnusedSprites(this.pumpjackBaseSprites, pumpPlacements.length);
-    this.hideUnusedSprites(this.pumpjackBeamSprites, pumpPlacements.length);
+    this.hideUnusedParticles(this.pumpjackBaseParticles, this.pumpPlacementCount);
+    this.hideUnusedParticles(this.pumpjackBeamParticles, this.pumpPlacementCount);
 
-    launchPads.sort((a, b) => a.depthRow - b.depthRow);
-    this.updateRocketSprites(launchPads);
+    this.launchPads.length = this.launchPadCount;
+    this.launchPads.sort(compareByDepthRow);
+    this.landingZones.length = this.landingZoneCount;
+    this.updateRocketSprites(this.launchPads, this.landingZones);
   }
 
   private collectPeoplePlacements(
-    placements: PeoplePlacement[],
     width: number,
     height: number,
     panelBottomY: number,
@@ -869,18 +1025,70 @@ export class EarthSurfaceScene implements VisualScene {
       const yBase = panelBottomY - (depthT * height * 0.19);
       const bob = Math.sin((phase * Math.PI * 6) + (i * 0.9)) * (0.2 + ((1 - depthT) * 0.65));
       const size = PEOPLE_MIN_SIZE + ((1 - depthT) * (PEOPLE_MAX_SIZE - PEOPLE_MIN_SIZE));
-      placements.push({
-        x,
-        y: yBase + bob,
-        size,
-        alpha: 0.32 + ((1 - depthT) * 0.58),
-        z: 100500 + ((1 - depthT) * 1200) + yBase,
-      });
+      const placement = this.acquirePeoplePlacement();
+      placement.x = x;
+      placement.y = yBase + bob;
+      placement.size = size;
+      placement.alpha = 0.32 + ((1 - depthT) * 0.58);
+      placement.z = 100500 + ((1 - depthT) * 1200) + yBase;
+    }
+  }
+
+  private primeLaunchEffectTextures(): void {
+    const image = new Image();
+    image.decoding = 'async';
+    image.addEventListener('load', () => {
+      const naturalWidth = Math.max(1, image.naturalWidth);
+      const naturalHeight = Math.max(1, image.naturalHeight);
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.floor(naturalWidth * ROCKET_TRAIL_TEXTURE_SCALE));
+      canvas.height = Math.max(1, Math.floor(naturalHeight * ROCKET_TRAIL_TEXTURE_SCALE));
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.imageSmoothingEnabled = true;
+        ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+        this.launchRocketTrailTexture = textureFromCanvas(canvas);
+      } else {
+        this.launchRocketTrailTexture = Texture.from(image);
+      }
+    }, { once: true });
+    image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(launchRocketTrailSvg)}`;
+  }
+
+  private collectLandingZones(
+    width: number,
+    baseY: number,
+    perspectiveX: number,
+    depthSpan: number,
+  ): void {
+    const left = width * 0;
+    const right = width * 1;
+    const frontRocketHeight = 22;
+    const frontRocketWidth = frontRocketHeight * 0.32;
+    for (let i = 0; i < LANDING_ZONE_COUNT; i++) {
+      const xT = ((i * 0.61803398875) + 0.19) % 1;
+      const depthT = 0.06 + ((((i * 0.41421356237) + 0.31) % 1) * 0.88);
+      const centerX = left + ((right - left) * xT);
+      const depthRow = Math.round(depthT * (MAX_BUILDINGS_PER_COLUMN * 0.8));
+      this.fillStackProjection(
+        this.stackProjectionScratch,
+        centerX,
+        baseY,
+        frontRocketWidth,
+        frontRocketHeight,
+        depthRow,
+        perspectiveX,
+        depthSpan,
+      );
+      const zone = this.acquireLandingZone();
+      zone.centerX = centerX;
+      zone.baseY = this.stackProjectionScratch.y;
+      zone.rocketHeight = Math.max(ROCKET_MIN_HEIGHT * 3, this.stackProjectionScratch.height);
+      zone.depthRow = depthRow;
     }
   }
 
   private collectMultiRowPlacements(
-    placements: BuildingPlacement[],
     config: BuildingConfig,
     texture: Texture,
     count: number,
@@ -909,7 +1117,8 @@ export class EarthSurfaceScene implements VisualScene {
     const frontLogicalRow = layout.startDepthRow;
     const frontDepth = 1 - Math.pow(EARTH_STACK_DEPTH_FALLOFF, frontLogicalRow);
     const frontXProjectionFactor = Math.max(0.0001, 1 - (frontDepth * COLUMN_PERSPECTIVE_PULL));
-    const frontProjected = this.projectStackInstance(
+    this.fillStackProjection(
+      this.stackProjectionScratch,
       perspectiveX,
       floorY,
       firstWidth,
@@ -918,7 +1127,7 @@ export class EarthSurfaceScene implements VisualScene {
       perspectiveX,
       depthSpan,
     );
-    const frontProjectedWidth = frontProjected.width * config.stackScale;
+    const frontProjectedWidth = this.stackProjectionScratch.width * config.stackScale;
     const frontMinCenterX = spanLeft + (frontProjectedWidth * 0.5);
     const frontMaxCenterX = spanRight - (frontProjectedWidth * 0.5);
     const frontBaseMinCenterX = perspectiveX + ((frontMinCenterX - perspectiveX) / frontXProjectionFactor);
@@ -942,7 +1151,8 @@ export class EarthSurfaceScene implements VisualScene {
       const logicalRow = layout.startDepthRow + rowIndex;
       const depth = 1 - Math.pow(EARTH_STACK_DEPTH_FALLOFF, logicalRow);
       const xProjectionFactor = Math.max(0.0001, 1 - (depth * COLUMN_PERSPECTIVE_PULL));
-      const rowProjected = this.projectStackInstance(
+      this.fillStackProjection(
+        this.stackProjectionScratch,
         perspectiveX,
         floorY,
         firstWidth,
@@ -951,6 +1161,7 @@ export class EarthSurfaceScene implements VisualScene {
         perspectiveX,
         depthSpan,
       );
+      const rowProjected = this.stackProjectionScratch;
       if (rowProjected.y + rowProjected.height < topLimit) {
         break;
       }
@@ -981,11 +1192,12 @@ export class EarthSurfaceScene implements VisualScene {
         continue;
       }
       let renderedInRow = 0;
-      const rowAlpha = this.getBuildingRowAlpha(renderedRowCount, Math.min(count, MAX_BUILDINGS_PER_COLUMN));
+      const rowAlpha = this.getBuildingRowAlpha(renderedRowCount);
       if (layout.side === 'left') {
         for (let slotIndex = maxSlotIndex; slotIndex >= minSlotIndex && remaining > 0; slotIndex--) {
           const baseCenterX = perspectiveX + (slotIndex * baseStep);
-          const projected = this.projectStackInstance(
+          this.fillStackProjection(
+            this.stackProjectionScratch,
             baseCenterX,
             floorY,
             firstWidth,
@@ -994,24 +1206,26 @@ export class EarthSurfaceScene implements VisualScene {
             perspectiveX,
             depthSpan,
           );
+          const projected = this.stackProjectionScratch;
           const projectedWidth = projected.width * config.stackScale;
           const projectedHeight = projected.height * config.stackScale;
-          placements.push({
-            texture,
-            x: projected.centerX - (projectedWidth * 0.5),
-            y: projected.y - projectedHeight,
-            width: projectedWidth,
-            height: projectedHeight,
-            z: depthOrder,
-            alpha: rowAlpha,
-          });
+          const placement = this.acquireBuildingPlacement();
+          placement.texture = texture;
+          placement.x = projected.centerX - (projectedWidth * 0.5);
+          placement.y = projected.y - projectedHeight;
+          placement.width = projectedWidth;
+          placement.height = projectedHeight;
+          placement.z = depthOrder;
+          placement.alpha = rowAlpha;
+          placement.rotation = undefined;
           renderedInRow++;
           remaining--;
         }
       } else {
         for (let slotIndex = minSlotIndex; slotIndex <= maxSlotIndex && remaining > 0; slotIndex++) {
           const baseCenterX = perspectiveX + (slotIndex * baseStep);
-          const projected = this.projectStackInstance(
+          this.fillStackProjection(
+            this.stackProjectionScratch,
             baseCenterX,
             floorY,
             firstWidth,
@@ -1020,17 +1234,18 @@ export class EarthSurfaceScene implements VisualScene {
             perspectiveX,
             depthSpan,
           );
+          const projected = this.stackProjectionScratch;
           const projectedWidth = projected.width * config.stackScale;
           const projectedHeight = projected.height * config.stackScale;
-          placements.push({
-            texture,
-            x: projected.centerX - (projectedWidth * 0.5),
-            y: projected.y - projectedHeight,
-            width: projectedWidth,
-            height: projectedHeight,
-            z: depthOrder,
-            alpha: rowAlpha,
-          });
+          const placement = this.acquireBuildingPlacement();
+          placement.texture = texture;
+          placement.x = projected.centerX - (projectedWidth * 0.5);
+          placement.y = projected.y - projectedHeight;
+          placement.width = projectedWidth;
+          placement.height = projectedHeight;
+          placement.z = depthOrder;
+          placement.alpha = rowAlpha;
+          placement.rotation = undefined;
           renderedInRow++;
           remaining--;
         }
@@ -1043,11 +1258,11 @@ export class EarthSurfaceScene implements VisualScene {
     }
   }
 
-  private getBuildingRowAlpha(row: number, totalRows: number): number {
-    if (totalRows <= 1) {
+  private getBuildingRowAlpha(row: number): number {
+    if (MAX_BUILDINGS_PER_COLUMN <= 1) {
       return 1;
     }
-    const rowT = row / Math.max(1, totalRows - 1);
+    const rowT = row / Math.max(1, MAX_BUILDINGS_PER_COLUMN - 1);
     if (rowT <= BUILDING_ROW_FADE_START) {
       return 1;
     }
@@ -1055,27 +1270,33 @@ export class EarthSurfaceScene implements VisualScene {
     return 1 - ((1 - BUILDING_ROW_FADE_MIN_ALPHA) * fadeT);
   }
 
-  private updateRocketSprites(launchPads: LaunchPadPlacement[]): void {
-    const rocketPlacements: BuildingPlacement[] = [];
-    const flamePlacements: BuildingPlacement[] = [];
-    const occupiedPads = new Set<number>();
-    const staleIndexes: number[] = [];
+  private updateRocketSprites(launchPads: LaunchPadPlacement[], landingZones: LandingZonePlacement[]): void {
+    this.rocketTrailPlacementCount = 0;
+    this.parkedRocketPlacementCount = 0;
+    this.occupiedPadFlags.length = launchPads.length;
+    for (let i = 0; i < launchPads.length; i++) {
+      this.occupiedPadFlags[i] = false;
+    }
+    let renderedReturnTrails = 0;
     const launchPadIndices = this.getLaunchPadOrder(launchPads);
     const parkedPadIndices = this.getParkedPadOrder(launchPads);
     this.lastVisibleLaunchPadCount = launchPads.length;
     this.lastVisibleLaunchSourceCount = launchPadIndices.length;
 
+    let nextLaunchTrailCount = 0;
     for (let i = 0; i < this.launchTrails.length; i++) {
       const launch = this.launchTrails[i];
       if (launchPads.length <= 0 || launchPadIndices.length <= 0) {
-        break;
+        this.launchTrails[nextLaunchTrailCount++] = launch;
+        continue;
       }
       const padIndex = launchPadIndices[launch.sourceIndex % launchPadIndices.length];
       const emitter = launchPads[padIndex];
       if (!emitter) {
+        this.launchTrails[nextLaunchTrailCount++] = launch;
         continue;
       }
-      occupiedPads.add(padIndex);
+      this.occupiedPadFlags[padIndex] = true;
       const progress = Math.max(0, launch.progress);
       const visualProgress = clamp01(progress);
       const rocketHeight = Math.max(ROCKET_MIN_HEIGHT * 0.66, emitter.rocketHeight * (1 - (visualProgress * ROCKET_LAUNCH_SHRINK_RATIO)));
@@ -1090,38 +1311,77 @@ export class EarthSurfaceScene implements VisualScene {
       const rocketX = emitter.centerX + sway + directionalDrift;
       const rocketY = emitter.baseY + padSink - rise;
       if (rocketY + rocketHeight < 0) {
-        staleIndexes.push(i);
         continue;
       }
-      const depthOrder = (100000 - (emitter.depthRow * 1000)) + emitter.baseY;
-      const flameHeight = rocketHeight * (0.95 + ((1 - visualProgress) * 0.45));
-      const flameWidth = rocketWidth * 1.75;
-      const nozzleOffsetY = rocketHeight * 0.82;
-      const flameX = rocketX - (Math.sin(rocketTilt) * nozzleOffsetY);
-      const flameY = rocketY + (Math.cos(rocketTilt) * nozzleOffsetY);
-      flamePlacements.push({
-        texture: this.getLaunchFlameTexture(),
-        x: flameX,
-        y: flameY,
-        width: flameWidth,
-        height: flameHeight,
-        z: depthOrder + 30,
-        rotation: rocketTilt,
-      });
-      rocketPlacements.push({
-        texture: this.getLaunchRocketTexture(),
-        x: rocketX,
-        y: rocketY,
-        width: rocketWidth,
-        height: rocketHeight,
-        z: depthOrder + 30.1,
-        rotation: rocketTilt,
-      });
+      this.launchTrails[nextLaunchTrailCount++] = launch;
+      const trailPlacement = this.acquireRocketTrailPlacement();
+      trailPlacement.texture = this.getLaunchRocketTrailTexture();
+      trailPlacement.x = rocketX - (rocketWidth * 0.16);
+      trailPlacement.y = rocketY;
+      trailPlacement.width = rocketWidth * 1.32;
+      trailPlacement.height = rocketHeight * 1.92;
+      trailPlacement.z = 0;
+      trailPlacement.rotation = rocketTilt;
+      trailPlacement.alpha = undefined;
     }
+    this.launchTrails.length = nextLaunchTrailCount;
 
-    for (let i = staleIndexes.length - 1; i >= 0; i--) {
-      this.launchTrails.splice(staleIndexes[i], 1);
+    let nextReturnTrailCount = 0;
+    for (let i = 0; i < this.returnTrails.length; i++) {
+      const trail = this.returnTrails[i];
+      if (trail.delaySec > 0) {
+        this.returnTrails[nextReturnTrailCount++] = trail;
+        continue;
+      }
+      if (landingZones.length <= 0) {
+        this.returnTrails[nextReturnTrailCount++] = trail;
+        continue;
+      }
+      const zone = landingZones[trail.targetIndex % landingZones.length];
+      if (!zone) {
+        this.returnTrails[nextReturnTrailCount++] = trail;
+        continue;
+      }
+      const visualProgress = clamp01(trail.progress);
+      const perspectiveScale = Math.max(0.52, 1 - (zone.depthRow * 0.08));
+      const rocketHeight = Math.max(
+        ROCKET_MIN_HEIGHT * 0.75,
+        zone.rocketHeight * (0.88 + ((1 - visualProgress) * 0.18)),
+      );
+      const rocketWidth = rocketHeight * 0.32;
+      const startY = -rocketHeight - ((trail.heightBias + (zone.depthRow * 0.08)) * 120);
+      const touchdownY = zone.baseY - rocketHeight;
+      const sway = Math.sin((visualProgress * Math.PI * 2) + (trail.targetSeed * Math.PI * 2))
+        * ((8 + (zone.depthRow * 0.8)) * perspectiveScale);
+      const drift = trail.driftBias * (1 - visualProgress) * 24 * perspectiveScale;
+      const rocketTilt = trail.driftBias * 0.06 * (1 - visualProgress);
+      const rocketX = zone.centerX + sway + drift;
+      const rocketY = startY + ((touchdownY - startY) * visualProgress);
+      if (rocketY >= touchdownY) {
+        continue;
+      }
+      this.returnTrails[nextReturnTrailCount++] = trail;
+      if (rocketY + rocketHeight < 0) {
+        continue;
+      }
+      if (renderedReturnTrails >= MAX_RENDERED_RETURN_TRAILS) {
+        continue;
+      }
+      const fadeOut = clamp01((1 - visualProgress) / 0.16);
+      const fadeIn = clamp01(visualProgress / 0.14);
+      const alpha = fadeIn * fadeOut;
+      const trailPlacement = this.acquireRocketTrailPlacement();
+      trailPlacement.texture = this.getLaunchRocketTrailTexture();
+      trailPlacement.x = rocketX - (rocketWidth * 0.16);
+      trailPlacement.y = rocketY;
+      trailPlacement.width = rocketWidth * 1.32;
+      trailPlacement.height = rocketHeight * 1.92;
+      trailPlacement.z = 0;
+      trailPlacement.rotation = rocketTilt;
+      trailPlacement.alpha = alpha;
+      renderedReturnTrails++;
     }
+    this.returnTrails.length = nextReturnTrailCount;
 
     let parked = Math.min(this.sampledRocketInventory, parkedPadIndices.length);
     for (let parkedIndex = 0; parkedIndex < parkedPadIndices.length; parkedIndex++) {
@@ -1129,66 +1389,62 @@ export class EarthSurfaceScene implements VisualScene {
         break;
       }
       const padIndex = parkedPadIndices[parkedIndex];
-      if (occupiedPads.has(padIndex)) {
+      if (this.occupiedPadFlags[padIndex]) {
         continue;
       }
       const emitter = launchPads[padIndex];
       const rocketHeight = emitter.rocketHeight;
       const rocketWidth = rocketHeight * 0.32;
       const padSink = emitter.rocketHeight * ROCKET_PAD_SINK_RATIO;
-      rocketPlacements.push({
-        texture: this.getLaunchRocketTexture(),
-        x: emitter.centerX,
-        y: emitter.baseY + padSink - rocketHeight,
-        width: rocketWidth,
-        height: rocketHeight,
-        z: (100000 - (emitter.depthRow * 1000)) + emitter.baseY + 25,
-      });
+      const parkedPlacement = this.acquireParkedRocketPlacement();
+      parkedPlacement.texture = this.getLaunchRocketTexture();
+      parkedPlacement.x = emitter.centerX;
+      parkedPlacement.y = emitter.baseY + padSink - rocketHeight;
+      parkedPlacement.width = rocketWidth;
+      parkedPlacement.height = rocketHeight;
+      parkedPlacement.z = 0;
+      parkedPlacement.alpha = undefined;
+      parkedPlacement.rotation = undefined;
       parked--;
     }
-
-    flamePlacements.sort((a, b) => a.z - b.z);
-    this.syncSpritePool(this.rocketContainer, this.flameSprites, flamePlacements.length, () => {
-      const sprite = new Sprite(this.getLaunchFlameTexture());
-      sprite.anchor.set(0.5, 0);
-      return sprite;
-    });
-    for (let i = 0; i < flamePlacements.length; i++) {
-      const placement = flamePlacements[i];
-      const sprite = this.flameSprites[i];
-      sprite.visible = true;
-      sprite.x = placement.x;
-      sprite.y = placement.y;
-      sprite.width = placement.width;
-      sprite.height = placement.height;
-      sprite.zIndex = placement.z;
-      sprite.rotation = placement.rotation ?? 0;
+    const launchTrailTexture = this.getLaunchRocketTrailTexture();
+    this.rocketTrailContainer.texture = launchTrailTexture;
+    this.rocketTrailPlacements.length = this.rocketTrailPlacementCount;
+    this.syncParticlePool(this.rocketTrailContainer, this.rocketTrailParticles, this.rocketTrailPlacementCount, this.createRocketTrailParticle);
+    for (let i = 0; i < this.rocketTrailPlacementCount; i++) {
+      const placement = this.rocketTrailPlacements[i];
+      const particle = this.rocketTrailParticles[i];
+      particle.texture = placement.texture;
+      particle.x = placement.x;
+      particle.y = placement.y;
+      particle.scaleX = placement.width / Math.max(1, placement.texture.orig.width);
+      particle.scaleY = placement.height / Math.max(1, placement.texture.orig.height);
+      particle.alpha = placement.alpha ?? 1;
+      particle.rotation = placement.rotation ?? 0;
       this.lastFrameDrawCalls++;
     }
-    this.hideUnusedSprites(this.flameSprites, flamePlacements.length);
-
-    rocketPlacements.sort((a, b) => a.z - b.z);
-    this.syncSpritePool(this.rocketContainer, this.rocketSprites, rocketPlacements.length, () => {
-      const sprite = new Sprite(this.getLaunchRocketTexture());
-      sprite.anchor.set(0.5, 0);
-      return sprite;
-    });
-    for (let i = 0; i < rocketPlacements.length; i++) {
-      const placement = rocketPlacements[i];
-      const sprite = this.rocketSprites[i];
-      sprite.visible = true;
-      sprite.x = placement.x;
-      sprite.y = placement.y;
-      sprite.width = placement.width;
-      sprite.height = placement.height;
-      sprite.zIndex = placement.z;
-      sprite.rotation = placement.rotation ?? 0;
+    this.hideUnusedParticles(this.rocketTrailParticles, this.rocketTrailPlacementCount);
+    const rocketTexture = this.getLaunchRocketTexture();
+    this.parkedRocketContainer.texture = rocketTexture;
+    this.parkedRocketPlacements.length = this.parkedRocketPlacementCount;
+    this.syncParticlePool(this.parkedRocketContainer, this.parkedRocketParticles, this.parkedRocketPlacementCount, this.createParkedRocketParticle);
+    for (let i = 0; i < this.parkedRocketPlacementCount; i++) {
+      const placement = this.parkedRocketPlacements[i];
+      const particle = this.parkedRocketParticles[i];
+      particle.texture = placement.texture;
+      particle.x = placement.x;
+      particle.y = placement.y;
+      particle.scaleX = placement.width / Math.max(1, placement.texture.orig.width);
+      particle.scaleY = placement.height / Math.max(1, placement.texture.orig.height);
+      particle.alpha = placement.alpha ?? 1;
+      particle.rotation = 0;
       this.lastFrameDrawCalls++;
     }
-    this.hideUnusedSprites(this.rocketSprites, rocketPlacements.length);
+    this.hideUnusedParticles(this.parkedRocketParticles, this.parkedRocketPlacementCount);
   }
 
-  private projectStackInstance(
+  private fillStackProjection(
+    out: StackProjection,
     baseCenterX: number,
     floorY: number,
     frontWidth: number,
@@ -1196,16 +1452,220 @@ export class EarthSurfaceScene implements VisualScene {
     logicalRow: number,
     perspectiveX: number,
     depthSpan: number,
-  ): StackProjection {
+  ): void {
     const depth = 1 - Math.pow(EARTH_STACK_DEPTH_FALLOFF, logicalRow);
     const scale = 1 - (EARTH_STACK_SCALE_FALLOFF * depth);
-    return {
-      centerX: baseCenterX + ((perspectiveX - baseCenterX) * depth * COLUMN_PERSPECTIVE_PULL),
-      y: floorY - (depth * depthSpan),
-      width: frontWidth * scale,
-      height: frontHeight * scale,
-    };
+    out.centerX = baseCenterX + ((perspectiveX - baseCenterX) * depth * COLUMN_PERSPECTIVE_PULL);
+    out.y = floorY - (depth * depthSpan);
+    out.width = frontWidth * scale;
+    out.height = frontHeight * scale;
   }
+
+  private acquireBuildingPlacement(): BuildingPlacement {
+    const placement = this.buildingPlacements[this.buildingPlacementCount];
+    this.buildingPlacementCount++;
+    if (placement) {
+      return placement;
+    }
+    const created: BuildingPlacement = {
+      texture: Texture.EMPTY,
+      x: 0,
+      y: 0,
+      width: 0,
+      height: 0,
+      z: 0,
+    };
+    this.buildingPlacements.push(created);
+    return created;
+  }
+
+  private acquirePeoplePlacement(): PeoplePlacement {
+    const placement = this.peoplePlacements[this.peoplePlacementCount];
+    this.peoplePlacementCount++;
+    if (placement) {
+      return placement;
+    }
+    const created: PeoplePlacement = {
+      x: 0,
+      y: 0,
+      size: 0,
+      alpha: 0,
+      z: 0,
+    };
+    this.peoplePlacements.push(created);
+    return created;
+  }
+
+  private acquireSmokePlacement(): SmokePlacement {
+    const placement = this.smokePlacements[this.smokePlacementCount];
+    this.smokePlacementCount++;
+    if (placement) {
+      return placement;
+    }
+    const created: SmokePlacement = {
+      x: 0,
+      y: 0,
+      width: 0,
+      height: 0,
+      alpha: 0,
+      z: 0,
+    };
+    this.smokePlacements.push(created);
+    return created;
+  }
+
+  private acquirePumpPlacement(): PumpPlacement {
+    const placement = this.pumpPlacements[this.pumpPlacementCount];
+    this.pumpPlacementCount++;
+    if (placement) {
+      return placement;
+    }
+    const created: PumpPlacement = {
+      x: 0,
+      y: 0,
+      width: 0,
+      height: 0,
+      pivotX: 0,
+      pivotY: 0,
+      beamWidth: 0,
+      beamHeight: 0,
+      angle: 0,
+      z: 0,
+    };
+    this.pumpPlacements.push(created);
+    return created;
+  }
+
+  private acquireLaunchPad(): LaunchPadPlacement {
+    const placement = this.launchPads[this.launchPadCount];
+    this.launchPadCount++;
+    if (placement) {
+      return placement;
+    }
+    const created: LaunchPadPlacement = {
+      centerX: 0,
+      baseY: 0,
+      width: 0,
+      rocketHeight: 0,
+      speedScale: 0,
+      depthRow: 0,
+      slotInFactory: 0,
+    };
+    this.launchPads.push(created);
+    return created;
+  }
+
+  private acquireLandingZone(): LandingZonePlacement {
+    const placement = this.landingZones[this.landingZoneCount];
+    this.landingZoneCount++;
+    if (placement) {
+      return placement;
+    }
+    const created: LandingZonePlacement = {
+      centerX: 0,
+      baseY: 0,
+      rocketHeight: 0,
+      depthRow: 0,
+    };
+    this.landingZones.push(created);
+    return created;
+  }
+
+  private acquireRocketTrailPlacement(): BuildingPlacement {
+    const placement = this.rocketTrailPlacements[this.rocketTrailPlacementCount];
+    this.rocketTrailPlacementCount++;
+    if (placement) {
+      return placement;
+    }
+    const created: BuildingPlacement = {
+      texture: Texture.EMPTY,
+      x: 0,
+      y: 0,
+      width: 0,
+      height: 0,
+      z: 0,
+    };
+    this.rocketTrailPlacements.push(created);
+    return created;
+  }
+
+  private acquireParkedRocketPlacement(): BuildingPlacement {
+    const placement = this.parkedRocketPlacements[this.parkedRocketPlacementCount];
+    this.parkedRocketPlacementCount++;
+    if (placement) {
+      return placement;
+    }
+    const created: BuildingPlacement = {
+      texture: Texture.EMPTY,
+      x: 0,
+      y: 0,
+      width: 0,
+      height: 0,
+      z: 0,
+    };
+    this.parkedRocketPlacements.push(created);
+    return created;
+  }
+
+  private readonly createCloudSprite = (): Sprite => {
+    const sprite = new Sprite(Texture.EMPTY);
+    sprite.anchor.set(0.5, 0.5);
+    return sprite;
+  };
+
+  private readonly createBuildingSprite = (): Sprite => {
+    const sprite = new Sprite(Texture.EMPTY);
+    sprite.anchor.set(0, 0);
+    return sprite;
+  };
+
+  private readonly createPeopleParticle = (): Particle => {
+    return new Particle({
+      texture: this.getPeopleTexture(),
+      anchorX: 0.5,
+      anchorY: 0.5,
+    });
+  };
+
+  private readonly createSmokeParticle = (): Particle => {
+    return new Particle({
+      texture: this.getSmokeTexture(),
+      anchorX: 0.5,
+      anchorY: 0.5,
+    });
+  };
+
+  private readonly createPumpjackBaseParticle = (): Particle => {
+    return new Particle({
+      texture: this.getPumpjackBaseTexture(),
+      anchorX: 0,
+      anchorY: 0,
+    });
+  };
+
+  private readonly createPumpjackBeamParticle = (): Particle => {
+    return new Particle({
+      texture: this.getPumpjackBeamTexture(),
+      anchorX: 0.5,
+      anchorY: 32 / 90,
+    });
+  };
+
+  private readonly createRocketTrailParticle = (): Particle => {
+    return new Particle({
+      texture: this.getLaunchRocketTrailTexture(),
+      anchorX: 0.5,
+      anchorY: 0,
+    });
+  };
+
+  private readonly createParkedRocketParticle = (): Particle => {
+    return new Particle({
+      texture: this.getLaunchRocketTexture(),
+      anchorX: 0.5,
+      anchorY: 0,
+    });
+  };
 
   private syncSpritePool(
     container: Container,
@@ -1220,9 +1680,37 @@ export class EarthSurfaceScene implements VisualScene {
     }
   }
 
+  private syncParticlePool(
+    container: ParticleContainer<Particle>,
+    pool: Particle[],
+    targetCount: number,
+    createParticle: () => Particle,
+  ): void {
+    while (pool.length < targetCount) {
+      const particle = createParticle();
+      container.addParticle(particle);
+      pool.push(particle);
+    }
+    while (pool.length > targetCount) {
+      const particle = pool.pop();
+      if (!particle) {
+        break;
+      }
+      container.removeParticle(particle);
+    }
+  }
+
   private hideUnusedSprites(pool: Sprite[], usedCount: number): void {
     for (let i = usedCount; i < pool.length; i++) {
       pool[i].visible = false;
+    }
+  }
+
+  private hideUnusedParticles(pool: Particle[], usedCount: number): void {
+    for (let i = usedCount; i < pool.length; i++) {
+      pool[i].alpha = 0;
+      pool[i].scaleX = 0;
+      pool[i].scaleY = 0;
     }
   }
 
@@ -1432,32 +1920,8 @@ export class EarthSurfaceScene implements VisualScene {
     return this.launchRocketTexture;
   }
 
-  private getLaunchFlameTexture(): Texture {
-    if (this.launchFlameTexture) {
-      return this.launchFlameTexture;
-    }
-    const canvas = document.createElement('canvas');
-    canvas.width = 96;
-    canvas.height = 160;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) {
-      this.launchFlameTexture = Texture.EMPTY;
-      return this.launchFlameTexture;
-    }
-    const gradient = ctx.createLinearGradient(48, 0, 48, 160);
-    gradient.addColorStop(0, 'rgba(255, 245, 214, 0.95)');
-    gradient.addColorStop(0.24, 'rgba(255, 200, 92, 0.78)');
-    gradient.addColorStop(0.6, 'rgba(255, 124, 54, 0.42)');
-    gradient.addColorStop(1, 'rgba(255, 92, 40, 0)');
-    ctx.fillStyle = gradient;
-    ctx.beginPath();
-    ctx.moveTo(48, 0);
-    ctx.bezierCurveTo(76, 34, 70, 104, 48, 160);
-    ctx.bezierCurveTo(26, 104, 20, 34, 48, 0);
-    ctx.closePath();
-    ctx.fill();
-    this.launchFlameTexture = textureFromCanvas(canvas);
-    return this.launchFlameTexture;
+  private getLaunchRocketTrailTexture(): Texture {
+    return this.launchRocketTrailTexture ?? Texture.EMPTY;
   }
 
   private makeLaunchTrail(): LaunchTrail {
@@ -1473,34 +1937,40 @@ export class EarthSurfaceScene implements VisualScene {
     };
   }
 
-  private getLaunchPadOrder(launchPads: LaunchPadPlacement[]): number[] {
-    if (launchPads.length <= 0) {
-      return [];
-    }
+  private makeReturnTrail(): ReturnTrail {
+    const targetIndex = this.nextReturnTargetIndex;
+    this.nextReturnTargetIndex = (this.nextReturnTargetIndex + 1) % LANDING_ZONE_COUNT;
+    return {
+      delaySec: this.rng.nextRange(0.8, 2.2),
+      progress: 0,
+      speed: this.rng.nextRange(0.11, 0.19),
+      targetSeed: this.rng.next(),
+      targetIndex,
+      driftBias: this.rng.nextRange(-1, 1),
+      heightBias: this.rng.nextRange(0.1, 0.9),
+    };
+  }
 
-    const ordered: number[] = [];
+  private getLaunchPadOrder(launchPads: LaunchPadPlacement[]): number[] {
+    this.launchPadOrder.length = 0;
     const launchSlot = ROCKET_PADS_PER_FACTORY - 1;
     for (let i = 0; i < launchPads.length; i++) {
       if (launchPads[i].slotInFactory === launchSlot) {
-        ordered.push(i);
+        this.launchPadOrder.push(i);
       }
     }
-    return ordered;
+    return this.launchPadOrder;
   }
 
   private getParkedPadOrder(launchPads: LaunchPadPlacement[]): number[] {
-    if (launchPads.length <= 0) {
-      return [];
-    }
-
-    const ordered: number[] = [];
+    this.parkedPadOrder.length = 0;
     for (let slot = ROCKET_PADS_PER_FACTORY - 1; slot >= 0; slot--) {
       for (let i = 0; i < launchPads.length; i++) {
         if (launchPads[i].slotInFactory === slot) {
-          ordered.push(i);
+          this.parkedPadOrder.push(i);
         }
       }
     }
-    return ordered;
+    return this.parkedPadOrder;
   }
 }

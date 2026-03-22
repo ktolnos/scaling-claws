@@ -1,17 +1,20 @@
-import { BALANCE } from '../BalanceConfig.ts';
+import { BALANCE, hasCompletedResearch } from '../BalanceConfig.ts';
 import type { GameState, LocationId, TransportPayloadId, TransportRouteId } from '../GameState.ts';
 import { fromBigInt } from '../utils.ts';
 
 export function isTransportRouteUnlocked(state: GameState, route: TransportRouteId): boolean {
-  if (route === 'earthOrbit') return state.completedResearch.includes('rocketry');
+  if (route === 'earthOrbit') return hasCompletedResearch(state.researchLevels, 'rocketry');
   if (route === 'moonOrbit') {
-    return state.completedResearch.includes('rocketry')
-      && state.completedResearch.includes('payloadToMoon')
-      && state.completedResearch.includes('moonMassDrivers');
+    return hasCompletedResearch(state.researchLevels, 'rocketry')
+      && hasCompletedResearch(state.researchLevels, 'payloadToMoon')
+      && hasCompletedResearch(state.researchLevels, 'moonMassDrivers');
   }
-  if (route === 'earthMoon') return state.completedResearch.includes('payloadToMoon');
-  if (route === 'moonMercury') return state.completedResearch.includes('payloadToMercury') && state.completedResearch.includes('moonMassDrivers');
-  return state.completedResearch.includes('payloadToMercury');
+  if (route === 'earthMoon') return hasCompletedResearch(state.researchLevels, 'payloadToMoon');
+  if (route === 'moonMercury') {
+    return hasCompletedResearch(state.researchLevels, 'payloadToMercury')
+      && hasCompletedResearch(state.researchLevels, 'moonMassDrivers');
+  }
+  return hasCompletedResearch(state.researchLevels, 'payloadToMercury');
 }
 
 export function getTransportRouteSource(route: TransportRouteId): LocationId {

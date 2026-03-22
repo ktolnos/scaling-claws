@@ -1,5 +1,6 @@
 export interface VisualClockOptions {
   fixedStepMs?: number;
+  renderStepMs?: number;
   maxCatchUpSteps?: number;
   onSimulate: (dtMs: number) => void;
   onRender: () => void;
@@ -7,17 +8,20 @@ export interface VisualClockOptions {
 
 export class VisualClock {
   private readonly fixedStepMs: number;
+  private readonly renderStepMs: number;
   private readonly maxCatchUpSteps: number;
   private readonly onSimulate: (dtMs: number) => void;
   private readonly onRender: () => void;
 
   private running = false;
   private accumulatorMs = 0;
+  private renderAccumulatorMs = 0;
   private lastFrameMs = 0;
   private frameHandle = 0;
 
   constructor(options: VisualClockOptions) {
     this.fixedStepMs = options.fixedStepMs ?? (1000 / 30);
+    this.renderStepMs = options.renderStepMs ?? this.fixedStepMs;
     this.maxCatchUpSteps = Math.max(1, options.maxCatchUpSteps ?? 6);
     this.onSimulate = options.onSimulate;
     this.onRender = options.onRender;
@@ -29,6 +33,7 @@ export class VisualClock {
     }
     this.running = true;
     this.accumulatorMs = 0;
+    this.renderAccumulatorMs = 0;
     this.lastFrameMs = 0;
     this.frameHandle = window.requestAnimationFrame(this.tick);
   }
@@ -43,6 +48,7 @@ export class VisualClock {
       this.frameHandle = 0;
     }
     this.accumulatorMs = 0;
+    this.renderAccumulatorMs = 0;
     this.lastFrameMs = 0;
   }
 
@@ -61,6 +67,7 @@ export class VisualClock {
     const frameDeltaMs = Math.min(250, Math.max(0, frameNowMs - this.lastFrameMs));
     this.lastFrameMs = frameNowMs;
     this.accumulatorMs += frameDeltaMs;
+    this.renderAccumulatorMs += frameDeltaMs;
 
     let steps = 0;
     while (this.accumulatorMs >= this.fixedStepMs && steps < this.maxCatchUpSteps) {
@@ -73,7 +80,10 @@ export class VisualClock {
       this.accumulatorMs = 0;
     }
 
-    this.onRender();
+    if (this.renderAccumulatorMs >= this.renderStepMs) {
+      this.renderAccumulatorMs %= this.renderStepMs;
+      this.onRender();
+    }
     this.frameHandle = window.requestAnimationFrame(this.tick);
   };
 }

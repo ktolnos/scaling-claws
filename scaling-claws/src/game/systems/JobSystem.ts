@@ -5,21 +5,12 @@ import {
   getStuckRate,
   getHumanWorkforceRemaining,
   getHumanSalaryPerMin,
+  hasCompletedResearch,
 } from '../BalanceConfig.ts';
 import type { HumanJobType, JobType } from '../BalanceConfig.ts';
 import { toBigInt, fromBigInt, mulB, divB, scaleB, scaleBigInt } from '../utils.ts';
 import { getJobOutputAmount } from './JobRules.ts';
 import { nextGameRandom } from '../Random.ts';
-
-const FLAVOR_TEXTS_EARLY = [
-  '"Your first Sixxer task: \'Rewrite my cat\'s Instagram bio.\' $6 is $6."',
-  '"Agent stuck. It\'s been thinking about a regex problem for 45 seconds."',
-  '"The Manager agent nudged a stuck coder. It said \'try a different approach.\' Shockingly, it worked."',
-];
-
-const FLAVOR_TEXTS_MIC_MINI = [
-  '"Your third Mic-mini. Your desk is becoming a server rack."',
-];
 
 function floorWholeAgents(value: bigint): bigint {
   const oneAgent = scaleBigInt(1n);
@@ -182,7 +173,7 @@ export function tickJobs(state: GameState, dtMs: number): void {
 
     let visible = intel >= jobConfig.unlockAtIntel;
     if (visible && jobConfig.agentResearchReq && jobConfig.agentResearchReq.length > 0) {
-      visible = jobConfig.agentResearchReq.every((id) => state.completedResearch.includes(id));
+      visible = jobConfig.agentResearchReq.every((id) => hasCompletedResearch(state.researchLevels, id));
     }
 
     if (visible) {
@@ -299,11 +290,6 @@ export function tickJobs(state: GameState, dtMs: number): void {
         completedThisTick += completions;
         state.completedTasks += completions;
         applyProduction(state, jobConfig.produces.resource, outputAmount, completions);
-
-        // Milestone flavor texts
-        if (state.completedTasks === 1n && !state.shownFlavorTexts.includes(FLAVOR_TEXTS_EARLY[0])) {
-          state.pendingFlavorTexts.push(FLAVOR_TEXTS_EARLY[0]);
-        }
       }
 
       // Roll stuck for non-sample agents based on elapsed time (independent of completions).
@@ -313,11 +299,6 @@ export function tickJobs(state: GameState, dtMs: number): void {
         restStuck += newlyStuck;
         if (restStuck > nonSampleActive) restStuck = nonSampleActive;
       }
-
-      if ((sampleStuck + restStuck) > 0n && state.completedTasks < 5n && !state.shownFlavorTexts.includes(FLAVOR_TEXTS_EARLY[1])) {
-        state.pendingFlavorTexts.push(FLAVOR_TEXTS_EARLY[1]);
-      }
-
       // Rates for UI
       const workingAgents = sampleWorking + nonSampleWorking;
       if (workingAgents > 0n) {
@@ -483,14 +464,6 @@ export function tickJobs(state: GameState, dtMs: number): void {
       state.expensePerMin = newHumanSalary;
     }
   }
-
-  // Milestone flavor texts
-  if (state.managerCount > 0n && !state.shownFlavorTexts.includes(FLAVOR_TEXTS_EARLY[2])) {
-    state.pendingFlavorTexts.push(FLAVOR_TEXTS_EARLY[2]);
-  }
-  if (state.micMiniCount >= scaleBigInt(3n) && !state.shownFlavorTexts.includes(FLAVOR_TEXTS_MIC_MINI[0])) {
-    state.pendingFlavorTexts.push(FLAVOR_TEXTS_MIC_MINI[0]);
-  }
 }
 
 /** Helper to update resource breakdown for UI. */
@@ -549,7 +522,7 @@ function canAssignAiAgent(state: GameState, jobType: JobType): boolean {
   if (jobConfig.agentIntelReq && state.intelligence < jobConfig.agentIntelReq) return false;
   if (jobConfig.agentResearchReq) {
     for (const req of jobConfig.agentResearchReq) {
-      if (!state.completedResearch.includes(req)) return false;
+      if (!hasCompletedResearch(state.researchLevels, req)) return false;
     }
   }
   return true;
@@ -695,7 +668,7 @@ export function fireHumanWorkers(state: GameState, jobType: JobType, count: numb
 export function buyRobotWorkers(state: GameState, count: number): number {
   const countB = toBigInt(count);
   if (countB <= 0n) return 0;
-  if (!state.completedResearch.includes('robotics1')) return 0;
+  if (!hasCompletedResearch(state.researchLevels, 'robotics1')) return 0;
 
   const maxBuyable = toBigInt(BALANCE.robotWorkerBuyLimit);
   const owned = state.locationResources.earth.robots;

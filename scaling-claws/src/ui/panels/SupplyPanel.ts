@@ -1,20 +1,50 @@
-import { BALANCE, getFacilityProductionMultiplier, getSolarPanelPowerMW } from '../../game/BalanceConfig.ts';
+import {
+  BALANCE,
+  getCompletedResearchIds,
+  getFacilityProductionMultiplier,
+  getSolarPanelPowerMW,
+  hasCompletedResearch,
+} from '../../game/BalanceConfig.ts';
 import type { FacilityId, GameState, LocationId, SupplyResourceId, TransportPayloadId, TransportRouteId } from '../../game/GameState.ts';
 import { dispatchGameAction } from '../../game/ActionDispatcher.ts';
 import { canBuildFacility, isFacilityUnlocked as isFacilityUnlockedForLocation } from '../../game/systems/SupplySystem.ts';
+import { getRobotLaborPerMin } from '../../game/systems/JobRules.ts';
+import { estimateTransportRockets } from '../../game/systems/SpaceRules.ts';
 import { fromBigInt, formatMW, formatNumber, mulB, toBigInt } from '../../game/utils.ts';
 import { BulkBuyGroup, getVisibleBuyTiers } from '../components/BulkBuyGroup.ts';
-import { CountBulkBuyControls } from '../components/CountBulkBuyControls.ts';
 import { createPanelScaffold } from '../components/PanelScaffold.ts';
 import { emojiHtml, locationLabelHtml, resourceLabelHtml, UI_EMOJI } from '../emoji.ts';
+import type { UiEmojiKey } from '../emoji.ts';
 import { setHintTarget } from '../hints/HintUtils.ts';
 import { flashElement } from '../UIUtils.ts';
 import type { Panel } from '../PanelManager.ts';
-import { isSupplyResourceUnlocked } from './supplyVisibility.ts';
+import { getFacilityCardIconSvg } from './facilityCardIcons.ts';
+import {
+  createFacilityCardUi,
+  createResourcePill,
+  formatRecipeInputsHtml,
+  setFacilityRecipeHtml,
+  setFacilityOutputHtml,
+  setResourcePillState,
+  updateFacilityCardProgress,
+} from './facilityCardUi.ts';
+import type { FacilityCardRefs as BuiltFacilityCard, FacilityTone, ResourcePillRefs } from './facilityCardUi.ts';
+import type { CountBulkBuyControls } from '../components/CountBulkBuyControls.ts';
 
-interface FacilityCellRefs {
-  efficiency?: HTMLSpanElement;
+type FacilityCardResourceId = SupplyResourceId | 'energy' | 'flops' | 'massInput' | 'massOutput';
+
+interface FacilityCardRefs {
   controls: CountBulkBuyControls;
+  price: HTMLSpanElement;
+  formula: HTMLDivElement;
+  progressFill: HTMLDivElement;
+  progressLabel: HTMLSpanElement;
+  output: HTMLSpanElement;
+  resources: Partial<Record<FacilityCardResourceId, ResourcePillRefs>>;
+}
+
+interface MercuryDysonCardExtras {
+  lane: RouteLaneRefs;
 }
 
 interface GridContractRefs {
@@ -22,12 +52,6 @@ interface GridContractRefs {
   cost: HTMLSpanElement;
   buy: BulkBuyGroup;
   sell: BulkBuyGroup;
-}
-
-interface SpecialFacilityRefs {
-  production: HTMLSpanElement;
-  controls: CountBulkBuyControls;
-  price: HTMLSpanElement;
 }
 
 interface FacilityDef {
@@ -49,6 +73,9 @@ interface LogisticsRowRefs {
 interface RouteLaneRefs {
   row: HTMLDivElement;
   lane: HTMLDivElement;
+  resizeObserver: ResizeObserver;
+  lastOutboundCount: number;
+  lastReturningCount: number;
 }
 
 interface SupplyPanelOptions {
@@ -61,28 +88,24 @@ interface SupplyPanelOptions {
   logisticsRoutes?: TransportRouteId[];
 }
 
-const SUPPLY_RESOURCE_ORDER: SupplyResourceId[] = [
-  'labor',
-  'material',
-  'solarPanels',
-  'robots',
-  'gpus',
-  'rockets',
-  'gpuSatellites',
-];
+interface ResourcePillValue {
+  amount: string;
+  primary: string;
+  secondary?: string;
+  primaryColor?: string;
+  secondaryColor?: string;
+}
 
-const SUPPLY_HINTS: Record<SupplyResourceId, string> = {
-  labor: 'resource.labor',
-  material: 'resource.material',
-  solarPanels: 'resource.solarPanels',
-  robots: 'resource.robots',
-  gpus: 'resource.gpus',
-  rockets: 'resource.rockets',
-  gpuSatellites: 'resource.gpuSatellites',
-};
+interface RecipeDisplayParts {
+  inputsHtml: string;
+  outputsHtml: string;
+}
 
-const FACILITY_TABLE_COLUMNS = '8px 1.4fr 0.8fr 1.9fr 80px 140px';
 const POWER_PLANT_UNLOCK_GRID_KW = toBigInt(1_000_000);
+const MAX_VISIBLE_LOGISTICS_ROCKETS = 220;
+const PANEL_LOGISTICS_ROCKET_DENSITY = 1.6;
+const PANEL_ORBIT_ROUTE_DURATION_MS = 1000;
+const PANEL_MOON_ROUTE_DURATION_MS = 3000;
 
 type FacilityPriceEmoji = 'money' | 'labor' | 'material' | 'solarPanels' | 'gpus';
 
@@ -110,6 +133,7 @@ function getFacilitiesForLocation(location: LocationId): FacilityDef[] {
   return [
     { id: 'mercuryMaterialMine', label: 'Material Mines', hintId: 'resource.material' },
     { id: 'mercuryRobotFactory', label: 'Robot Factory', hintId: 'resource.robots' },
+    { id: 'mercuryProbeFactory', label: 'Von Neumann Probe', hintId: 'resource.probes' },
     { id: 'mercuryDysonSwarmFacility', label: 'Dyson Swarm Facility', hintId: 'resource.gpuSatellites' },
   ];
 }
@@ -147,15 +171,18 @@ function getRouteSourceLocation(route: TransportRouteId): LocationId {
 }
 
 function isRouteUnlocked(state: GameState, route: TransportRouteId): boolean {
-  if (route === 'earthOrbit') return state.completedResearch.includes('rocketry');
-  if (route === 'earthMoon') return state.completedResearch.includes('payloadToMoon');
+  if (route === 'earthOrbit') return hasCompletedResearch(state.researchLevels, 'rocketry');
+  if (route === 'earthMoon') return hasCompletedResearch(state.researchLevels, 'payloadToMoon');
   if (route === 'moonOrbit') {
-    return state.completedResearch.includes('payloadToMoon')
-      && state.completedResearch.includes('rocketry')
-      && state.completedResearch.includes('moonMassDrivers');
+    return hasCompletedResearch(state.researchLevels, 'payloadToMoon')
+      && hasCompletedResearch(state.researchLevels, 'rocketry')
+      && hasCompletedResearch(state.researchLevels, 'moonMassDrivers');
   }
-  if (route === 'moonMercury') return state.completedResearch.includes('payloadToMercury') && state.completedResearch.includes('moonMassDrivers');
-  return state.completedResearch.includes('payloadToMercury');
+  if (route === 'moonMercury') {
+    return hasCompletedResearch(state.researchLevels, 'payloadToMercury')
+      && hasCompletedResearch(state.researchLevels, 'moonMassDrivers');
+  }
+  return hasCompletedResearch(state.researchLevels, 'payloadToMercury');
 }
 
 export class SupplyPanel implements Panel {
@@ -176,16 +203,16 @@ export class SupplyPanel implements Panel {
   private layoutKey = '';
   private visibleLocations: LocationId[] = ['earth'];
 
-  private resourceRefs = new Map<string, { value: HTMLSpanElement; rate: HTMLSpanElement }>();
   private locationEnergyRefs = new Map<LocationId, HTMLSpanElement>();
+  private locationLaborRefs = new Map<LocationId, HTMLSpanElement>();
   private gridContractRefs: GridContractRefs | null = null;
-  private facilityRefs = new Map<string, FacilityCellRefs>();
-  private specialFacilityRefs = new Map<string, SpecialFacilityRefs>();
-  private facilityPriceRefs = new Map<string, HTMLSpanElement>();
+  private facilityCards = new Map<string, FacilityCardRefs>();
+  private specialFacilityCards = new Map<string, FacilityCardRefs>();
   private facilityPauseBtns = new Map<FacilityId, HTMLButtonElement[]>();
   private logisticsRows = new Map<string, LogisticsRowRefs>();
   private routeLanes = new Map<TransportRouteId, RouteLaneRefs>();
-  private readonly maxRocketsAddedPerUpdate = 4;
+  private mercuryDysonCardExtras: MercuryDysonCardExtras | null = null;
+  private readonly maxRocketsAddedPerUpdate = 12;
   private orbitSatRow: HTMLDivElement | null = null;
   private orbitSatEl: HTMLSpanElement | null = null;
   private orbitPowerEl: HTMLSpanElement | null = null;
@@ -223,7 +250,7 @@ export class SupplyPanel implements Panel {
     body.appendChild(this.facilitiesSection);
 
     this.logisticsSection = document.createElement('div');
-    this.logisticsSection.className = 'panel-section';
+    this.logisticsSection.className = 'panel-section panel-section-logistics';
     this.logisticsSection.style.gap = '2px';
     this.logisticsSection.style.display = this.logisticsRoutes.length > 0 ? '' : 'none';
     body.appendChild(this.logisticsSection);
@@ -231,38 +258,51 @@ export class SupplyPanel implements Panel {
 
   private getVisibleLocations(state: GameState): LocationId[] {
     let unlocked: LocationId[] = ['earth'];
-    if (state.completedResearch.includes('payloadToMercury')) {
+    if (hasCompletedResearch(state.researchLevels, 'payloadToMercury')) {
       unlocked = ['earth', 'moon', 'mercury'];
-    } else if (state.completedResearch.includes('payloadToMoon')) {
+    } else if (hasCompletedResearch(state.researchLevels, 'payloadToMoon')) {
       unlocked = ['earth', 'moon'];
     }
     if (!this.fixedLocations) return unlocked;
     return unlocked.filter((location) => this.fixedLocations!.includes(location));
   }
 
-  private formatRate(value: bigint): string {
-    if (value === 0n) return '';
-    const abs = value < 0n ? -value : value;
-    return `${value > 0n ? '+' : '-'}${formatNumber(abs)}/m`;
+  private setText(el: Node, value: string): void {
+    if (el.textContent !== value) {
+      el.textContent = value;
+    }
   }
 
-  private isSupplyResourceActive(state: GameState, location: LocationId, resource: SupplyResourceId): boolean {
-    const stock = state.locationResources[location][resource];
-    const income = state.locationProductionPerMin[location][resource];
-    const expense = state.locationConsumptionPerMin[location][resource];
-    return stock > 0n || income > 0n || expense > 0n;
+  private setHtml(el: HTMLElement, value: string): void {
+    if (el.innerHTML !== value) {
+      el.innerHTML = value;
+    }
   }
 
-  private isSupplyResourceVisible(state: GameState, location: LocationId, resource: SupplyResourceId): boolean {
-    return isSupplyResourceUnlocked(state, location, resource, this.isSupplyResourceActive(state, location, resource));
+  private setColor(el: HTMLElement, value: string): void {
+    if (el.style.color !== value) {
+      el.style.color = value;
+    }
   }
 
-  private getResourceLabel(_location: LocationId, resource: SupplyResourceId): string {
-    return resourceLabelHtml(resource);
+  private setDisplay(el: HTMLElement, value: string): void {
+    if (el.style.display !== value) {
+      el.style.display = value;
+    }
+  }
+
+  private setDisabled(el: HTMLButtonElement, value: boolean): void {
+    if (el.disabled !== value) {
+      el.disabled = value;
+    }
   }
 
   private isLocationEnergyVisible(location: LocationId): boolean {
     return location === 'earth' || location === 'moon';
+  }
+
+  private isLocationLaborVisible(_location: LocationId): boolean {
+    return true;
   }
 
   private getLowestDisplayedBuyAmount(
@@ -297,13 +337,14 @@ export class SupplyPanel implements Panel {
   }
 
   private buildCostHtml(parts: Array<{ amount: bigint; emoji: FacilityPriceEmoji; insufficient: boolean }>): string {
-    const rendered: string[] = [];
+    let rendered = '';
     for (const part of parts) {
       if (part.amount <= 0n) continue;
       const color = part.insufficient ? 'var(--accent-red)' : 'var(--text-muted)';
-      rendered.push(`<span style="color:${color}">${formatNumber(part.amount)} ${emojiHtml(part.emoji)}</span>`);
+      const piece = `<span style="color:${color}">${formatNumber(part.amount)} ${emojiHtml(part.emoji)}</span>`;
+      rendered = rendered ? `${rendered} + ${piece}` : piece;
     }
-    return rendered.length > 0 ? rendered.join(' + ') : '&nbsp;';
+    return rendered || '&nbsp;';
   }
 
   private getRegularFacilityBuildCostsPerUnit(location: LocationId, facility: FacilityId): { material: bigint; labor: bigint } {
@@ -323,6 +364,9 @@ export class SupplyPanel implements Panel {
       baseMaterial = BALANCE.rocketFactoryBuildMaterialCost;
     } else if (facility === 'earthGpuSatelliteFactory' || facility === 'moonGpuSatelliteFactory') {
       baseMaterial = BALANCE.gpuSatelliteFactoryBuildMaterialCost;
+    } else if (facility === 'mercuryProbeFactory') {
+      baseMaterial = BALANCE.probeFactoryBuildMaterialCost;
+      baseLabor = BALANCE.probeFactoryBuildLaborCost;
     } else if (facility === 'mercuryDysonSwarmFacility') {
       baseMaterial = BALANCE.dysonSwarmFacilityBuildMaterialCost;
     } else if (facility === 'moonMassDriver') {
@@ -347,7 +391,8 @@ export class SupplyPanel implements Panel {
 
   private isMaterialMineVisibleInUi(state: GameState, location: LocationId): boolean {
     if (location === 'earth') {
-      return state.completedResearch.includes('solarTechnology') || state.completedResearch.includes('chipManufacturing');
+      return hasCompletedResearch(state.researchLevels, 'solarTechnology')
+        || hasCompletedResearch(state.researchLevels, 'chipManufacturing');
     }
     return isFacilityUnlockedForLocation(state, location, getMaterialMineForLocation(location));
   }
@@ -361,27 +406,41 @@ export class SupplyPanel implements Panel {
   private updatePauseButton(facility: FacilityId): void {
     const paused = this.state.pausedFacilities[facility] === true;
     for (const btn of this.facilityPauseBtns.get(facility) ?? []) {
-      btn.textContent = paused ? UI_EMOJI.play : UI_EMOJI.pause;
-      btn.title = paused ? 'Resume production globally' : 'Pause production globally';
-      btn.style.color = paused ? 'var(--accent-gold)' : 'var(--text-muted)';
+      this.setText(btn, paused ? UI_EMOJI.play : UI_EMOJI.pause);
+      const title = paused ? 'Resume production globally' : 'Pause production globally';
+      if (btn.title !== title) {
+        btn.title = title;
+      }
+      this.setColor(btn, paused ? 'var(--accent-gold)' : 'var(--text-muted)');
     }
   }
 
   private getRouteTransitMs(route: TransportRouteId): number {
-    if (route === 'earthOrbit' || route === 'mercurySun') return BALANCE.routeEarthOrbitTransitMs;
-    if (route === 'earthMoon' || route === 'moonOrbit') return BALANCE.routeEarthMoonTransitMs;
-    return BALANCE.routeMoonMercuryTransitMs;
+    if (route === 'earthOrbit' || route === 'mercurySun') return PANEL_ORBIT_ROUTE_DURATION_MS;
+    return PANEL_MOON_ROUTE_DURATION_MS;
   }
 
   private getRouteReturnMs(route: TransportRouteId): number {
-    if (route === 'moonOrbit' || route === 'moonMercury' || route === 'mercurySun') return BALANCE.moonRocketReturnMs;
-    return BALANCE.earthRocketReturnMs;
+    if (route === 'earthOrbit' || route === 'mercurySun') return PANEL_ORBIT_ROUTE_DURATION_MS;
+    return PANEL_MOON_ROUTE_DURATION_MS;
   }
 
   private getLogisticsRocketCount(inTransit: bigint): number {
     if (inTransit <= 0n) return 0;
-    if (inTransit >= toBigInt(100)) return 100;
-    return Math.max(1, Math.floor(fromBigInt(inTransit)));
+    return Math.max(
+      1,
+      Math.min(MAX_VISIBLE_LOGISTICS_ROCKETS, Math.round(fromBigInt(inTransit) * PANEL_LOGISTICS_ROCKET_DENSITY)),
+    );
+  }
+
+  private getReturningRocketCount(outboundCount: number, rocketLossPct: number): number {
+    if (outboundCount <= 0 || rocketLossPct >= BALANCE.rocketLossNoReuse) {
+      return 0;
+    }
+    return Math.min(
+      MAX_VISIBLE_LOGISTICS_ROCKETS,
+      Math.floor(outboundCount * Math.max(0, 1 - rocketLossPct)),
+    );
   }
 
   private createLaneRocket(direction: 'outbound' | 'returning', durationMs: number): HTMLSpanElement {
@@ -394,6 +453,24 @@ export class SupplyPanel implements Panel {
     rocket.style.setProperty('--lane-offset', `${laneOffset}px`);
     rocket.style.animationIterationCount = '1';
     return rocket;
+  }
+
+  private observeLaneRocketTravel(lane: HTMLDivElement): ResizeObserver {
+    const syncTravel = (): void => {
+      lane.style.setProperty('--rocket-travel', `${Math.max(0, lane.offsetWidth + 28)}px`);
+    };
+    const observer = new ResizeObserver(() => {
+      syncTravel();
+    });
+    observer.observe(lane);
+    syncTravel();
+    return observer;
+  }
+
+  private resetRouteLane(refs: RouteLaneRefs): void {
+    refs.lane.replaceChildren();
+    refs.lastOutboundCount = 0;
+    refs.lastReturningCount = 0;
   }
 
   private startRocketLeg(rocket: HTMLSpanElement, leg: 'outbound' | 'returning', durationMs: number, delayMs: number = 0): void {
@@ -489,6 +566,24 @@ export class SupplyPanel implements Panel {
     this.syncModeRockets(lane, 'roundtrip', transitMs, returnMs, roundtripTarget);
   }
 
+  private updateRouteLaneState(refs: RouteLaneRefs, visible: boolean, inTransit: bigint, route: TransportRouteId = 'mercurySun'): void {
+    this.setDisplay(refs.row, visible ? '' : 'none');
+    if (!visible) {
+      this.resetRouteLane(refs);
+      return;
+    }
+
+    const outboundCount = this.getLogisticsRocketCount(inTransit);
+    const returningCount = this.getReturningRocketCount(outboundCount, this.state.rocketLossPct);
+    if (refs.lastOutboundCount === outboundCount && refs.lastReturningCount === returningCount) {
+      return;
+    }
+
+    this.syncLogisticsRockets(route, refs.lane, outboundCount, returningCount);
+    refs.lastOutboundCount = outboundCount;
+    refs.lastReturningCount = returningCount;
+  }
+
   private buildRouteLaneRow(parent: HTMLElement, route: TransportRouteId): void {
     const sourceLocation = getRouteSourceLocation(route);
     const destination: 'moon' | 'mercury' | 'orbit' | 'sun' =
@@ -523,7 +618,13 @@ export class SupplyPanel implements Panel {
     row.appendChild(destinationEnd);
 
     parent.appendChild(row);
-    this.routeLanes.set(route, { row, lane });
+    this.routeLanes.set(route, {
+      row,
+      lane,
+      resizeObserver: this.observeLaneRocketTravel(lane),
+      lastOutboundCount: -1,
+      lastReturningCount: -1,
+    });
   }
 
   private toggleFacilityPause(facility: FacilityId): void {
@@ -531,53 +632,701 @@ export class SupplyPanel implements Panel {
     this.updatePauseButton(facility);
   }
 
-  private getFacilityInfo(facility: FacilityId): { price: string; output: string } {
+  private getFacilityKey(location: LocationId, facility: FacilityId): string {
+    return `${facility}:${location}`;
+  }
+
+  private getRegularFacilityIconSvg(facility: FacilityId): string {
+    return getFacilityCardIconSvg(facility);
+  }
+
+  private getRegularFacilityInputs(facility: FacilityId): Array<{ resource: SupplyResourceId; amount: bigint }> {
     if (facility === 'earthMaterialMine' || facility === 'moonMaterialMine' || facility === 'mercuryMaterialMine') {
-      return {
-        price: `${formatNumber(BALANCE.materialMineBuildLaborCost)} ${emojiHtml('labor')}`,
-        output: `${formatNumber(BALANCE.materialMineLaborReq)} ${emojiHtml('labor')} -> ${formatNumber(BALANCE.materialMineOutput)} ${emojiHtml('material')}`,
-      };
+      return [{ resource: 'labor', amount: BALANCE.materialMineLaborReq }];
     }
     if (facility === 'earthSolarFactory' || facility === 'moonSolarFactory') {
-      return {
-        price: `${formatNumber(BALANCE.solarFactoryBuildMaterialCost)} ${emojiHtml('material')}`,
-        output: `${formatNumber(BALANCE.solarFactoryMaterialReq)} ${emojiHtml('material')} + ${formatNumber(BALANCE.solarFactoryLaborCost)} ${emojiHtml('labor')} -> ${formatNumber(BALANCE.solarFactoryOutput)} ${emojiHtml('solarPanels')}`,
-      };
+      return [
+        { resource: 'material', amount: BALANCE.solarFactoryMaterialReq },
+        { resource: 'labor', amount: BALANCE.solarFactoryLaborCost },
+      ];
     }
     if (facility === 'earthRobotFactory' || facility === 'moonRobotFactory' || facility === 'mercuryRobotFactory') {
-      return {
-        price: `${formatNumber(BALANCE.robotFactoryBuildMaterialCost)} ${emojiHtml('material')}`,
-        output: `${formatNumber(BALANCE.robotFactoryMaterialReq)} ${emojiHtml('material')} + ${formatNumber(BALANCE.robotFactoryLaborCost)} ${emojiHtml('labor')} -> ${formatNumber(BALANCE.robotFactoryOutput)} ${emojiHtml('robots')}`,
-      };
+      return [
+        { resource: 'material', amount: BALANCE.robotFactoryMaterialReq },
+        { resource: 'labor', amount: BALANCE.robotFactoryLaborCost },
+      ];
     }
     if (facility === 'earthGpuFactory' || facility === 'moonGpuFactory') {
-      return {
-        price: `${formatNumber(BALANCE.gpuFactoryBuildMaterialCost)} ${emojiHtml('material')}`,
-        output: `${formatNumber(BALANCE.gpuFactoryMaterialReq)} ${emojiHtml('material')} + ${formatNumber(BALANCE.gpuFactoryLaborCost)} ${emojiHtml('labor')} -> ${formatNumber(BALANCE.gpuFactoryOutput)} ${emojiHtml('gpus')}`,
-      };
+      return [
+        { resource: 'material', amount: BALANCE.gpuFactoryMaterialReq },
+        { resource: 'labor', amount: BALANCE.gpuFactoryLaborCost },
+      ];
     }
     if (facility === 'earthRocketFactory') {
-      return {
-        price: `${formatNumber(BALANCE.rocketFactoryBuildMaterialCost)} ${emojiHtml('material')}`,
-        output: `${formatNumber(BALANCE.rocketFactoryMaterialReq)} ${emojiHtml('material')} + ${formatNumber(BALANCE.rocketFactoryLaborCost)} ${emojiHtml('labor')} -> ${formatNumber(toBigInt(BALANCE.rocketFactoryOutput))} ${emojiHtml('rockets')}`,
-      };
+      return [
+        { resource: 'material', amount: BALANCE.rocketFactoryMaterialReq },
+        { resource: 'labor', amount: BALANCE.rocketFactoryLaborCost },
+      ];
     }
     if (facility === 'earthGpuSatelliteFactory' || facility === 'moonGpuSatelliteFactory') {
-      return {
-        price: `${formatNumber(BALANCE.gpuSatelliteFactoryBuildMaterialCost)} ${emojiHtml('material')}`,
-        output: `${formatNumber(BALANCE.gpuSatelliteFactorySolarPanelReq)} ${emojiHtml('solarPanels')} + ${formatNumber(BALANCE.gpuSatelliteFactoryGpuReq)} ${emojiHtml('gpus')} -> ${formatNumber(toBigInt(BALANCE.gpuSatelliteFactoryOutput))} ${emojiHtml('gpuSatellites')}`,
-      };
+      return [
+        { resource: 'solarPanels', amount: BALANCE.gpuSatelliteFactorySolarPanelReq },
+        { resource: 'gpus', amount: BALANCE.gpuSatelliteFactoryGpuReq },
+      ];
+    }
+    if (facility === 'mercuryProbeFactory') {
+      return [
+        { resource: 'material', amount: BALANCE.probeFactoryMaterialReq },
+        { resource: 'labor', amount: BALANCE.probeFactoryLaborReq },
+      ];
     }
     if (facility === 'mercuryDysonSwarmFacility') {
-      return {
-        price: `${formatNumber(BALANCE.dysonSwarmFacilityBuildMaterialCost)} ${emojiHtml('material')}`,
-        output: `${formatNumber(BALANCE.dysonSwarmFacilityMaterialReq)} ${emojiHtml('material')} + ${formatNumber(BALANCE.dysonSwarmFacilityLaborReq)} ${emojiHtml('labor')} -> ${formatNumber(toBigInt(BALANCE.dysonSwarmFacilityOutput))} ${emojiHtml('gpuSatellites')}`,
-      };
+      return [
+        { resource: 'material', amount: BALANCE.dysonSwarmFacilityMaterialReq },
+        { resource: 'labor', amount: BALANCE.dysonSwarmFacilityLaborReq },
+      ];
     }
+    return [];
+  }
+
+  private getRegularFacilityOutputResource(facility: FacilityId): SupplyResourceId | null {
+    if (facility === 'earthMaterialMine' || facility === 'moonMaterialMine' || facility === 'mercuryMaterialMine') return 'material';
+    if (facility === 'earthSolarFactory' || facility === 'moonSolarFactory') return 'solarPanels';
+    if (facility === 'earthRobotFactory' || facility === 'moonRobotFactory' || facility === 'mercuryRobotFactory') return 'robots';
+    if (facility === 'earthGpuFactory' || facility === 'moonGpuFactory') return 'gpus';
+    if (facility === 'earthRocketFactory') return 'rockets';
+    if (facility === 'mercuryProbeFactory') return 'probes';
+    if (facility === 'earthGpuSatelliteFactory' || facility === 'moonGpuSatelliteFactory' || facility === 'mercuryDysonSwarmFacility') return 'gpuSatellites';
+    return null;
+  }
+
+  private getRegularFacilityFormulaOutputHtml(state: GameState, facility: FacilityId): string {
+    if (facility === 'moonMassDriver') {
+      return `${formatNumber(toBigInt(BALANCE.massDriverLaunchesPerMin))} ${emojiHtml('rockets')}/m`;
+    }
+
+    let output = 0n;
+    let emoji: UiEmojiKey = 'material';
+    let productionId:
+      | 'materialMine'
+      | 'solarFactory'
+      | 'robotFactory'
+      | 'gpuFactory'
+      | 'rocketFactory'
+      | 'gpuSatelliteFactory'
+      | 'probeFactory'
+      | 'dysonSwarmFacility';
+
+    if (facility === 'earthMaterialMine' || facility === 'moonMaterialMine' || facility === 'mercuryMaterialMine') {
+      output = BALANCE.materialMineOutput;
+      emoji = 'material';
+      productionId = 'materialMine';
+    } else if (facility === 'earthSolarFactory' || facility === 'moonSolarFactory') {
+      output = BALANCE.solarFactoryOutput;
+      emoji = 'solarPanels';
+      productionId = 'solarFactory';
+    } else if (facility === 'earthRobotFactory' || facility === 'moonRobotFactory' || facility === 'mercuryRobotFactory') {
+      output = BALANCE.robotFactoryOutput;
+      emoji = 'robots';
+      productionId = 'robotFactory';
+    } else if (facility === 'earthGpuFactory' || facility === 'moonGpuFactory') {
+      output = BALANCE.gpuFactoryOutput;
+      emoji = 'gpus';
+      productionId = 'gpuFactory';
+    } else if (facility === 'earthRocketFactory') {
+      output = toBigInt(BALANCE.rocketFactoryOutput);
+      emoji = 'rockets';
+      productionId = 'rocketFactory';
+    } else if (facility === 'mercuryProbeFactory') {
+      output = toBigInt(BALANCE.probeFactoryOutput);
+      emoji = 'probes';
+      productionId = 'probeFactory';
+    } else if (facility === 'earthGpuSatelliteFactory' || facility === 'moonGpuSatelliteFactory') {
+      output = toBigInt(BALANCE.gpuSatelliteFactoryOutput);
+      emoji = 'gpuSatellites';
+      productionId = 'gpuSatelliteFactory';
+    } else {
+      output = toBigInt(BALANCE.dysonSwarmFacilityOutput);
+      emoji = 'gpuSatellites';
+      productionId = 'dysonSwarmFacility';
+    }
+
+    const perFacility = mulB(output, toBigInt(getFacilityProductionMultiplier(state.researchLevels, productionId)));
+    return `${formatNumber(perFacility)} ${emojiHtml(emoji)}/m`;
+  }
+
+  private formatLocationResourceAmount(state: GameState, location: LocationId, resource: SupplyResourceId): string {
+    const stock = state.locationResources[location][resource];
+
+    let capSuffix = '';
+    if (resource === 'rockets' || resource === 'gpus' || resource === 'solarPanels' || resource === 'robots') {
+      if (stock >= BALANCE.locationResourceStockpileCap) capSuffix = `/${BALANCE.locationResourceStockpileCapLabel}`;
+    }
+    if (location === 'mercury' && resource === 'material' && stock >= BALANCE.mercuryMaterialStockpileCap) {
+      capSuffix = `/${BALANCE.mercuryMaterialStockpileCapLabel}`;
+    }
+
+    return `${formatNumber(stock)}${capSuffix}`;
+  }
+
+  private isResourceNetNegative(
+    state: GameState,
+    location: LocationId,
+    resource: SupplyResourceId,
+  ): boolean {
+    const income = state.locationProductionPerMin[location][resource];
+    const expense = state.locationConsumptionPerMin[location][resource];
+    return income < expense;
+  }
+
+  private createFacilityCard(
+    title: string,
+    iconSvg: string,
+    hintId: string,
+    onBuy: (amount: number) => void,
+    pauseFacility?: FacilityId,
+  ): BuiltFacilityCard {
+    const refs = createFacilityCardUi({
+      title,
+      iconSvg,
+      hintId,
+      onBuy,
+      onPause: pauseFacility ? () => this.toggleFacilityPause(pauseFacility) : undefined,
+    });
+    if (pauseFacility && refs.pauseBtn) {
+      this.registerPauseButton(pauseFacility, refs.pauseBtn);
+    }
+    return refs;
+  }
+
+  private createCardResourceRefs(
+    inputParent: HTMLDivElement,
+    outputParent: HTMLDivElement,
+    inputResources: SupplyResourceId[],
+    outputResource: FacilityCardResourceId | null,
+  ): Partial<Record<FacilityCardResourceId, ResourcePillRefs>> {
+    const refs: Partial<Record<FacilityCardResourceId, ResourcePillRefs>> = {};
+    for (const resource of inputResources) {
+      refs[resource] = createResourcePill(inputParent, emojiHtml(resource));
+    }
+    if (outputResource) {
+      refs[outputResource] = createResourcePill(outputParent, this.getCardResourceLabelHtml(outputResource));
+      refs[outputResource]?.pill.classList.toggle('facility-card-pill-compact', this.isCompactOutputPillResource(outputResource));
+    }
+    return refs;
+  }
+
+  private isConsumableFacilityOutputResource(resource: SupplyResourceId): boolean {
+    return resource === 'material' || resource === 'solarPanels' || resource === 'gpus';
+  }
+
+  private isCompactOutputPillResource(resource: FacilityCardResourceId): boolean {
+    return resource === 'robots' || resource === 'rockets' || resource === 'gpuSatellites' || resource === 'probes';
+  }
+
+  private getCardResourceLabelHtml(resource: FacilityCardResourceId): string {
+    if (resource === 'massInput') {
+      return emojiHtml('mass');
+    }
+    if (resource === 'massOutput') {
+      return emojiHtml('mass');
+    }
+    return emojiHtml(resource);
+  }
+
+  private registerCard(
+    registry: Map<string, FacilityCardRefs>,
+    key: string,
+    card: BuiltFacilityCard,
+    inputResources: SupplyResourceId[],
+    outputResource: FacilityCardResourceId | null,
+    parent: HTMLElement,
+  ): void {
+    card.card.classList.toggle('facility-card-compact-io', inputResources.length === 1 && outputResource !== null);
+    parent.appendChild(card.card);
+    registry.set(key, {
+      controls: card.controls!,
+      price: card.price!,
+      formula: card.formula,
+      progressFill: card.progressFill,
+      progressLabel: card.progressLabel,
+      output: card.output,
+      resources: this.createCardResourceRefs(
+        card.inputResourceWrap,
+        card.outputResourceWrap,
+        inputResources,
+        outputResource,
+      ),
+    });
+  }
+
+  private setCardResourceState(
+    refs: FacilityCardRefs,
+    resource: FacilityCardResourceId,
+    value: ResourcePillValue,
+    tone: FacilityTone = 'normal',
+  ): void {
+    const resourceRefs = refs.resources[resource];
+    if (!resourceRefs) return;
+    setResourcePillState(
+      resourceRefs,
+      value.amount,
+      value.primary,
+      value.secondary,
+      tone,
+      value.primaryColor ?? 'var(--text-muted)',
+      value.secondaryColor ?? 'var(--text-muted)',
+    );
+  }
+
+  private getInputTone(facilityRate: number, isDeficit: boolean, hasBuffer: boolean, isActive: boolean): FacilityTone {
+    if (!isActive) return 'normal';
+    if (isDeficit && !hasBuffer) return 'bad';
+    if (isDeficit) return 'warn';
+    if (facilityRate < 0.999) return 'warn';
+    return 'normal';
+  }
+
+  private getEffectiveActiveBuildings(owned: bigint, facilityRate: number): number {
+    return Math.max(0, fromBigInt(owned) * Math.max(0, Math.min(1, facilityRate)));
+  }
+
+  private getFacilityFlowCapacity(owned: bigint, limit: number | null): number {
+    if (limit !== null && limit > 0) return limit;
+    return Math.max(1, fromBigInt(owned));
+  }
+
+  private getMoonMassDriverPendingMass(state: GameState): bigint {
+    const pendingSatellites = state.logisticsOrders['moonOrbit:gpuSatellites'] || 0n;
+    const pendingRobots = state.logisticsOrders['moonMercury:robots'] || 0n;
+    return mulB(pendingSatellites, toBigInt(BALANCE.gpuSatelliteWeight))
+      + mulB(pendingRobots, toBigInt(BALANCE.robotWeight));
+  }
+
+  private getMoonMassDriverLaunchedMass(state: GameState): bigint {
+    const sentSatellites = state.logisticsSent['moonOrbit:gpuSatellites'] || 0n;
+    const pendingSatellites = state.logisticsOrders['moonOrbit:gpuSatellites'] || 0n;
+    const launchedSatellites = sentSatellites > pendingSatellites ? sentSatellites - pendingSatellites : 0n;
+    const sentRobots = state.logisticsSent['moonMercury:robots'] || 0n;
+    const pendingRobots = state.logisticsOrders['moonMercury:robots'] || 0n;
+    const launchedRobots = sentRobots > pendingRobots ? sentRobots - pendingRobots : 0n;
+    return mulB(launchedSatellites, toBigInt(BALANCE.gpuSatelliteWeight))
+      + mulB(launchedRobots, toBigInt(BALANCE.robotWeight));
+  }
+
+  private registerCustomCard(
+    registry: Map<string, FacilityCardRefs>,
+    key: string,
+    card: BuiltFacilityCard,
+    resources: Partial<Record<FacilityCardResourceId, ResourcePillRefs>>,
+    parent: HTMLElement,
+  ): void {
+    parent.appendChild(card.card);
+    registry.set(key, {
+      controls: card.controls!,
+      price: card.price!,
+      formula: card.formula,
+      progressFill: card.progressFill,
+      progressLabel: card.progressLabel,
+      output: card.output,
+      resources,
+    });
+  }
+
+  private getOutputPillValue(state: GameState, location: LocationId, resource: SupplyResourceId): ResourcePillValue {
+    const production = state.locationProductionPerMin[location][resource];
+    const consumption = state.locationConsumptionPerMin[location][resource];
     return {
-      price: `${formatNumber(BALANCE.rocketFactoryBuildMaterialCost)} ${emojiHtml('material')}`,
-      output: `${formatNumber(toBigInt(BALANCE.massDriverLaunchesPerMin))} launches/m`,
+      amount: this.formatLocationResourceAmount(state, location, resource),
+      primary: `+${formatNumber(production)}/m`,
+      secondary: this.isConsumableFacilityOutputResource(resource) ? `-${formatNumber(consumption)}/m` : '',
+      primaryColor: 'var(--accent-green)',
+      secondaryColor: 'var(--accent-red)',
     };
+  }
+
+  private getInputPillValue(
+    state: GameState,
+    location: LocationId,
+    resource: SupplyResourceId,
+    facilityConsumptionPerMin: bigint,
+  ): ResourcePillValue {
+    return {
+      amount: this.formatLocationResourceAmount(state, location, resource),
+      primary: `-${formatNumber(facilityConsumptionPerMin)}/m`,
+      secondary: '',
+      primaryColor: 'var(--text-muted)',
+      secondaryColor: 'var(--text-muted)',
+    };
+  }
+
+  private updateMoonMassDriverCard(state: GameState): void {
+    const refs = this.specialFacilityCards.get('moonMassDriver:moon');
+    if (!refs) return;
+
+    const owned = state.locationFacilities.moon.moonMassDriver;
+    const ownedNum = Math.floor(fromBigInt(owned));
+    const limit = BALANCE.moonMassDriverLimit;
+    const canBuy = (amt: number) => canBuildFacility(this.state, 'moon', 'moonMassDriver', amt);
+    const lowerAmount = this.getLowestDisplayedBuyAmount(ownedNum, limit, canBuy);
+    const lowerAmountB = lowerAmount === null ? 0n : toBigInt(lowerAmount);
+    const unitCosts = this.getRegularFacilityBuildCostsPerUnit('moon', 'moonMassDriver');
+    const materialNeed = lowerAmount === null ? 0n : mulB(lowerAmountB, unitCosts.material);
+    const laborNeed = lowerAmount === null ? 0n : mulB(lowerAmountB, unitCosts.labor);
+    const materialOk = lowerAmount === null || state.locationResources.moon.material >= materialNeed;
+    const laborOk = lowerAmount === null || state.locationResources.moon.labor >= laborNeed;
+
+    const pendingMass = this.getMoonMassDriverPendingMass(state);
+    const launchedMass = this.getMoonMassDriverLaunchedMass(state);
+    const isPaused = state.pausedFacilities.moonMassDriver;
+    const hasBuildings = owned > 0n;
+    const launchMassPerMin = hasBuildings && !isPaused && pendingMass > 0n
+      ? mulB(mulB(owned, toBigInt(BALANCE.massDriverLaunchesPerMin)), toBigInt(BALANCE.rocketCapacityMoonMercury))
+      : 0n;
+
+    refs.controls.setCount(owned);
+    this.setHtml(refs.price, this.buildCostHtml([
+      { amount: unitCosts.material, emoji: 'material', insufficient: !materialOk },
+      { amount: unitCosts.labor, emoji: 'labor', insufficient: !laborOk },
+    ]));
+    refs.controls.bulk.update(
+      ownedNum,
+      canBuy,
+      limit,
+      (amt) => {
+        if (amt === 1) {
+          flashElement(refs.price);
+          return;
+        }
+        flashElement(refs.controls.countEl);
+      },
+    );
+    setFacilityRecipeHtml(refs.formula, '');
+    setFacilityOutputHtml(refs.output, '');
+    this.setCardResourceState(refs, 'massInput', {
+      amount: `${UI_EMOJI.mass ?? '⚖️'} ${formatNumber(pendingMass)} kg`,
+      primary: `-${formatNumber(launchMassPerMin)} kg/m`,
+      primaryColor: 'var(--text-muted)',
+    });
+    this.setCardResourceState(refs, 'massOutput', {
+      amount: `${UI_EMOJI.mass ?? '⚖️'} ${formatNumber(launchedMass)} kg`,
+      primary: `+${formatNumber(launchMassPerMin)} kg/m`,
+      primaryColor: 'var(--accent-green)',
+    });
+    updateFacilityCardProgress(
+      refs.progressFill,
+      refs.progressLabel,
+      hasBuildings && !isPaused ? state.locationFacilityRates.moon.moonMassDriver : 0,
+      hasBuildings && !isPaused ? this.getEffectiveActiveBuildings(owned, state.locationFacilityRates.moon.moonMassDriver) : 0,
+      this.getFacilityFlowCapacity(owned, limit),
+      state.time,
+      hasBuildings,
+      isPaused,
+    );
+  }
+
+  private updateMercuryDysonSwarmCard(state: GameState): void {
+    const refs = this.specialFacilityCards.get('mercuryDysonSwarmFacility:mercury');
+    if (!refs) return;
+
+    const owned = state.locationFacilities.mercury.mercuryDysonSwarmFacility;
+    const ownedNum = Math.floor(fromBigInt(owned));
+    const limit = this.getFacilityLimit('mercury', 'mercuryDysonSwarmFacility');
+    const canBuy = (amt: number) => canBuildFacility(this.state, 'mercury', 'mercuryDysonSwarmFacility', amt);
+    const lowerAmount = this.getLowestDisplayedBuyAmount(ownedNum, limit, canBuy);
+    const lowerAmountB = lowerAmount === null ? 0n : toBigInt(lowerAmount);
+    const unitCosts = this.getRegularFacilityBuildCostsPerUnit('mercury', 'mercuryDysonSwarmFacility');
+    const materialNeed = lowerAmount === null ? 0n : mulB(lowerAmountB, unitCosts.material);
+    const laborNeed = lowerAmount === null ? 0n : mulB(lowerAmountB, unitCosts.labor);
+    const materialOk = lowerAmount === null || state.locationResources.mercury.material >= materialNeed;
+    const laborOk = lowerAmount === null || state.locationResources.mercury.labor >= laborNeed;
+
+    const facilityRate = state.locationFacilityRates.mercury.mercuryDysonSwarmFacility;
+    const isPaused = state.pausedFacilities.mercuryDysonSwarmFacility;
+    const isActive = owned > 0n && !isPaused;
+    const materialUse = isActive
+      ? mulB(mulB(owned, BALANCE.dysonSwarmFacilityMaterialReq), toBigInt(facilityRate))
+      : 0n;
+    const laborUse = isActive
+      ? mulB(mulB(owned, BALANCE.dysonSwarmFacilityLaborReq), toBigInt(facilityRate))
+      : 0n;
+
+    refs.controls.setCount(owned);
+    this.setHtml(refs.price, this.buildCostHtml([
+      { amount: unitCosts.material, emoji: 'material', insufficient: !materialOk },
+      { amount: unitCosts.labor, emoji: 'labor', insufficient: !laborOk },
+    ]));
+    refs.controls.bulk.update(
+      ownedNum,
+      canBuy,
+      limit,
+      (amt) => {
+        if (amt === 1) {
+          flashElement(refs.price);
+          return;
+        }
+        flashElement(refs.controls.countEl);
+      },
+    );
+    setFacilityRecipeHtml(refs.formula, formatRecipeInputsHtml([
+      `${formatNumber(BALANCE.dysonSwarmFacilityMaterialReq)} ${emojiHtml('material')}`,
+      `${formatNumber(BALANCE.dysonSwarmFacilityLaborReq)} ${emojiHtml('labor')}`,
+    ]));
+    setFacilityOutputHtml(
+      refs.output,
+      `${formatNumber(toBigInt(BALANCE.dysonSwarmFacilityOutput))} ${emojiHtml('gpuSatellites')} ` +
+      `<span class="facility-card-output-detail">${formatNumber(state.dysonSwarmSatellites)} ${emojiHtml('gpuSatellites')} ${formatMW(state.dysonSwarmPowerMW)}</span>`,
+    );
+    this.setCardResourceState(
+      refs,
+      'material',
+      this.getInputPillValue(state, 'mercury', 'material', materialUse),
+      this.getInputTone(
+        facilityRate,
+        this.isResourceNetNegative(state, 'mercury', 'material'),
+        state.locationResources.mercury.material > 0n,
+        isActive,
+      ),
+    );
+    this.setCardResourceState(
+      refs,
+      'labor',
+      this.getInputPillValue(state, 'mercury', 'labor', laborUse),
+      this.getInputTone(
+        facilityRate,
+        this.isResourceNetNegative(state, 'mercury', 'labor'),
+        state.locationResources.mercury.labor > 0n,
+        isActive,
+      ),
+    );
+    this.setCardResourceState(
+      refs,
+      'gpuSatellites',
+      this.getOutputPillValue(state, 'mercury', 'gpuSatellites'),
+      'normal',
+    );
+    updateFacilityCardProgress(
+      refs.progressFill,
+      refs.progressLabel,
+      isActive ? facilityRate : 0,
+      isActive ? this.getEffectiveActiveBuildings(owned, facilityRate) : 0,
+      this.getFacilityFlowCapacity(owned, limit),
+      state.time,
+      owned > 0n,
+      isPaused,
+    );
+
+    if (this.mercuryDysonCardExtras) {
+      const producedPerMin = state.locationProductionPerMin.mercury.gpuSatellites;
+      const visualLaunches = estimateTransportRockets(state, 'mercurySun', 'gpuSatellites', producedPerMin);
+      const hasVisualFlow = isActive && producedPerMin > 0n;
+      const visualFlow = hasVisualFlow ? toBigInt(Math.max(1, visualLaunches)) : 0n;
+      this.updateRouteLaneState(this.mercuryDysonCardExtras.lane, hasVisualFlow, visualFlow, 'mercurySun');
+    }
+  }
+
+  private buildRegularFacilityFormulaParts(
+    state: GameState,
+    location: LocationId,
+    facility: FacilityId,
+    facilityRate: number,
+    isActive: boolean,
+    refs: FacilityCardRefs,
+  ): RecipeDisplayParts {
+    const renderedInputs: string[] = [];
+    const owned = state.locationFacilities[location][facility];
+    for (const input of this.getRegularFacilityInputs(facility)) {
+      const isDeficit = this.isResourceNetNegative(state, location, input.resource);
+      const stock = state.locationResources[location][input.resource];
+      const hasBuffer = stock > 0n;
+      const tone = this.getInputTone(facilityRate, isDeficit, hasBuffer, isActive);
+      const baseConsumptionPerMin = mulB(owned, input.amount);
+      const facilityConsumptionPerMin = isActive ? mulB(baseConsumptionPerMin, toBigInt(facilityRate)) : 0n;
+      this.setCardResourceState(
+        refs,
+        input.resource,
+        this.getInputPillValue(state, location, input.resource, facilityConsumptionPerMin),
+        tone,
+      );
+      const color = tone === 'bad'
+        ? 'var(--accent-red)'
+        : tone === 'warn'
+          ? 'var(--accent-gold)'
+          : 'var(--text-primary)';
+      renderedInputs.push(`<span style="color:${color}">${formatNumber(input.amount)} ${emojiHtml(input.resource)}</span>`);
+    }
+
+    const outputResource = this.getRegularFacilityOutputResource(facility);
+    if (outputResource) {
+      this.setCardResourceState(
+        refs,
+        outputResource,
+        this.getOutputPillValue(state, location, outputResource),
+        'normal',
+      );
+    }
+
+    const formulaOutput = this.getRegularFacilityFormulaOutputHtml(state, facility).replace('/m', '');
+    return {
+      inputsHtml: formatRecipeInputsHtml(renderedInputs),
+      outputsHtml: formulaOutput,
+    };
+  }
+
+  private updatePowerPlantCard(
+    state: GameState,
+    key: string,
+    owned: bigint,
+    config: {
+      cost: bigint;
+      laborCost: bigint;
+      outputMW: bigint;
+      limit?: number | null;
+    },
+  ): void {
+    const refs = this.specialFacilityCards.get(key);
+    if (!refs) return;
+
+    const ownedNum = Math.floor(fromBigInt(owned));
+    const earthLabor = state.locationResources.earth.labor;
+    const limit = config.limit ?? null;
+    const canBuy = (amt: number) => {
+      const amount = toBigInt(amt);
+      return state.funds >= mulB(amount, config.cost)
+        && earthLabor >= mulB(amount, config.laborCost);
+    };
+    const lowerAmount = this.getLowestDisplayedBuyAmount(ownedNum, limit, canBuy);
+    const lowerAmountB = lowerAmount === null ? 0n : toBigInt(lowerAmount);
+    const moneyNeed = lowerAmount === null ? 0n : mulB(lowerAmountB, config.cost);
+    const laborNeed = lowerAmount === null ? 0n : mulB(lowerAmountB, config.laborCost);
+    const moneyOk = lowerAmount === null || state.funds >= moneyNeed;
+    const laborOk = lowerAmount === null || earthLabor >= laborNeed;
+    const totalOutput = formatMW(mulB(owned, config.outputMW));
+
+    refs.controls.setCount(owned);
+    this.setHtml(refs.price, this.buildCostHtml([
+      { amount: config.cost, emoji: 'money', insufficient: !moneyOk },
+      { amount: config.laborCost, emoji: 'labor', insufficient: !laborOk },
+    ]));
+    refs.controls.bulk.update(
+      ownedNum,
+      canBuy,
+      limit,
+      () => flashElement(refs.price),
+    );
+    setFacilityRecipeHtml(refs.formula, '');
+    setFacilityOutputHtml(refs.output, '');
+    this.setCardResourceState(refs, 'energy', { amount: totalOutput, primary: `${formatMW(config.outputMW)} each` });
+    updateFacilityCardProgress(refs.progressFill, refs.progressLabel, 0, 0, 1, state.time, owned > 0n);
+  }
+
+  private updateSolarFarmCard(
+    state: GameState,
+    location: 'earth' | 'moon',
+    key: string,
+    laborPerFarm: bigint,
+  ): void {
+    const refs = this.specialFacilityCards.get(key);
+    if (!refs) return;
+
+    const locationResources = state.locationResources[location];
+    const farmAmount = toBigInt(BALANCE.solarFarmPanelsPerFarm);
+    const unitsInstalled = locationResources.installedSolarPanels / farmAmount;
+    const unitsInstalledNum = Number(unitsInstalled);
+    const outputPerFarm = mulB(farmAmount, toBigInt(getSolarPanelPowerMW(location, state.researchLevels)));
+    const limit = BALANCE.solarFarmLimit;
+    const canBuy = (amt: number) => {
+      const amount = toBigInt(amt);
+      const amountUnits = BigInt(amt);
+      const panels = mulB(amount, farmAmount);
+      const labor = mulB(amount, laborPerFarm);
+      return locationResources.solarPanels >= panels
+        && locationResources.labor >= labor
+        && unitsInstalled + amountUnits <= BigInt(limit);
+    };
+    const lowerAmount = this.getLowestDisplayedBuyAmount(unitsInstalledNum, limit, canBuy);
+    const lowerAmountB = lowerAmount === null ? 0n : toBigInt(lowerAmount);
+    const panelsNeed = lowerAmount === null ? 0n : mulB(lowerAmountB, farmAmount);
+    const laborNeed = lowerAmount === null ? 0n : mulB(lowerAmountB, laborPerFarm);
+    const panelsOk = lowerAmount === null || locationResources.solarPanels >= panelsNeed;
+    const laborOk = lowerAmount === null || locationResources.labor >= laborNeed;
+    const totalOutput = formatMW(mulB(locationResources.installedSolarPanels, toBigInt(getSolarPanelPowerMW(location, state.researchLevels))));
+
+    refs.controls.setCount(unitsInstalledNum);
+    this.setHtml(refs.price, this.buildCostHtml([
+      { amount: farmAmount, emoji: 'solarPanels', insufficient: !panelsOk },
+      { amount: laborPerFarm, emoji: 'labor', insufficient: !laborOk },
+    ]));
+    refs.controls.bulk.update(
+      unitsInstalledNum,
+      canBuy,
+      limit,
+      () => flashElement(refs.price),
+    );
+    setFacilityRecipeHtml(refs.formula, '');
+    setFacilityOutputHtml(refs.output, '');
+    this.setCardResourceState(refs, 'energy', { amount: totalOutput, primary: `${formatMW(outputPerFarm)} each` });
+    updateFacilityCardProgress(refs.progressFill, refs.progressLabel, 0, 0, 1, state.time, unitsInstalled > 0n);
+  }
+
+  private updateMoonDatacenterCard(state: GameState): void {
+    const refs = this.specialFacilityCards.get('moonDatacenter:moon');
+    if (!refs) return;
+
+    const gpuPerDc = toBigInt(BALANCE.moonGpuDatacenterGpusPerBuild);
+    const moonResources = state.locationResources.moon;
+    const unitsInstalled = moonResources.installedGpus / gpuPerDc;
+    const unitsInstalledNum = Number(unitsInstalled);
+    const laborPerDc = BALANCE.moonGpuDatacenterLaborCost;
+    const limit = BALANCE.moonGpuDatacenterLimit;
+    const canBuy = (amt: number) => {
+      const amount = toBigInt(amt);
+      const amountUnits = BigInt(amt);
+      const gpus = mulB(amount, gpuPerDc);
+      const labor = mulB(amount, laborPerDc);
+      return moonResources.gpus >= gpus
+        && moonResources.labor >= labor
+        && unitsInstalled + amountUnits <= BigInt(limit);
+    };
+    const lowerAmount = this.getLowestDisplayedBuyAmount(unitsInstalledNum, limit, canBuy);
+    const lowerAmountB = lowerAmount === null ? 0n : toBigInt(lowerAmount);
+    const gpusNeed = lowerAmount === null ? 0n : mulB(lowerAmountB, gpuPerDc);
+    const laborNeed = lowerAmount === null ? 0n : mulB(lowerAmountB, laborPerDc);
+    const gpusOk = lowerAmount === null || moonResources.gpus >= gpusNeed;
+    const laborOk = lowerAmount === null || moonResources.labor >= laborNeed;
+    const powerStarved = state.lunarPowerThrottle < 0.999 && unitsInstalledNum > 0;
+
+    refs.controls.setCount(unitsInstalledNum);
+    this.setHtml(refs.price, this.buildCostHtml([
+      { amount: gpuPerDc, emoji: 'gpus', insufficient: !gpusOk },
+      { amount: laborPerDc, emoji: 'labor', insufficient: !laborOk },
+    ]));
+    refs.controls.bulk.update(
+      unitsInstalledNum,
+      canBuy,
+      limit,
+      () => flashElement(refs.price),
+    );
+    setFacilityRecipeHtml(refs.formula, '');
+    setFacilityOutputHtml(refs.output, '');
+    this.setCardResourceState(
+      refs,
+      'gpus',
+      {
+        amount: `${formatNumber(moonResources.installedGpus)}`,
+        primary: `${formatNumber(gpuPerDc)} each`,
+      },
+      powerStarved ? 'bad' : 'normal',
+    );
+    updateFacilityCardProgress(
+      refs.progressFill,
+      refs.progressLabel,
+      0,
+      0,
+      1,
+      state.time,
+      unitsInstalled > 0n,
+    );
   }
 
   private getFacilityLimit(location: LocationId, facility: FacilityId): number | null {
@@ -605,149 +1354,28 @@ export class SupplyPanel implements Panel {
     const m = BALANCE.mercuryFacilityLimits as Record<string, number>;
     if (facility === 'mercuryMaterialMine') return Math.floor(BALANCE.materialMineLimit * (m[facility] ?? 0));
     if (facility === 'mercuryRobotFactory') return Math.floor(BALANCE.robotFactoryLimit * (m[facility] ?? 0));
+    if (facility === 'mercuryProbeFactory') return Math.floor(BALANCE.probeFactoryLimit * (m[facility] ?? 0));
     if (facility === 'mercuryDysonSwarmFacility') return Math.floor(BALANCE.dysonSwarmFacilityLimit * (m[facility] ?? 0));
     return 0;
   }
 
-  private getRegularFacilityProductionHtml(location: LocationId, facility: FacilityId, state: GameState): string {
-    const owned = state.locationFacilities[location][facility];
-    if (owned <= 0n) return '';
-    if (facility === 'moonMassDriver') {
-      const total = state.pausedFacilities[facility] ? 0n : mulB(owned, toBigInt(BALANCE.massDriverLaunchesPerMin));
-      return `${formatNumber(total)} ${emojiHtml('rockets')}/m`;
-    }
-
-    let baseOutput: bigint;
-    let outputEmoji: string;
-    let productionId:
-      | 'materialMine'
-      | 'solarFactory'
-      | 'robotFactory'
-      | 'gpuFactory'
-      | 'rocketFactory'
-      | 'gpuSatelliteFactory'
-      | 'dysonSwarmFacility';
-
-    if (facility === 'earthMaterialMine' || facility === 'moonMaterialMine' || facility === 'mercuryMaterialMine') {
-      baseOutput = BALANCE.materialMineOutput;
-      outputEmoji = emojiHtml('material');
-      productionId = 'materialMine';
-    } else if (facility === 'earthSolarFactory' || facility === 'moonSolarFactory') {
-      baseOutput = BALANCE.solarFactoryOutput;
-      outputEmoji = emojiHtml('solarPanels');
-      productionId = 'solarFactory';
-    } else if (facility === 'earthRobotFactory' || facility === 'moonRobotFactory' || facility === 'mercuryRobotFactory') {
-      baseOutput = BALANCE.robotFactoryOutput;
-      outputEmoji = emojiHtml('robots');
-      productionId = 'robotFactory';
-    } else if (facility === 'earthGpuFactory' || facility === 'moonGpuFactory') {
-      baseOutput = BALANCE.gpuFactoryOutput;
-      outputEmoji = emojiHtml('gpus');
-      productionId = 'gpuFactory';
-    } else if (facility === 'earthRocketFactory') {
-      baseOutput = toBigInt(BALANCE.rocketFactoryOutput);
-      outputEmoji = emojiHtml('rockets');
-      productionId = 'rocketFactory';
-    } else if (facility === 'earthGpuSatelliteFactory' || facility === 'moonGpuSatelliteFactory') {
-      baseOutput = toBigInt(BALANCE.gpuSatelliteFactoryOutput);
-      outputEmoji = emojiHtml('gpuSatellites');
-      productionId = 'gpuSatelliteFactory';
-    } else {
-      baseOutput = toBigInt(BALANCE.dysonSwarmFacilityOutput);
-      outputEmoji = emojiHtml('gpuSatellites');
-      productionId = 'dysonSwarmFacility';
-    }
-
-    const throughput = toBigInt(getFacilityProductionMultiplier(state.completedResearch, productionId));
-    const perFacility = mulB(baseOutput, throughput);
-    const rawTotal = mulB(owned, perFacility);
-    if (state.pausedFacilities[facility]) {
-      return `0 ${outputEmoji}/m`;
-    }
-    const eff = toBigInt(state.locationFacilityRates[location][facility]);
-    const total = mulB(rawTotal, eff);
-    return `${formatNumber(total)} ${outputEmoji}/m`;
-  }
-
-  private createSpecialFacilityRow(
-    key: string,
-    labelText: string,
-    hintId: string,
-    outputHtml: string,
-    onBuy: (amount: number) => void,
-  ): {
-    row: HTMLDivElement;
-    productionEl: HTMLSpanElement;
-    priceEl: HTMLSpanElement;
-    controls: CountBulkBuyControls;
-  } {
-    const row = document.createElement('div');
-    row.className = 'panel-row supply-facility-row';
-    row.style.display = 'grid';
-    row.style.gridTemplateColumns = FACILITY_TABLE_COLUMNS;
-    row.style.columnGap = '10px';
-    row.style.alignItems = 'center';
-    row.style.minWidth = '0';
-
-    const spacer = document.createElement('span');
-    row.appendChild(spacer);
-
-    const label = document.createElement('span');
-    label.className = 'label';
-    label.textContent = labelText;
-    label.style.whiteSpace = 'nowrap';
-    label.style.overflow = 'hidden';
-    label.style.textOverflow = 'ellipsis';
-    setHintTarget(label, hintId);
-    row.appendChild(label);
-
-    const production = document.createElement('span');
-    production.style.fontSize = '0.58rem';
-    production.style.display = 'inline-block';
-    production.style.whiteSpace = 'nowrap';
-    production.style.textAlign = 'right';
-    production.style.overflow = 'hidden';
-    production.style.textOverflow = 'ellipsis';
-    row.appendChild(production);
-
-    const output = document.createElement('span');
-    output.style.fontSize = '0.62rem';
-    output.style.color = 'var(--text-muted)';
-    output.style.textAlign = 'right';
-    output.style.whiteSpace = 'nowrap';
-    output.style.overflow = 'hidden';
-    output.style.textOverflow = 'ellipsis';
-    output.innerHTML = outputHtml;
-    row.appendChild(output);
-
-    const price = document.createElement('span');
-    price.style.fontSize = '0.62rem';
-    price.style.color = 'var(--text-muted)';
-    price.style.textAlign = 'right';
-    price.style.whiteSpace = 'nowrap';
-    price.style.overflow = 'hidden';
-    price.style.textOverflow = 'ellipsis';
-    row.appendChild(price);
-
-    const controls = new CountBulkBuyControls((amt) => onBuy(amt), { prefix: '+', countPrefix: 'x', countMinWidthPx: 28 });
-    controls.el.style.justifySelf = 'end';
-    row.appendChild(controls.el);
-
-    this.specialFacilityRefs.set(key, { production, controls, price });
-    return { row, productionEl: production, priceEl: price, controls };
-  }
-
   private rebuildLayout(state: GameState): void {
     this.visibleLocations = this.getVisibleLocations(state);
-    this.resourceRefs.clear();
     this.locationEnergyRefs.clear();
+    this.locationLaborRefs.clear();
     this.gridContractRefs = null;
-    this.facilityRefs.clear();
-    this.specialFacilityRefs.clear();
-    this.facilityPriceRefs.clear();
+    this.facilityCards.clear();
+    this.specialFacilityCards.clear();
     this.facilityPauseBtns.clear();
     this.logisticsRows.clear();
+    for (const refs of this.routeLanes.values()) {
+      refs.resizeObserver.disconnect();
+    }
     this.routeLanes.clear();
+    if (this.mercuryDysonCardExtras) {
+      this.mercuryDysonCardExtras.lane.resizeObserver.disconnect();
+      this.mercuryDysonCardExtras = null;
+    }
     this.orbitSatRow = null;
     this.orbitSatEl = null;
     this.orbitPowerEl = null;
@@ -776,81 +1404,7 @@ export class SupplyPanel implements Panel {
       resourcesBlock.className = 'supply-location-block';
       resourcesBlock.classList.add('supply-location-block-resources');
       const facilitiesBlock = document.createElement('div');
-      facilitiesBlock.className = 'supply-location-block';
-      let facilityRowCount = 0;
-      let facilityHeaderAdded = false;
-      const appendFacilityRow = (row: HTMLDivElement): void => {
-        if (facilityRowCount > 0) {
-          row.style.borderTop = '1px solid var(--border-subtle)';
-          row.style.paddingTop = '3px';
-          row.style.marginTop = '2px';
-        }
-        facilityRowCount++;
-        facilitiesBlock.appendChild(row);
-      };
-      const ensureFacilityHeaderRow = (): void => {
-        if (facilityHeaderAdded) return;
-        facilityHeaderAdded = true;
-
-        const headerRow = document.createElement('div');
-        headerRow.className = 'panel-row supply-facility-row';
-        headerRow.style.display = 'grid';
-        headerRow.style.gridTemplateColumns = FACILITY_TABLE_COLUMNS;
-        headerRow.style.columnGap = '10px';
-        headerRow.style.alignItems = 'center';
-        headerRow.style.minWidth = '0';
-        headerRow.style.opacity = '0.85';
-
-        const c0 = document.createElement('span');
-        c0.textContent = '';
-        headerRow.appendChild(c0);
-
-        const c1 = document.createElement('span');
-        c1.textContent = 'Facility';
-        c1.style.fontSize = '0.58rem';
-        c1.style.color = 'var(--text-muted)';
-        c1.style.textTransform = 'uppercase';
-        c1.style.letterSpacing = '0.03em';
-        headerRow.appendChild(c1);
-
-        const c2 = document.createElement('span');
-        c2.textContent = 'Total';
-        c2.style.fontSize = '0.58rem';
-        c2.style.color = 'var(--text-muted)';
-        c2.style.textTransform = 'uppercase';
-        c2.style.letterSpacing = '0.03em';
-        c2.style.textAlign = 'right';
-        headerRow.appendChild(c2);
-
-        const c3 = document.createElement('span');
-        c3.textContent = 'Formula';
-        c3.style.fontSize = '0.58rem';
-        c3.style.color = 'var(--text-muted)';
-        c3.style.textTransform = 'uppercase';
-        c3.style.letterSpacing = '0.03em';
-        c3.style.textAlign = 'right';
-        headerRow.appendChild(c3);
-
-        const c4 = document.createElement('span');
-        c4.textContent = 'Cost';
-        c4.style.fontSize = '0.58rem';
-        c4.style.color = 'var(--text-muted)';
-        c4.style.textTransform = 'uppercase';
-        c4.style.letterSpacing = '0.03em';
-        c4.style.textAlign = 'right';
-        headerRow.appendChild(c4);
-
-        const c5 = document.createElement('span');
-        c5.style.textAlign = 'right';
-        c5.style.fontSize = '0.58rem';
-        c5.style.color = 'var(--text-muted)';
-        c5.style.textTransform = 'uppercase';
-        c5.style.letterSpacing = '0.03em';
-        c5.textContent = 'Count';
-        headerRow.appendChild(c5);
-
-        appendFacilityRow(headerRow);
-      };
+      facilitiesBlock.className = 'supply-location-block facility-card-grid';
 
       if (this.showLocationHeaders) {
         const resourcesLoc = document.createElement('div');
@@ -865,34 +1419,6 @@ export class SupplyPanel implements Panel {
       }
 
       if (this.showResources) {
-        const showNonEnergyResources = this.isMaterialMineVisibleInUi(state, location);
-        for (const resource of SUPPLY_RESOURCE_ORDER) {
-          if (!showNonEnergyResources) continue;
-          if (!this.isSupplyResourceVisible(state, location, resource)) continue;
-
-          const row = document.createElement('div');
-          row.className = 'panel-row supply-facility-row';
-          const label = document.createElement('span');
-          label.className = 'label';
-          label.innerHTML = this.getResourceLabel(location, resource);
-          setHintTarget(label, SUPPLY_HINTS[resource]);
-
-          const valueWrap = document.createElement('span');
-          valueWrap.className = 'value resource-line-value';
-          const value = document.createElement('span');
-          value.className = 'resource-primary-value';
-          const rate = document.createElement('span');
-          rate.className = 'resource-rate-inline';
-          valueWrap.appendChild(value);
-          valueWrap.appendChild(rate);
-
-          row.appendChild(label);
-          row.appendChild(valueWrap);
-          resourcesBlock.appendChild(row);
-
-          this.resourceRefs.set(`${resource}:${location}`, { value, rate });
-        }
-
         if (this.isLocationEnergyVisible(location)) {
           const energyRow = document.createElement('div');
           energyRow.className = 'panel-row supply-facility-row';
@@ -909,202 +1435,259 @@ export class SupplyPanel implements Panel {
           energyRow.appendChild(energyValue);
           resourcesBlock.appendChild(energyRow);
           this.locationEnergyRefs.set(location, energyValue);
+        }
 
-          if (location === 'earth') {
-            const gridRow = document.createElement('div');
-            gridRow.className = 'panel-row supply-facility-row location-energy-row';
-            const gridLabel = document.createElement('span');
-            gridLabel.className = 'label';
-            gridLabel.textContent = 'Grid Contract';
-            setHintTarget(gridLabel, 'mechanic.gridPower');
+        if (this.isLocationLaborVisible(location)) {
+          const laborRow = document.createElement('div');
+          laborRow.className = 'panel-row supply-facility-row';
+          laborRow.classList.add('location-energy-row');
+          const laborLabel = document.createElement('span');
+          laborLabel.className = 'label';
+          laborLabel.innerHTML = resourceLabelHtml('labor');
+          setHintTarget(laborLabel, 'resource.labor');
 
-            const right = document.createElement('div');
-            right.style.display = 'flex';
-            right.style.flexDirection = 'column';
-            right.style.alignItems = 'flex-end';
-            right.style.gap = '1px';
+          const laborValue = document.createElement('span');
+          laborValue.className = 'value resource-line-value';
 
-            const controls = document.createElement('div');
-            controls.style.display = 'flex';
-            controls.style.alignItems = 'center';
-            controls.style.gap = '4px';
+          laborRow.appendChild(laborLabel);
+          laborRow.appendChild(laborValue);
+          resourcesBlock.appendChild(laborRow);
+          this.locationLaborRefs.set(location, laborValue);
+        }
 
-            const sell = new BulkBuyGroup((amt) => {
-              dispatchGameAction(this.state, { type: 'sellGridPower', amountKW: amt });
-            }, '-');
-            const buy = new BulkBuyGroup((amt) => {
-              dispatchGameAction(this.state, { type: 'buyGridPower', amountKW: amt });
-            }, '+');
+        if (location === 'earth' && this.isLocationEnergyVisible(location)) {
+          const gridRow = document.createElement('div');
+          gridRow.className = 'panel-row supply-facility-row location-energy-row';
+          const gridLabel = document.createElement('span');
+          gridLabel.className = 'label';
+          gridLabel.textContent = 'Grid Contract';
+          setHintTarget(gridLabel, 'mechanic.gridPower');
 
-            const value = document.createElement('span');
-            value.className = 'value';
-            value.style.minWidth = '48px';
-            value.style.textAlign = 'center';
+          const right = document.createElement('div');
+          right.style.display = 'flex';
+          right.style.flexDirection = 'column';
+          right.style.alignItems = 'flex-end';
+          right.style.gap = '1px';
 
-            controls.appendChild(sell.el);
-            controls.appendChild(value);
-            controls.appendChild(buy.el);
+          const controls = document.createElement('div');
+          controls.style.display = 'flex';
+          controls.style.alignItems = 'center';
+          controls.style.gap = '4px';
 
-            const cost = document.createElement('span');
-            cost.style.fontSize = '0.62rem';
-            cost.style.color = 'var(--text-muted)';
+          const sell = new BulkBuyGroup((amt) => {
+            dispatchGameAction(this.state, { type: 'sellGridPower', amountKW: amt });
+          }, '-');
+          const buy = new BulkBuyGroup((amt) => {
+            dispatchGameAction(this.state, { type: 'buyGridPower', amountKW: amt });
+          }, '+');
 
-            right.appendChild(controls);
-            right.appendChild(cost);
-            gridRow.appendChild(gridLabel);
-            gridRow.appendChild(right);
-            resourcesBlock.appendChild(gridRow);
+          const value = document.createElement('span');
+          value.className = 'value';
+          value.style.minWidth = '48px';
+          value.style.textAlign = 'center';
 
-            this.gridContractRefs = { value, cost, buy, sell };
-          }
+          controls.appendChild(sell.el);
+          controls.appendChild(value);
+          controls.appendChild(buy.el);
+
+          const cost = document.createElement('span');
+          cost.style.fontSize = '0.62rem';
+          cost.style.color = 'var(--text-muted)';
+
+          right.appendChild(controls);
+          right.appendChild(cost);
+          gridRow.appendChild(gridLabel);
+          gridRow.appendChild(right);
+          resourcesBlock.appendChild(gridRow);
+
+          this.gridContractRefs = { value, cost, buy, sell };
         }
 
         this.resourcesSection.appendChild(resourcesBlock);
       }
 
+      if (location === 'earth' && state.gridPowerKW >= POWER_PLANT_UNLOCK_GRID_KW) {
+        const gasCard = this.createFacilityCard(
+          'Gas Plant',
+          getFacilityCardIconSvg('gasPlant'),
+          'infra.gasPlant',
+          (amt) => dispatchGameAction(this.state, { type: 'buyGasPlant', amount: amt }),
+        );
+        gasCard.card.classList.add('facility-card-single-pill');
+        this.registerCard(this.specialFacilityCards, 'earthGasPlant:earth', gasCard, [], 'energy', facilitiesBlock);
+
+        const nuclearCard = this.createFacilityCard(
+          'Nuclear Plant',
+          getFacilityCardIconSvg('nuclearPlant'),
+          'infra.nuclearPlant',
+          (amt) => dispatchGameAction(this.state, { type: 'buyNuclearPlant', amount: amt }),
+        );
+        nuclearCard.card.classList.add('facility-card-single-pill');
+        this.registerCard(this.specialFacilityCards, 'earthNuclearPlant:earth', nuclearCard, [], 'energy', facilitiesBlock);
+      }
+
+      if (location === 'earth' && hasCompletedResearch(state.researchLevels, 'solarTechnology')) {
+        const earthSolarCard = this.createFacilityCard(
+          'Solar Farm',
+          getFacilityCardIconSvg('solarFarm'),
+          'infra.solarInstall',
+          (amt) => dispatchGameAction(this.state, { type: 'buySolarFarm', location: 'earth', amount: amt }),
+        );
+        earthSolarCard.card.classList.add('facility-card-single-pill');
+        this.registerCard(this.specialFacilityCards, 'earthSolarFarm:earth', earthSolarCard, [], 'energy', facilitiesBlock);
+      }
+
+      if (location === 'moon' && hasCompletedResearch(state.researchLevels, 'payloadToMoon')) {
+        const moonSolarCard = this.createFacilityCard(
+          'Solar Farm',
+          getFacilityCardIconSvg('solarFarm'),
+          'infra.solarInstall',
+          (amt) => dispatchGameAction(this.state, { type: 'buySolarFarm', location: 'moon', amount: amt }),
+        );
+        moonSolarCard.card.classList.add('facility-card-single-pill');
+        this.registerCard(this.specialFacilityCards, 'moonSolarFarm:moon', moonSolarCard, [], 'energy', facilitiesBlock);
+
+        const moonDatacenterCard = this.createFacilityCard(
+          'Moon GPUs',
+          getFacilityCardIconSvg('moonDatacenter'),
+          'resource.gpus',
+          (amt) => dispatchGameAction(this.state, { type: 'buyMoonDatacenter', amount: amt }),
+        );
+        moonDatacenterCard.card.classList.add('facility-card-single-pill');
+        this.registerCard(this.specialFacilityCards, 'moonDatacenter:moon', moonDatacenterCard, [], 'gpus', facilitiesBlock);
+      }
+
       for (const facility of getFacilitiesForLocation(location)) {
+        if (facility.id === 'moonMassDriver' || facility.id === 'mercuryDysonSwarmFacility') continue;
         if (!isFacilityUnlockedForLocation(state, location, facility.id)) continue;
         const isMaterialMine = facility.id === 'earthMaterialMine' || facility.id === 'moonMaterialMine' || facility.id === 'mercuryMaterialMine';
         if (isMaterialMine && !this.isMaterialMineVisibleInUi(state, location)) continue;
 
-        const key = `${facility.id}:${location}`;
-        const info = this.getFacilityInfo(facility.id);
-
-        const row = document.createElement('div');
-        row.className = 'panel-row supply-facility-row';
-        row.style.display = 'grid';
-        row.style.gridTemplateColumns = FACILITY_TABLE_COLUMNS;
-        row.style.columnGap = '10px';
-        row.style.alignItems = 'center';
-        row.style.minWidth = '0';
-
-        const pauseBtn = document.createElement('button');
-        pauseBtn.className = 'btn-mini';
-        pauseBtn.style.background = 'transparent';
-        pauseBtn.style.border = 'none';
-        pauseBtn.style.boxShadow = 'none';
-        pauseBtn.addEventListener('click', () => this.toggleFacilityPause(facility.id));
-        row.appendChild(pauseBtn);
-        this.registerPauseButton(facility.id, pauseBtn);
-
-        const label = document.createElement('span');
-        label.className = 'label';
-        label.textContent = facility.label;
-        label.style.whiteSpace = 'nowrap';
-        label.style.overflow = 'hidden';
-        label.style.textOverflow = 'ellipsis';
-        setHintTarget(label, facility.hintId);
-        row.appendChild(label);
-
-        const efficiency = document.createElement('span');
-        efficiency.style.fontSize = '0.58rem';
-        efficiency.style.display = 'inline-block';
-        efficiency.style.whiteSpace = 'nowrap';
-        efficiency.style.textAlign = 'right';
-        efficiency.style.overflow = 'hidden';
-        efficiency.style.textOverflow = 'ellipsis';
-        row.appendChild(efficiency);
-
-        const output = document.createElement('span');
-        output.style.fontSize = '0.62rem';
-        output.style.color = 'var(--text-muted)';
-        output.style.textAlign = 'right';
-        output.style.whiteSpace = 'nowrap';
-        output.style.overflow = 'hidden';
-        output.style.textOverflow = 'ellipsis';
-        output.innerHTML = info.output;
-        row.appendChild(output);
-
-        const price = document.createElement('span');
-        price.style.fontSize = '0.62rem';
-        price.style.color = 'var(--text-muted)';
-        price.style.textAlign = 'right';
-        price.style.whiteSpace = 'nowrap';
-        price.style.overflow = 'hidden';
-        price.style.textOverflow = 'ellipsis';
-        const unitCosts = this.getRegularFacilityBuildCostsPerUnit(location, facility.id);
-        price.innerHTML = this.buildCostHtml([
-          { amount: unitCosts.material, emoji: 'material', insufficient: false },
-          { amount: unitCosts.labor, emoji: 'labor', insufficient: false },
-        ]);
-        row.appendChild(price);
-        this.facilityPriceRefs.set(key, price);
-
-        const controls = new CountBulkBuyControls((amt) => {
-          dispatchGameAction(this.state, {
-            type: 'buildFacility',
-            location,
-            facility: facility.id,
-            amount: amt,
-          });
-        }, { prefix: '+', countPrefix: 'x', countMinWidthPx: 28 });
-        controls.el.style.justifySelf = 'end';
-        row.appendChild(controls.el);
-        ensureFacilityHeaderRow();
-        appendFacilityRow(row);
-
-        this.facilityRefs.set(key, { efficiency, controls });
+        const key = this.getFacilityKey(location, facility.id);
+        const card = this.createFacilityCard(
+          facility.label,
+          this.getRegularFacilityIconSvg(facility.id),
+          facility.hintId,
+          (amt) => {
+            dispatchGameAction(this.state, {
+              type: 'buildFacility',
+              location,
+              facility: facility.id,
+              amount: amt,
+            });
+          },
+          facility.id,
+        );
+        this.registerCard(
+          this.facilityCards,
+          key,
+          card,
+          this.getRegularFacilityInputs(facility.id).map((input) => input.resource),
+          this.getRegularFacilityOutputResource(facility.id),
+          facilitiesBlock,
+        );
       }
 
-      if (location === 'earth' && state.gridPowerKW >= POWER_PLANT_UNLOCK_GRID_KW) {
-        const gasRow = this.createSpecialFacilityRow(
-          'earthGasPlant:earth',
-          'Gas Plant',
-          'infra.gasPlant',
-          `${emojiHtml('energy')} ${formatMW(BALANCE.powerPlants.gas.outputMW)}`,
-          (amt) => dispatchGameAction(this.state, { type: 'buyGasPlant', amount: amt }),
+      if (location === 'mercury' && isFacilityUnlockedForLocation(state, location, 'mercuryDysonSwarmFacility')) {
+        const mercuryDysonCard = this.createFacilityCard(
+          'Dyson Swarm',
+          getFacilityCardIconSvg('mercuryDysonSwarmFacility'),
+          'resource.gpuSatellites',
+          (amt) => {
+            dispatchGameAction(this.state, {
+              type: 'buildFacility',
+              location: 'mercury',
+              facility: 'mercuryDysonSwarmFacility',
+              amount: amt,
+            });
+          },
+          'mercuryDysonSwarmFacility',
         );
-        ensureFacilityHeaderRow();
-        appendFacilityRow(gasRow.row);
+        this.registerCustomCard(
+          this.specialFacilityCards,
+          'mercuryDysonSwarmFacility:mercury',
+          mercuryDysonCard,
+          (() => {
+            const material = createResourcePill(mercuryDysonCard.inputResourceWrap, emojiHtml('material'));
+            const labor = createResourcePill(mercuryDysonCard.inputResourceWrap, emojiHtml('labor'));
+            const satellites = createResourcePill(mercuryDysonCard.outputResourceWrap, emojiHtml('gpuSatellites'));
+            satellites.pill.classList.add('facility-card-pill-compact');
+            return {
+              material,
+              labor,
+              gpuSatellites: satellites,
+            };
+          })(),
+          facilitiesBlock,
+        );
 
-        const nuclearRow = this.createSpecialFacilityRow(
-          'earthNuclearPlant:earth',
-          'Nuclear Plant',
-          'infra.nuclearPlant',
-          `${emojiHtml('energy')} ${formatMW(BALANCE.powerPlants.nuclear.outputMW)}`,
-          (amt) => dispatchGameAction(this.state, { type: 'buyNuclearPlant', amount: amt }),
-        );
-        ensureFacilityHeaderRow();
-        appendFacilityRow(nuclearRow.row);
+        const laneRow = document.createElement('div');
+        laneRow.className = 'panel-row logistics-route-row facility-card-logistics-row';
+
+        const sourceEnd = document.createElement('span');
+        sourceEnd.className = 'logistics-route-end';
+        sourceEnd.innerHTML = `${emojiHtml('mercury')}Mercury`;
+
+        const lane = document.createElement('div');
+        lane.className = 'logistics-lane';
+
+        const destinationEnd = document.createElement('span');
+        destinationEnd.className = 'logistics-route-end';
+        destinationEnd.innerHTML = `${emojiHtml('sun')}Sun`;
+
+        laneRow.appendChild(sourceEnd);
+        laneRow.appendChild(lane);
+        laneRow.appendChild(destinationEnd);
+
+        mercuryDysonCard.card.appendChild(laneRow);
+        this.mercuryDysonCardExtras = {
+          lane: {
+            row: laneRow,
+            lane,
+            resizeObserver: this.observeLaneRocketTravel(lane),
+            lastOutboundCount: -1,
+            lastReturningCount: -1,
+          },
+        };
       }
 
-      if (location === 'earth' && state.completedResearch.includes('solarTechnology')) {
-        const solarFarmPanels = toBigInt(BALANCE.solarFarmPanelsPerFarm);
-        const earthSolarFarmRow = this.createSpecialFacilityRow(
-          'earthSolarFarm:earth',
-          'Solar Farm',
-          'infra.solarInstall',
-          `${emojiHtml('energy')} ${formatMW(mulB(solarFarmPanels, toBigInt(getSolarPanelPowerMW('earth', state.completedResearch))))}`,
-          (amt) => dispatchGameAction(this.state, { type: 'buySolarFarm', location: 'earth', amount: amt }),
+      if (location === 'moon' && isFacilityUnlockedForLocation(state, location, 'moonMassDriver')) {
+        const moonMassDriverCard = this.createFacilityCard(
+          'Mass Driver',
+          getFacilityCardIconSvg('moonMassDriver'),
+          'mechanic.spaceLogistics',
+          (amt) => {
+            dispatchGameAction(this.state, {
+              type: 'buildFacility',
+              location: 'moon',
+              facility: 'moonMassDriver',
+              amount: amt,
+            });
+          },
+          'moonMassDriver',
         );
-        ensureFacilityHeaderRow();
-        appendFacilityRow(earthSolarFarmRow.row);
+        moonMassDriverCard.card.classList.add('facility-card-compact-io');
+        this.registerCustomCard(
+          this.specialFacilityCards,
+          'moonMassDriver:moon',
+          moonMassDriverCard,
+          (() => {
+            const massInput = createResourcePill(moonMassDriverCard.inputResourceWrap, 'Pending');
+            massInput.pill.classList.add('facility-card-pill-mass');
+            massInput.label.textContent = 'Pending';
+            const massOutput = createResourcePill(moonMassDriverCard.outputResourceWrap, 'Launched');
+            massOutput.pill.classList.add('facility-card-pill-mass');
+            massOutput.label.textContent = 'Launched';
+            return {
+              massInput,
+              massOutput,
+            };
+          })(),
+          facilitiesBlock,
+        );
       }
-
-      if (location === 'moon' && state.completedResearch.includes('payloadToMoon')) {
-        const solarFarmPanels = toBigInt(BALANCE.solarFarmPanelsPerFarm);
-        const moonSolarFarmRow = this.createSpecialFacilityRow(
-          'moonSolarFarm:moon',
-          'Solar Farm',
-          'infra.solarInstall',
-          `${emojiHtml('energy')} ${formatMW(mulB(solarFarmPanels, toBigInt(getSolarPanelPowerMW('moon', state.completedResearch))))}`,
-          (amt) => dispatchGameAction(this.state, { type: 'buySolarFarm', location: 'moon', amount: amt }),
-        );
-        ensureFacilityHeaderRow();
-        appendFacilityRow(moonSolarFarmRow.row);
-
-        const moonDatacenterRow = this.createSpecialFacilityRow(
-          'moonDatacenter:moon',
-          'Moon GPUs',
-          'resource.gpus',
-          `${emojiHtml('flops')} ${formatNumber(mulB(toBigInt(BALANCE.moonGpuDatacenterGpusPerBuild), toBigInt(BALANCE.pflopsPerGpu)))} PFlops`,
-          (amt) => dispatchGameAction(this.state, { type: 'buyMoonDatacenter', amount: amt }),
-        );
-        ensureFacilityHeaderRow();
-        appendFacilityRow(moonDatacenterRow.row);
-      }
-
-      if (facilityRowCount > 0) {
+      const minChildren = this.showLocationHeaders ? 1 : 0;
+      if (facilitiesBlock.children.length > minChildren) {
         hasVisibleFacilities = true;
         this.facilitiesSection.appendChild(facilitiesBlock);
       }
@@ -1161,7 +1744,7 @@ export class SupplyPanel implements Panel {
           label.className = 'label';
           label.style.fontSize = '0.72rem';
           label.style.whiteSpace = 'nowrap';
-          label.textContent = rowDef.label;
+          label.innerHTML = resourceLabelHtml(rowDef.payload, rowDef.label);
           setHintTarget(label, rowDef.hintId);
           left.appendChild(label);
 
@@ -1260,47 +1843,48 @@ export class SupplyPanel implements Panel {
     this.state = state;
     const visible = state.isPostGpuTransition && this.getVisibleLocations(state).length > 0;
     if (!visible) {
-      this.el.style.display = 'none';
+      this.setDisplay(this.el, 'none');
       return;
     }
-    this.el.style.display = '';
+    this.setDisplay(this.el, '');
 
     const powerPlantsUnlocked = state.gridPowerKW >= POWER_PLANT_UNLOCK_GRID_KW ? '1' : '0';
-    const layoutKey = `${this.getVisibleLocations(state).join(',')}:${state.completedResearch.join('|')}:plants:${powerPlantsUnlocked}`;
+    const layoutKey = `${this.getVisibleLocations(state).join(',')}:${getCompletedResearchIds(state.researchLevels).join('|')}:plants:${powerPlantsUnlocked}`;
     if (layoutKey !== this.layoutKey) {
       this.layoutKey = layoutKey;
       this.rebuildLayout(state);
     }
 
-    for (const [key, refs] of this.resourceRefs) {
-      const [resource, location] = key.split(':') as [SupplyResourceId, LocationId];
-      const stock = state.locationResources[location][resource];
-      const income = state.locationProductionPerMin[location][resource];
-      const expense = state.locationConsumptionPerMin[location][resource];
-      const net = income - expense;
-
-      let capSuffix = '';
-      if (resource === 'rockets' || resource === 'gpus' || resource === 'solarPanels' || resource === 'robots') {
-        if (stock >= BALANCE.locationResourceStockpileCap) capSuffix = `/${BALANCE.locationResourceStockpileCapLabel}`;
-      }
-      if (location === 'mercury' && resource === 'material' && stock >= BALANCE.mercuryMaterialStockpileCap) {
-        capSuffix = `/${BALANCE.mercuryMaterialStockpileCapLabel}`;
-      }
-
-      refs.value.textContent = `${formatNumber(stock)}${capSuffix}`;
-      refs.rate.textContent = this.formatRate(net);
-      refs.rate.style.color = net < 0n ? 'var(--accent-red)' : 'var(--text-muted)';
-    }
-
     for (const [location, valueEl] of this.locationEnergyRefs) {
       const supply = location === 'earth' ? state.powerSupplyMW : state.lunarPowerSupplyMW;
       const demand = location === 'earth' ? state.powerDemandMW : state.lunarPowerDemandMW;
-      valueEl.textContent = `Supply ${formatMW(supply)} / Demand ${formatMW(demand)}`;
-      valueEl.style.color = supply >= demand ? 'var(--accent-green)' : 'var(--accent-red)';
+      this.setText(valueEl, `Supply ${formatMW(supply)} / Demand ${formatMW(demand)}`);
+      this.setColor(valueEl, supply >= demand ? 'var(--accent-green)' : 'var(--accent-red)');
+    }
+    const robotLaborPerMin = getRobotLaborPerMin(state);
+    for (const [location, valueEl] of this.locationLaborRefs) {
+      const total = state.locationResources[location].labor;
+      const robotSupply = mulB(state.locationResources[location].robots, robotLaborPerMin);
+      const totalSupply = state.locationProductionPerMin[location].labor;
+      const humanSupply = location === 'earth' && totalSupply > robotSupply ? totalSupply - robotSupply : 0n;
+      const demand = state.locationConsumptionPerMin[location].labor;
+      const parts = [`Total ${formatNumber(total)}`];
+      if (humanSupply > 0n) {
+        parts.push(`${UI_EMOJI.users} +${formatNumber(humanSupply)}/m`);
+      }
+      if (robotSupply > 0n) {
+        parts.push(`${UI_EMOJI.robots} +${formatNumber(robotSupply)}/m`);
+      }
+      const demandText = demand > 0n ? ` / Demand -${formatNumber(demand)}/m` : '';
+      this.setText(
+        valueEl,
+        `${parts.join(' | ')}${demandText}`,
+      );
+      this.setColor(valueEl, totalSupply >= demand ? 'var(--accent-green)' : 'var(--accent-red)');
     }
     if (this.gridContractRefs) {
-      this.gridContractRefs.value.textContent = formatMW(state.gridPowerKW / 1000n);
-      this.gridContractRefs.cost.innerHTML = `Cost: ${formatNumber(toBigInt(BALANCE.gridPowerKWCost))} ${emojiHtml('money')}/kW`;
+      this.setText(this.gridContractRefs.value, formatMW(state.gridPowerKW / 1000n));
+      this.setHtml(this.gridContractRefs.cost, `Cost: ${formatNumber(toBigInt(BALANCE.gridPowerKWCost))} ${emojiHtml('money')}/kW`);
       const gridOwned = Math.floor(fromBigInt(state.gridPowerKW));
       this.gridContractRefs.buy.update(
         gridOwned,
@@ -1320,18 +1904,14 @@ export class SupplyPanel implements Panel {
       for (const facility of getFacilitiesForLocation(location)) {
         this.updatePauseButton(facility.id);
 
-        const refs = this.facilityRefs.get(`${facility.id}:${location}`);
+        const key = this.getFacilityKey(location, facility.id);
+        const refs = this.facilityCards.get(key);
         if (!refs) continue;
 
         const owned = state.locationFacilities[location][facility.id];
         const ownedNum = Math.floor(fromBigInt(owned));
         const limit = this.getFacilityLimit(location, facility.id);
 
-        if (refs.efficiency) {
-          refs.efficiency.innerHTML = this.getRegularFacilityProductionHtml(location, facility.id, state);
-          refs.efficiency.style.visibility = 'visible';
-          refs.efficiency.style.color = 'var(--text-secondary)';
-        }
         refs.controls.setCount(owned);
 
         const canBuyFacility = (amt: number) => canBuildFacility(this.state, location, facility.id, amt);
@@ -1346,13 +1926,28 @@ export class SupplyPanel implements Panel {
         const laborNeed = lowerButtonAmount === null ? 0n : mulB(lowerAmountB, unitCosts.labor);
         const materialOk = lowerButtonAmount === null || state.locationResources[location].material >= materialNeed;
         const laborOk = lowerButtonAmount === null || state.locationResources[location].labor >= laborNeed;
-        const priceRef = this.facilityPriceRefs.get(`${facility.id}:${location}`);
-        if (priceRef) {
-          priceRef.innerHTML = this.buildCostHtml([
-            { amount: unitCosts.material, emoji: 'material', insufficient: !materialOk },
-            { amount: unitCosts.labor, emoji: 'labor', insufficient: !laborOk },
-          ]);
-        }
+        this.setHtml(refs.price, this.buildCostHtml([
+          { amount: unitCosts.material, emoji: 'material', insufficient: !materialOk },
+          { amount: unitCosts.labor, emoji: 'labor', insufficient: !laborOk },
+        ]));
+
+        const facilityRate = state.pausedFacilities[facility.id] ? 0 : state.locationFacilityRates[location][facility.id];
+        const isPaused = state.pausedFacilities[facility.id];
+        const hasBuildings = owned > 0n;
+        const isActive = hasBuildings && !isPaused;
+        const recipeParts = this.buildRegularFacilityFormulaParts(state, location, facility.id, facilityRate, isActive, refs);
+        setFacilityRecipeHtml(refs.formula, recipeParts.inputsHtml);
+        setFacilityOutputHtml(refs.output, recipeParts.outputsHtml);
+        updateFacilityCardProgress(
+          refs.progressFill,
+          refs.progressLabel,
+          hasBuildings ? facilityRate : 0,
+          this.getEffectiveActiveBuildings(owned, facilityRate),
+          this.getFacilityFlowCapacity(owned, limit),
+          state.time,
+          hasBuildings,
+          isPaused,
+        );
 
         refs.controls.bulk.update(
           ownedNum,
@@ -1360,11 +1955,8 @@ export class SupplyPanel implements Panel {
           (limit !== null && limit > 0) ? limit : null,
           (amt) => {
             if (amt === 1) {
-              const rowPriceRef = this.facilityPriceRefs.get(`${facility.id}:${location}`);
-              if (rowPriceRef) {
-                flashElement(rowPriceRef);
-                return;
-              }
+              flashElement(refs.price);
+              return;
             }
             flashElement(refs.controls.countEl);
           },
@@ -1372,188 +1964,22 @@ export class SupplyPanel implements Panel {
       }
     }
 
-    const gasRefs = this.specialFacilityRefs.get('earthGasPlant:earth');
-    if (gasRefs) {
-      const owned = state.gasPlants;
-      const ownedNum = Math.floor(fromBigInt(owned));
-      const earthLabor = state.locationResources.earth.labor;
-      const gasLimit = BALANCE.powerPlants.gas.limit ?? null;
-      const canBuyGasPlant = (amt: number) => {
-        const amount = toBigInt(amt);
-        return state.funds >= mulB(amount, BALANCE.powerPlants.gas.cost)
-          && earthLabor >= mulB(amount, BALANCE.powerPlants.gas.laborCost);
-      };
-      const gasLowerAmount = this.getLowestDisplayedBuyAmount(ownedNum, gasLimit, canBuyGasPlant);
-      const gasLowerAmountB = gasLowerAmount === null ? 0n : toBigInt(gasLowerAmount);
-      const gasMoneyNeed = gasLowerAmount === null ? 0n : mulB(gasLowerAmountB, BALANCE.powerPlants.gas.cost);
-      const gasLaborNeed = gasLowerAmount === null ? 0n : mulB(gasLowerAmountB, BALANCE.powerPlants.gas.laborCost);
-      const gasMoneyOk = gasLowerAmount === null || state.funds >= gasMoneyNeed;
-      const gasLaborOk = gasLowerAmount === null || earthLabor >= gasLaborNeed;
-      gasRefs.controls.setCount(owned);
-      gasRefs.production.innerHTML = `${emojiHtml('energy')} ${formatMW(mulB(owned, BALANCE.powerPlants.gas.outputMW))}`;
-      gasRefs.price.innerHTML = this.buildCostHtml([
-        { amount: BALANCE.powerPlants.gas.cost, emoji: 'money', insufficient: !gasMoneyOk },
-        { amount: BALANCE.powerPlants.gas.laborCost, emoji: 'labor', insufficient: !gasLaborOk },
-      ]);
-      gasRefs.controls.bulk.update(
-        ownedNum,
-        canBuyGasPlant,
-        gasLimit,
-        () => flashElement(gasRefs.price),
-      );
-    }
+    this.updatePowerPlantCard(state, 'earthGasPlant:earth', state.gasPlants, BALANCE.powerPlants.gas);
+    this.updatePowerPlantCard(state, 'earthNuclearPlant:earth', state.nuclearPlants, BALANCE.powerPlants.nuclear);
+    this.updateSolarFarmCard(state, 'earth', 'earthSolarFarm:earth', BALANCE.earthSolarFarmLaborCost);
+    this.updateSolarFarmCard(state, 'moon', 'moonSolarFarm:moon', BALANCE.moonSolarFarmLaborCost);
+    this.updateMoonDatacenterCard(state);
+    this.updateMercuryDysonSwarmCard(state);
+    this.updateMoonMassDriverCard(state);
 
-    const nuclearRefs = this.specialFacilityRefs.get('earthNuclearPlant:earth');
-    if (nuclearRefs) {
-      const owned = state.nuclearPlants;
-      const ownedNum = Math.floor(fromBigInt(owned));
-      const earthLabor = state.locationResources.earth.labor;
-      const nuclearLimit = BALANCE.powerPlants.nuclear.limit ?? null;
-      const canBuyNuclearPlant = (amt: number) => {
-        const amount = toBigInt(amt);
-        return state.funds >= mulB(amount, BALANCE.powerPlants.nuclear.cost)
-          && earthLabor >= mulB(amount, BALANCE.powerPlants.nuclear.laborCost);
-      };
-      const nuclearLowerAmount = this.getLowestDisplayedBuyAmount(ownedNum, nuclearLimit, canBuyNuclearPlant);
-      const nuclearLowerAmountB = nuclearLowerAmount === null ? 0n : toBigInt(nuclearLowerAmount);
-      const nuclearMoneyNeed = nuclearLowerAmount === null ? 0n : mulB(nuclearLowerAmountB, BALANCE.powerPlants.nuclear.cost);
-      const nuclearLaborNeed = nuclearLowerAmount === null ? 0n : mulB(nuclearLowerAmountB, BALANCE.powerPlants.nuclear.laborCost);
-      const nuclearMoneyOk = nuclearLowerAmount === null || state.funds >= nuclearMoneyNeed;
-      const nuclearLaborOk = nuclearLowerAmount === null || earthLabor >= nuclearLaborNeed;
-      nuclearRefs.controls.setCount(owned);
-      nuclearRefs.production.innerHTML = `${emojiHtml('energy')} ${formatMW(mulB(owned, BALANCE.powerPlants.nuclear.outputMW))}`;
-      nuclearRefs.price.innerHTML = this.buildCostHtml([
-        { amount: BALANCE.powerPlants.nuclear.cost, emoji: 'money', insufficient: !nuclearMoneyOk },
-        { amount: BALANCE.powerPlants.nuclear.laborCost, emoji: 'labor', insufficient: !nuclearLaborOk },
-      ]);
-      nuclearRefs.controls.bulk.update(
-        ownedNum,
-        canBuyNuclearPlant,
-        nuclearLimit,
-        () => flashElement(nuclearRefs.price),
-      );
-    }
-
-    const earthSolarFarmRefs = this.specialFacilityRefs.get('earthSolarFarm:earth');
-    if (earthSolarFarmRefs) {
-      const farmAmount = toBigInt(BALANCE.solarFarmPanelsPerFarm);
-      const unitsInstalled = state.locationResources.earth.installedSolarPanels / farmAmount;
-      const unitsInstalledNum = Number(unitsInstalled);
-      const laborPerFarm = BALANCE.earthSolarFarmLaborCost;
-      const outputPerFarm = mulB(farmAmount, toBigInt(getSolarPanelPowerMW('earth', state.completedResearch)));
-      const earthSolarFarmLimit = BALANCE.solarFarmLimit;
-      const canBuyEarthSolarFarm = (amt: number) => {
-        const amount = toBigInt(amt);
-        const amountUnits = BigInt(amt);
-        const panels = mulB(amount, farmAmount);
-        const labor = mulB(amount, laborPerFarm);
-        return state.locationResources.earth.solarPanels >= panels
-          && state.locationResources.earth.labor >= labor
-          && unitsInstalled + amountUnits <= BigInt(earthSolarFarmLimit);
-      };
-      const earthSolarFarmLowerAmount = this.getLowestDisplayedBuyAmount(unitsInstalledNum, earthSolarFarmLimit, canBuyEarthSolarFarm);
-      const earthSolarFarmLowerAmountB = earthSolarFarmLowerAmount === null ? 0n : toBigInt(earthSolarFarmLowerAmount);
-      const earthPanelsNeed = earthSolarFarmLowerAmount === null ? 0n : mulB(earthSolarFarmLowerAmountB, farmAmount);
-      const earthLaborNeed = earthSolarFarmLowerAmount === null ? 0n : mulB(earthSolarFarmLowerAmountB, laborPerFarm);
-      const earthPanelsOk = earthSolarFarmLowerAmount === null || state.locationResources.earth.solarPanels >= earthPanelsNeed;
-      const earthLaborOk = earthSolarFarmLowerAmount === null || state.locationResources.earth.labor >= earthLaborNeed;
-      earthSolarFarmRefs.controls.setCount(unitsInstalledNum);
-      earthSolarFarmRefs.production.innerHTML = `${emojiHtml('energy')} ${formatMW(mulB(state.locationResources.earth.installedSolarPanels, toBigInt(getSolarPanelPowerMW('earth', state.completedResearch))))}`;
-      earthSolarFarmRefs.price.innerHTML = this.buildCostHtml([
-        { amount: farmAmount, emoji: 'solarPanels', insufficient: !earthPanelsOk },
-        { amount: laborPerFarm, emoji: 'labor', insufficient: !earthLaborOk },
-      ]);
-      earthSolarFarmRefs.controls.bulk.update(
-        unitsInstalledNum,
-        canBuyEarthSolarFarm,
-        earthSolarFarmLimit,
-        () => flashElement(earthSolarFarmRefs.price),
-      );
-      if (outputPerFarm <= 0n) {
-        earthSolarFarmRefs.production.innerHTML = `${emojiHtml('energy')} ${formatMW(0n)}`;
-      }
-    }
-
-    const moonSolarFarmRefs = this.specialFacilityRefs.get('moonSolarFarm:moon');
-    if (moonSolarFarmRefs) {
-      const farmAmount = toBigInt(BALANCE.solarFarmPanelsPerFarm);
-      const unitsInstalled = state.locationResources.moon.installedSolarPanels / farmAmount;
-      const unitsInstalledNum = Number(unitsInstalled);
-      const laborPerFarm = BALANCE.moonSolarFarmLaborCost;
-      const moonSolarFarmLimit = BALANCE.solarFarmLimit;
-      const canBuyMoonSolarFarm = (amt: number) => {
-        const amount = toBigInt(amt);
-        const amountUnits = BigInt(amt);
-        const panels = mulB(amount, farmAmount);
-        const labor = mulB(amount, laborPerFarm);
-        return state.locationResources.moon.solarPanels >= panels
-          && state.locationResources.moon.labor >= labor
-          && unitsInstalled + amountUnits <= BigInt(moonSolarFarmLimit);
-      };
-      const moonSolarFarmLowerAmount = this.getLowestDisplayedBuyAmount(unitsInstalledNum, moonSolarFarmLimit, canBuyMoonSolarFarm);
-      const moonSolarFarmLowerAmountB = moonSolarFarmLowerAmount === null ? 0n : toBigInt(moonSolarFarmLowerAmount);
-      const moonPanelsNeed = moonSolarFarmLowerAmount === null ? 0n : mulB(moonSolarFarmLowerAmountB, farmAmount);
-      const moonLaborNeed = moonSolarFarmLowerAmount === null ? 0n : mulB(moonSolarFarmLowerAmountB, laborPerFarm);
-      const moonPanelsOk = moonSolarFarmLowerAmount === null || state.locationResources.moon.solarPanels >= moonPanelsNeed;
-      const moonLaborOk = moonSolarFarmLowerAmount === null || state.locationResources.moon.labor >= moonLaborNeed;
-      moonSolarFarmRefs.controls.setCount(unitsInstalledNum);
-      moonSolarFarmRefs.production.innerHTML = `${emojiHtml('energy')} ${formatMW(mulB(state.locationResources.moon.installedSolarPanels, toBigInt(getSolarPanelPowerMW('moon', state.completedResearch))))}`;
-      moonSolarFarmRefs.price.innerHTML = this.buildCostHtml([
-        { amount: farmAmount, emoji: 'solarPanels', insufficient: !moonPanelsOk },
-        { amount: laborPerFarm, emoji: 'labor', insufficient: !moonLaborOk },
-      ]);
-      moonSolarFarmRefs.controls.bulk.update(
-        unitsInstalledNum,
-        canBuyMoonSolarFarm,
-        moonSolarFarmLimit,
-        () => flashElement(moonSolarFarmRefs.price),
-      );
-    }
-
-    const moonDatacenterRefs = this.specialFacilityRefs.get('moonDatacenter:moon');
-    if (moonDatacenterRefs) {
-      const gpuPerDc = toBigInt(BALANCE.moonGpuDatacenterGpusPerBuild);
-      const unitsInstalled = state.locationResources.moon.installedGpus / gpuPerDc;
-      const unitsInstalledNum = Number(unitsInstalled);
-      const laborPerDc = BALANCE.moonGpuDatacenterLaborCost;
-      const moonDatacenterLimit = BALANCE.moonGpuDatacenterLimit;
-      const canBuyMoonDatacenter = (amt: number) => {
-        const amount = toBigInt(amt);
-        const amountUnits = BigInt(amt);
-        const gpus = mulB(amount, gpuPerDc);
-        const labor = mulB(amount, laborPerDc);
-        return state.locationResources.moon.gpus >= gpus
-          && state.locationResources.moon.labor >= labor
-          && unitsInstalled + amountUnits <= BigInt(moonDatacenterLimit);
-      };
-      const moonDatacenterLowerAmount = this.getLowestDisplayedBuyAmount(unitsInstalledNum, moonDatacenterLimit, canBuyMoonDatacenter);
-      const moonDatacenterLowerAmountB = moonDatacenterLowerAmount === null ? 0n : toBigInt(moonDatacenterLowerAmount);
-      const moonGpusNeed = moonDatacenterLowerAmount === null ? 0n : mulB(moonDatacenterLowerAmountB, gpuPerDc);
-      const moonDcLaborNeed = moonDatacenterLowerAmount === null ? 0n : mulB(moonDatacenterLowerAmountB, laborPerDc);
-      const moonGpusOk = moonDatacenterLowerAmount === null || state.locationResources.moon.gpus >= moonGpusNeed;
-      const moonDcLaborOk = moonDatacenterLowerAmount === null || state.locationResources.moon.labor >= moonDcLaborNeed;
-      moonDatacenterRefs.controls.setCount(unitsInstalledNum);
-      moonDatacenterRefs.production.innerHTML = `${emojiHtml('flops')} ${formatNumber(state.moonPflops)}`;
-      moonDatacenterRefs.price.innerHTML = this.buildCostHtml([
-        { amount: gpuPerDc, emoji: 'gpus', insufficient: !moonGpusOk },
-        { amount: laborPerDc, emoji: 'labor', insufficient: !moonDcLaborOk },
-      ]);
-      moonDatacenterRefs.controls.bulk.update(
-        unitsInstalledNum,
-        canBuyMoonDatacenter,
-        moonDatacenterLimit,
-        () => flashElement(moonDatacenterRefs.price),
-      );
-    }
-
-    const logisticsVisible = state.completedResearch.includes('rocketry') &&
+    const logisticsVisible = hasCompletedResearch(state.researchLevels, 'rocketry') &&
       this.logisticsRoutes.some((route) => isRouteUnlocked(state, route));
-    this.logisticsSection.style.display = logisticsVisible ? '' : 'none';
+    this.setDisplay(this.logisticsSection, logisticsVisible ? '' : 'none');
 
     if (this.orbitSatRow && this.orbitSatEl && this.orbitPowerEl) {
-      this.orbitSatRow.style.display = logisticsVisible ? '' : 'none';
-      this.orbitSatEl.innerHTML = `${resourceLabelHtml('gpuSatellites', 'GPU Sats in Orbit')}: ${formatNumber(state.satellites)}`;
-      this.orbitPowerEl.innerHTML = `${resourceLabelHtml('energy', 'Power')} ${formatMW(state.orbitalPowerMW)}`;
+      this.setDisplay(this.orbitSatRow, logisticsVisible ? '' : 'none');
+      this.setHtml(this.orbitSatEl, `${resourceLabelHtml('gpuSatellites', 'GPU Sats in Orbit')}: ${formatNumber(state.satellites)}`);
+      this.setHtml(this.orbitPowerEl, `${resourceLabelHtml('energy', 'Power')} ${formatMW(state.orbitalPowerMW)}`);
     }
 
     const routeTotals = new Map<TransportRouteId, { inTransit: bigint; queued: bigint }>();
@@ -1570,22 +1996,27 @@ export class SupplyPanel implements Panel {
         if (!refs) continue;
 
         const autoEnabled = state.logisticsAutoQueue?.[key] === true;
-        refs.autoToggle.classList.toggle('is-on', autoEnabled);
-        refs.autoToggle.setAttribute('aria-pressed', autoEnabled ? 'true' : 'false');
-        refs.autoToggle.disabled = !logisticsVisible || !routeUnlocked;
-        refs.clearBtn.disabled = !logisticsVisible || !routeUnlocked;
+        if (refs.autoToggle.classList.contains('is-on') !== autoEnabled) {
+          refs.autoToggle.classList.toggle('is-on', autoEnabled);
+        }
+        const ariaPressed = autoEnabled ? 'true' : 'false';
+        if (refs.autoToggle.getAttribute('aria-pressed') !== ariaPressed) {
+          refs.autoToggle.setAttribute('aria-pressed', ariaPressed);
+        }
+        this.setDisabled(refs.autoToggle, !logisticsVisible || !routeUnlocked);
+        this.setDisabled(refs.clearBtn, !logisticsVisible || !routeUnlocked);
 
-        refs.row.style.display = logisticsVisible && routeUnlocked ? '' : 'none';
+        this.setDisplay(refs.row, logisticsVisible && routeUnlocked ? '' : 'none');
         if (!routeUnlocked) continue;
 
         const sent = state.logisticsSent[key] || 0n;
         const inTransit = state.logisticsInTransit[key] || 0n;
         const waiting = state.logisticsOrders[key] || 0n;
-        refs.sent.textContent = formatNumber(sent);
-        refs.inTransit.textContent = formatNumber(inTransit);
-        refs.waiting.textContent = formatNumber(waiting);
-        refs.waiting.style.color = waiting > inTransit ? 'var(--accent-red)' : '';
-        refs.clearBtn.disabled = waiting <= 0n;
+        this.setText(refs.sent, formatNumber(sent));
+        this.setText(refs.inTransit, formatNumber(inTransit));
+        this.setText(refs.waiting, formatNumber(waiting));
+        this.setColor(refs.waiting, '');
+        this.setDisabled(refs.clearBtn, waiting <= 0n);
 
         const totals = routeTotals.get(route);
         if (totals) {
@@ -1614,20 +2045,23 @@ export class SupplyPanel implements Panel {
 
       const laneRefs = this.routeLanes.get(route);
       if (laneRefs) {
-        laneRefs.row.style.display = logisticsVisible && routeUnlocked ? '' : 'none';
+        this.setDisplay(laneRefs.row, logisticsVisible && routeUnlocked ? '' : 'none');
         if (!logisticsVisible || !routeUnlocked) {
-          laneRefs.lane.classList.remove('logistics-lane-congested');
-          laneRefs.lane.replaceChildren();
+          this.resetRouteLane(laneRefs);
           continue;
         }
 
         const totals = routeTotals.get(route) ?? { inTransit: 0n, queued: 0n };
-        laneRefs.lane.classList.toggle('logistics-lane-congested', totals.queued > totals.inTransit);
         const outboundCount = this.getLogisticsRocketCount(totals.inTransit);
-        const recoveryUnlocked = state.rocketLossPct < BALANCE.rocketLossNoReuse;
-        const recoveredPct = Math.max(0, 1 - state.rocketLossPct);
-        const returningCount = recoveryUnlocked ? Math.min(100, Math.floor(outboundCount * recoveredPct)) : 0;
-        this.syncLogisticsRockets(route, laneRefs.lane, outboundCount, returningCount);
+        const returningCount = this.getReturningRocketCount(outboundCount, state.rocketLossPct);
+        if (
+          laneRefs.lastOutboundCount !== outboundCount
+          || laneRefs.lastReturningCount !== returningCount
+        ) {
+          this.syncLogisticsRockets(route, laneRefs.lane, outboundCount, returningCount);
+          laneRefs.lastOutboundCount = outboundCount;
+          laneRefs.lastReturningCount = returningCount;
+        }
       }
     }
   }

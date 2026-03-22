@@ -1,21 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 386.07 387.6" width="386.07" height="387.6">
   <defs>
-    <radialGradient id="earth-ocean" cx="36%" cy="28%" r="76%">
-      <stop offset="0%" stop-color="#9bd4ff"/>
-      <stop offset="18%" stop-color="#68acef"/>
-      <stop offset="55%" stop-color="#2f73c2"/>
-      <stop offset="100%" stop-color="#0d244a"/>
-    </radialGradient>
-    <radialGradient id="earth-specular" cx="31%" cy="24%" r="34%">
-      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.62"/>
-      <stop offset="44%" stop-color="#d6eeff" stop-opacity="0.18"/>
-      <stop offset="100%" stop-color="#d6eeff" stop-opacity="0"/>
-    </radialGradient>
-    <radialGradient id="earth-shadow" cx="70%" cy="72%" r="72%">
-      <stop offset="42%" stop-color="#07152f" stop-opacity="0"/>
-      <stop offset="76%" stop-color="#061224" stop-opacity="0.3"/>
-      <stop offset="100%" stop-color="#01050d" stop-opacity="0.78"/>
-    </radialGradient>
+    <linearGradient id="earth-ocean" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#5ea4ea"/>
+      <stop offset="42%" stop-color="#3f82cf"/>
+      <stop offset="100%" stop-color="#1f4d8f"/>
+    </linearGradient>
     <linearGradient id="earth-land" x1="20%" y1="16%" x2="82%" y2="86%">
       <stop offset="0%" stop-color="#86c36d"/>
       <stop offset="32%" stop-color="#5f9d52"/>
@@ -44,9 +33,6 @@
   <circle cx="193.035" cy="193.8" r="154.43" fill="url(#earth-ocean)"/>
 
   <g clip-path="url(#earth-disc)">
-    <ellipse cx="128" cy="130" rx="108" ry="66" fill="#7dc4f6" opacity="0.1"/>
-    <ellipse cx="246" cy="244" rx="126" ry="84" fill="#0a1d3f" opacity="0.18"/>
-
     <g transform="translate(-452.68 -541.42)">
       <g transform="matrix(1.25 0 0 -1.25 145.71 1110.2)">
         <g transform="translate(487.95 212.66)">
@@ -116,8 +102,6 @@
       <ellipse cx="270" cy="248" rx="48" ry="15" fill="url(#earth-cloud)" opacity="0.26"/>
     </g>
 
-    <circle cx="193.035" cy="193.8" r="154.43" fill="url(#earth-specular)"/>
-    <circle cx="193.035" cy="193.8" r="154.43" fill="url(#earth-shadow)"/>
   </g>
 
   <circle cx="193.035" cy="193.8" r="160.2" fill="url(#earth-atmo)"/>

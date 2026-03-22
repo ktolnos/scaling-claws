@@ -11,12 +11,14 @@ export const UI_EMOJI = {
   science: '🔬',
   labor: '💪',
   energy: '⚡',
-  material: '⛏',
+  material: '⛏️',
+  mass: '⚖️',
   solarPanels: '🪟',
   robots: '🤖',
   gpus: '🧇',
   rockets: '🚀',
   gpuSatellites: '🛰️',
+  probes: '🛸',
   data: '🗂️',
   users: '👥',
   supply: '📤',
@@ -65,6 +67,7 @@ const RESOURCE_EMOJI_KEY: Record<ResourceLabelKey, UiEmojiKey> = {
   gpus: 'gpus',
   rockets: 'rockets',
   gpuSatellites: 'gpuSatellites',
+  probes: 'probes',
   energy: 'energy',
   intel: 'intel',
   efficiency: 'efficiency',
@@ -88,6 +91,7 @@ const RESOURCE_LABELS: Record<ResourceLabelKey, string> = {
   gpus: 'GPUs',
   rockets: 'Rockets',
   gpuSatellites: 'GPU Satellites',
+  probes: 'Probes',
   energy: 'Energy',
   intel: 'Intel',
   efficiency: 'Efficiency',
@@ -117,8 +121,12 @@ export function emojiHtml(key: UiEmojiKey): string {
   return `<span class="emoji-token">${UI_EMOJI[key]}</span>`;
 }
 
+function labelEmojiHtml(key: UiEmojiKey): string {
+  return `<span class="emoji-token emoji-token-label">${UI_EMOJI[key]}</span>`;
+}
+
 function labelWithEmojiHtml(key: UiEmojiKey, label: string): string {
-  return `${emojiHtml(key)} ${label}`;
+  return `${labelEmojiHtml(key)} ${label}`;
 }
 
 export function resourceLabelHtml(resource: ResourceLabelKey, overrideLabel?: string): string {

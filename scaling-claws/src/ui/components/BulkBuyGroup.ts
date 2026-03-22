@@ -99,10 +99,21 @@ export class BulkBuyGroup {
     for (let i = 0; i < integerDisplayTiers.length; i++) {
       const amount = integerDisplayTiers[i];
       const enabled = canAct(amount);
-      this.buttons[i].textContent = this.prefix + formatNumber(amount);
-      this.buttons[i].disabled = false;
-      this.buttons[i].classList.toggle('bulk-buy-disabled', !enabled);
-      this.buttons[i].setAttribute('aria-disabled', enabled ? 'false' : 'true');
+      const button = this.buttons[i];
+      const label = this.prefix + formatNumber(amount);
+      if (button.textContent !== label) {
+        button.textContent = label;
+      }
+      if (button.disabled) {
+        button.disabled = false;
+      }
+      if (button.classList.contains('bulk-buy-disabled') === enabled) {
+        button.classList.toggle('bulk-buy-disabled', !enabled);
+      }
+      const ariaDisabled = enabled ? 'false' : 'true';
+      if (button.getAttribute('aria-disabled') !== ariaDisabled) {
+        button.setAttribute('aria-disabled', ariaDisabled);
+      }
     }
   }
 

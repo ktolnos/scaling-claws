@@ -1,4 +1,5 @@
 import type { GameState } from '../../game/GameState.ts';
+import { getCompletedResearchCount } from '../../game/BalanceConfig.ts';
 import { VisualClock } from './VisualClock.ts';
 import type { VisualScene } from './VisualScene.ts';
 import { DatacenterScene } from './DatacenterScene.ts';
@@ -34,6 +35,7 @@ interface VisualSceneEntry {
   id: string;
   label: string;
   scene: VisualScene;
+  visible: boolean;
   fps: number;
   renderMs: number;
   drawCalls: number;
@@ -41,6 +43,64 @@ interface VisualSceneEntry {
   renderTimeTotalMs: number;
   drawCallCountTotal: number;
   windowStartMs: number;
+}
+
+function hasAnyLocationResources(
+  resources: GameState['locationResources']['earth'],
+): boolean {
+  return resources.material > 0n
+    || resources.solarPanels > 0n
+    || resources.robots > 0n
+    || resources.gpus > 0n
+    || resources.rockets > 0n
+    || resources.gpuSatellites > 0n
+    || resources.labor > 0n
+    || resources.probes > 0n
+    || resources.installedGpus > 0n
+    || resources.installedSolarPanels > 0n;
+}
+
+function hasAnyLocationFacilities(
+  facilities: GameState['locationFacilities']['earth'],
+): boolean {
+  return Object.values(facilities).some((count) => count > 0n);
+}
+
+function hasEarthSurfaceUnlock(state: GameState): boolean {
+  return state.datacenters.some((count) => count > 0n)
+    || state.gasPlants > 0n
+    || state.nuclearPlants > 0n
+    || state.locationResources.earth.installedSolarPanels > 0n
+    || hasAnyLocationFacilities(state.locationFacilities.earth);
+}
+
+function hasNearEarthSpaceUnlock(state: GameState): boolean {
+  const earthLaunchCount = state.earthLaunchCount ?? 0n;
+  const earthOrbitLaunchCount = state.earthOrbitLaunchCount ?? 0n;
+  const earthMoonLaunchCount = state.earthMoonLaunchCount ?? 0n;
+  return earthLaunchCount > 0n
+    || earthOrbitLaunchCount > 0n
+    || earthMoonLaunchCount > 0n
+    || state.satellites > 0n
+    || state.transportBatches.some((batch) => batch.route === 'earthOrbit' || batch.route === 'earthMoon')
+    || hasAnyLocationResources(state.locationResources.moon);
+}
+
+function hasMoonSurfaceUnlock(state: GameState): boolean {
+  const earthMoonLaunchCount = state.earthMoonLaunchCount ?? 0n;
+  return earthMoonLaunchCount > 0n
+    || state.transportBatches.some((batch) => batch.route === 'earthMoon')
+    || hasAnyLocationResources(state.locationResources.moon)
+    || hasAnyLocationFacilities(state.locationFacilities.moon);
+}
+
+function hasMercuryDysonUnlock(state: GameState): boolean {
+  const moonMercuryLaunchCount = state.moonMercuryLaunchCount ?? 0n;
+  return moonMercuryLaunchCount > 0n
+    || state.transportBatches.some((batch) => batch.route === 'moonMercury')
+    || hasAnyLocationResources(state.locationResources.mercury)
+    || hasAnyLocationFacilities(state.locationFacilities.mercury)
+    || state.dysonSwarmSatellites > 0n;
 }
 
 function mixSeed(seed: number, value: number): number {
@@ -64,7 +124,7 @@ function mixSeedBigInt(seed: number, value: bigint): number {
 function deriveVisualSeed(state: GameState): number {
   let seed = 0x4f3cc25d;
   seed = mixSeed(seed, state.tickCount);
-  seed = mixSeed(seed, state.completedResearch.length);
+  seed = mixSeed(seed, getCompletedResearchCount(state.researchLevels));
   seed = mixSeed(seed, state.unlockedJobs.length);
   seed = mixSeedBigInt(seed, state.totalEarned);
   seed = mixSeedBigInt(seed, state.locationResources.earth.gpus);
@@ -133,6 +193,7 @@ export class VisualDirector {
         id: 'nearEarthSpace',
         label: 'Near-Earth Space',
         scene: nearEarthSpaceScene,
+        visible: true,
         fps: 0,
         renderMs: 0,
         drawCalls: 0,
@@ -145,6 +206,7 @@ export class VisualDirector {
         id: 'earthSurface',
         label: 'Earth Surface',
         scene: earthSurfaceScene,
+        visible: true,
         fps: 0,
         renderMs: 0,
         drawCalls: 0,
@@ -157,6 +219,7 @@ export class VisualDirector {
         id: 'datacenter',
         label: 'Datacenter',
         scene: datacenterScene,
+        visible: true,
         fps: 0,
         renderMs: 0,
         drawCalls: 0,
@@ -168,16 +231,23 @@ export class VisualDirector {
     ];
 
     this.clock = new VisualClock({
-      fixedStepMs: 1000 / 30,
+      fixedStepMs: 1000 / 60,
+      renderStepMs: 1000 / 60,
       maxCatchUpSteps: 6,
       onSimulate: (dtMs: number) => {
         for (const entry of this.scenes) {
+          if (!entry.visible) {
+            continue;
+          }
           entry.scene.simulate(dtMs);
         }
       },
       onRender: () => {
         const nowMs = performance.now();
         for (const entry of this.scenes) {
+          if (!entry.visible) {
+            continue;
+          }
           const renderStartMs = performance.now();
           entry.scene.render();
           const renderDurationMs = performance.now() - renderStartMs;
@@ -199,6 +269,8 @@ export class VisualDirector {
         }
       },
     });
+
+    this.syncProgressVisibility(initialState);
   }
 
   start(): void {
@@ -210,9 +282,17 @@ export class VisualDirector {
   }
 
   sample(state: GameState): void {
+    this.syncProgressVisibility(state);
     for (const entry of this.scenes) {
       entry.scene.sample(state);
     }
+  }
+
+  private syncProgressVisibility(state: GameState): void {
+    this.setPlaceholderVisible('earthSurface', hasEarthSurfaceUnlock(state));
+    this.setPlaceholderVisible('nearEarthSpace', hasNearEarthSpaceUnlock(state));
+    this.setPlaceholderVisible('moonSurface', hasMoonSurfaceUnlock(state));
+    this.setPlaceholderVisible('mercuryDyson', hasMercuryDysonUnlock(state));
   }
 
   getPanelPerfStats(): ReadonlyArray<VisualPanelPerfStat> {
@@ -232,6 +312,20 @@ export class VisualDirector {
       return;
     }
     slot.classList.toggle('is-hidden', !visible);
+    const sceneEntry = this.scenes.find(entry => entry.id === id);
+    if (sceneEntry) {
+      sceneEntry.visible = visible;
+      sceneEntry.scene.setVisible(visible);
+      if (!visible) {
+        sceneEntry.frameCount = 0;
+        sceneEntry.renderTimeTotalMs = 0;
+        sceneEntry.drawCallCountTotal = 0;
+        sceneEntry.fps = 0;
+        sceneEntry.renderMs = 0;
+        sceneEntry.drawCalls = 0;
+        sceneEntry.windowStartMs = performance.now();
+      }
+    }
   }
 
   getPlaceholderStates(): ReadonlyArray<VisualPlaceholderState> {
