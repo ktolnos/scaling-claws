@@ -9,3 +9,8 @@ export function setHintTarget<T extends HTMLElement>(el: T, hintId: string): T {
   el.classList.add('hint-target');
   return el;
 }
+
+export function wrapHintTargetHtml(contentHtml: string, hintId: string, className = ''): string {
+  const classes = className ? `${className} hint-target` : 'hint-target';
+  return `<span class="${classes}" data-hint-id="${hintId}">${contentHtml}</span>`;
+}

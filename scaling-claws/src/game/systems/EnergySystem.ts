@@ -13,6 +13,14 @@ function spendEarthLabor(state: GameState, amount: bigint): void {
 export function tickEnergy(state: GameState): void {
   if (!state.isPostGpuTransition) return;
 
+  if (!state.datacenters.some((count) => count > 0n)) {
+    const baselineHomePowerMW = mulB(BALANCE.datacenterThreshold * 2n, toBigInt(BALANCE.gpuPowerMW));
+    const baselineHomePowerKW = toBigInt(Math.max(0, Math.ceil(fromBigInt(baselineHomePowerMW) * 1000)));
+    if (state.gridPowerKW < baselineHomePowerKW) {
+      state.gridPowerKW = baselineHomePowerKW;
+    }
+  }
+
   // Earth demand from installed GPUs
   state.powerDemandMW = mulB(state.installedGpuCount, toBigInt(BALANCE.gpuPowerMW));
 

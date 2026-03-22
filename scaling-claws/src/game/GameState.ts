@@ -160,6 +160,7 @@ export interface GameState {
   mercuryPflops: bigint;       // computed
   orbitalPflops: bigint;       // computed
   currentModelIndex: number;   // index into BALANCE.models
+  agentsPerGpu: bigint;        // computed research-adjusted density
   freeCompute: bigint;         // computed
   isPostGpuTransition: boolean;
 
@@ -471,6 +472,7 @@ export function createInitialState(): GameState {
     mercuryPflops: 0n,
     orbitalPflops: 0n,
     currentModelIndex: 0,
+    agentsPerGpu: BALANCE.baseAgentsPerGpu,
     freeCompute: 0n,
     isPostGpuTransition: false,
 

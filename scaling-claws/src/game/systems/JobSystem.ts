@@ -152,25 +152,6 @@ export function tickJobs(state: GameState, dtMs: number): void {
   for (const jobType of JOB_ORDER) {
     const jobConfig = BALANCE.jobs[jobType];
 
-    const isObsolete = jobConfig.obsoleteAtIntel !== undefined && intel >= jobConfig.obsoleteAtIntel;
-
-    if (isObsolete) {
-      if (!state.automatedJobs.includes(jobType)) {
-        state.automatedJobs.push(jobType);
-        // UNASSIGN ALL
-        if (jobConfig.workerType === 'ai') {
-          removeAllFromJob(state, jobType);
-        } else {
-          // Fire all human workers for this job
-          const humanPool = state.humanPools[jobType];
-          if (humanPool && humanPool.totalCount > 0n) {
-            fireHumanWorkers(state, jobType, Number(humanPool.totalCount));
-          }
-        }
-      }
-      continue; // Obsolete jobs are not unlocked for manual assignment
-    }
-
     let visible = intel >= jobConfig.unlockAtIntel;
     if (visible && jobConfig.agentResearchReq && jobConfig.agentResearchReq.length > 0) {
       visible = jobConfig.agentResearchReq.every((id) => hasCompletedResearch(state.researchLevels, id));
@@ -526,32 +507,6 @@ function canAssignAiAgent(state: GameState, jobType: JobType): boolean {
     }
   }
   return true;
-}
-
-function removeAllFromJob(state: GameState, sourceJob: JobType): void {
-  const targetPool = state.agentPools[sourceJob];
-  const unassignedPool = state.agentPools['unassigned'];
-  const count = targetPool.totalCount;
-
-  if (count === 0n) return;
-
-  // Bulk transfer (O(1))
-  unassignedPool.totalCount += count;
-  targetPool.totalCount = 0n;
-
-  // Transfer idle count
-  unassignedPool.idleCount += targetPool.idleCount;
-  targetPool.idleCount = 0n;
-
-  // Reset stuck count and aggregate progress
-  targetPool.stuckCount = 0n;
-  targetPool.aggregateProgress = 0n;
-
-  // Reset samples
-  for (let i = 0; i < 4; i++) {
-    targetPool.samples.progress[i] = 0;
-    targetPool.samples.stuck[i] = false;
-  }
 }
 
 /** Assign N unassigned AI agents to a job (for bulk buy). */

@@ -15,7 +15,7 @@ import { BulkBuyGroup, getVisibleBuyTiers } from '../components/BulkBuyGroup.ts'
 import { createPanelScaffold } from '../components/PanelScaffold.ts';
 import { emojiHtml, locationLabelHtml, resourceLabelHtml, UI_EMOJI } from '../emoji.ts';
 import type { UiEmojiKey } from '../emoji.ts';
-import { setHintTarget } from '../hints/HintUtils.ts';
+import { setHintTarget, wrapHintTargetHtml } from '../hints/HintUtils.ts';
 import { flashElement } from '../UIUtils.ts';
 import type { Panel } from '../PanelManager.ts';
 import { getFacilityCardIconSvg } from './facilityCardIcons.ts';
@@ -108,6 +108,11 @@ const PANEL_ORBIT_ROUTE_DURATION_MS = 1000;
 const PANEL_MOON_ROUTE_DURATION_MS = 3000;
 
 type FacilityPriceEmoji = 'money' | 'labor' | 'material' | 'solarPanels' | 'gpus';
+
+function getCostHintId(emoji: FacilityPriceEmoji): string | null {
+  if (emoji === 'labor') return 'resource.labor';
+  return null;
+}
 
 function getFacilitiesForLocation(location: LocationId): FacilityDef[] {
   if (location === 'earth') {
@@ -341,7 +346,9 @@ export class SupplyPanel implements Panel {
     for (const part of parts) {
       if (part.amount <= 0n) continue;
       const color = part.insufficient ? 'var(--accent-red)' : 'var(--text-muted)';
-      const piece = `<span style="color:${color}">${formatNumber(part.amount)} ${emojiHtml(part.emoji)}</span>`;
+      const content = `<span style="color:${color}">${formatNumber(part.amount)} ${emojiHtml(part.emoji)}</span>`;
+      const hintId = getCostHintId(part.emoji);
+      const piece = hintId ? wrapHintTargetHtml(content, hintId) : content;
       rendered = rendered ? `${rendered} + ${piece}` : piece;
     }
     return rendered || '&nbsp;';
@@ -434,7 +441,7 @@ export class SupplyPanel implements Panel {
   }
 
   private getReturningRocketCount(outboundCount: number, rocketLossPct: number): number {
-    if (outboundCount <= 0 || rocketLossPct >= BALANCE.rocketLossNoReuse) {
+    if (outboundCount <= 0 || rocketLossPct >= 1) {
       return 0;
     }
     return Math.min(

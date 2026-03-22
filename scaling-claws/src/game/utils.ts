@@ -98,6 +98,50 @@ export function formatNumber(n: number | bigint): string {
   return (Math.round(scaled * 10) / 10).toString() + SUFFIXES[tier];
 }
 
+export function formatNumberOneDecimal(n: number | bigint): string {
+  let val: number;
+  if (typeof n === 'bigint') {
+    val = fromBigInt(n);
+  } else {
+    val = n;
+  }
+
+  if (val < 0) return '-' + formatNumberOneDecimal(-val);
+  if (val < 1000) {
+    const rounded = Math.round(val * 10) / 10;
+    if (rounded !== 0) {
+      if (rounded < 1000) return rounded.toFixed(1);
+    }
+    if (val === 0) return '0.0';
+
+    // Preserve tiny non-zero values that would otherwise round to 0.0.
+    for (let decimals = 2; decimals <= 12; decimals++) {
+      const factor = 10 ** decimals;
+      const precise = Math.round(val * factor) / factor;
+      if (precise !== 0) {
+        return precise
+          .toFixed(decimals)
+          .replace(/(\.\d*?[1-9])0+$/, '$1')
+          .replace(/\.0+$/, '');
+      }
+    }
+    return val.toExponential(2);
+  }
+
+  let tier = 0;
+  let scaled = val;
+  while (scaled >= 1000 && tier < SUFFIXES.length - 1) {
+    scaled /= 1000;
+    tier++;
+  }
+
+  if (tier >= SUFFIXES.length) {
+    return val.toExponential(1);
+  }
+
+  return (Math.round(scaled * 10) / 10).toFixed(1) + SUFFIXES[tier];
+}
+
 export function formatMoney(n: number | bigint): string {
   // Money is always scaled
   const val = typeof n === 'bigint' ? fromBigInt(n) : n;
@@ -118,13 +162,13 @@ export function formatMW(mw: number | bigint): string {
     scaled /= 1000;
     unitIdx++;
   }
-  return (Math.round(scaled * 10) / 10).toString() + ' ' + units[unitIdx];
+  return formatNumberOneDecimal(scaled) + ' ' + units[unitIdx];
 }
 
 export function formatFlops(flops: number | bigint): string {
   // Flops is always scaled
   const val = typeof flops === 'bigint' ? fromBigInt(flops) : flops;
-  if (val < 1e3) return (Math.round(val * 10) / 10).toString() + ' PFLOPS';
-  if (val < 1e6) return (Math.round((val / 1e3) * 10) / 10).toString() + ' EFLOPS';
-  return (Math.round((val / 1e6) * 10) / 10).toString() + ' ZFLOPS';
+  if (val < 1e3) return formatNumberOneDecimal(val) + ' PFLOPS';
+  if (val < 1e6) return formatNumberOneDecimal(val / 1e3) + ' EFLOPS';
+  return formatNumberOneDecimal(val / 1e6) + ' ZFLOPS';
 }

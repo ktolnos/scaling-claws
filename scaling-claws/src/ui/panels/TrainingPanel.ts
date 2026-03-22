@@ -1,14 +1,17 @@
 import type { GameState } from '../../game/GameState.ts';
 import type { Panel } from '../PanelManager.ts';
-import { BALANCE, getResearchCurrentLevel, getResearchMaxLevel } from '../../game/BalanceConfig.ts';
-import type { ResearchId } from '../../game/BalanceConfig.ts';
-import { formatNumber } from '../../game/utils.ts';
+import {
+  BALANCE,
+  getFacilityProductionMultiplier,
+  getJobProductionMultiplier,
+} from '../../game/BalanceConfig.ts';
+import type { ResearchConfig, ResearchId } from '../../game/BalanceConfig.ts';
+import { divB, formatNumber, formatNumberOneDecimal, mulB, toBigInt } from '../../game/utils.ts';
 import { dispatchGameAction } from '../../game/ActionDispatcher.ts';
 import {
   getAvailableResearch,
   canPurchaseResearch,
   getResearchCurrentCost,
-  getResearchQuantityPreview,
 } from '../../game/systems/ResearchSystem.ts';
 import { createPanelScaffold } from '../components/PanelScaffold.ts';
 import { emojiHtml } from '../emoji.ts';
@@ -18,6 +21,7 @@ import { flashElement } from '../UIUtils.ts';
 
 const RESEARCH_ICON_BY_ID: Record<ResearchId, UiEmojiKey> = {
   algoEfficiency1: 'flops',
+  agentMultiplexing1: 'gpus',
   algoEfficiency2: 'flops',
   algoEfficiency3: 'flops',
   algoEfficiency4: 'flops',
@@ -33,6 +37,7 @@ const RESEARCH_ICON_BY_ID: Record<ResearchId, UiEmojiKey> = {
   gpuArch3: 'gpus',
   solarTechnology: 'solarPanels',
   chipManufacturing: 'gpus',
+  codeProductivity1: 'code',
   robotics1: 'robots',
   robotFactoryEngineering1: 'robots',
   moonRobotics: 'moon',
@@ -43,6 +48,7 @@ const RESEARCH_ICON_BY_ID: Record<ResearchId, UiEmojiKey> = {
   moonMineEngineering: 'moon',
   moonChipManufacturing: 'moon',
   moonMassDrivers: 'moon',
+  researchProductivity1: 'science',
   reusableRockets1: 'rockets',
   reusableRockets2: 'rockets',
   reusableRockets3: 'rockets',
@@ -65,6 +71,7 @@ export class TrainingPanel implements Panel {
   private researchRows: Map<ResearchId, {
     row: HTMLDivElement;
     btn: HTMLButtonElement;
+    titleEl: HTMLSpanElement;
     descEl: HTMLDivElement;
     metricEl: HTMLDivElement;
     costAmountEl: HTMLSpanElement;
@@ -96,6 +103,7 @@ export class TrainingPanel implements Panel {
     this.researchSection.appendChild(title);
 
     this.researchListEl = document.createElement('div');
+    this.researchListEl.className = 'research-card-list';
     this.researchSection.appendChild(this.researchListEl);
 
     body.appendChild(this.researchSection);
@@ -110,7 +118,7 @@ export class TrainingPanel implements Panel {
     if (state.intelligence < BALANCE.researchUnlockIntel) {
       this.researchSection.classList.add('hidden');
       this.unlockHintEl.style.display = '';
-      this.unlockHintEl.textContent = `Research unlocks at Intelligence ${(Math.round(BALANCE.researchUnlockIntel * 10) / 10).toString()}`;
+      this.unlockHintEl.textContent = `Research unlocks at Intelligence ${formatNumberOneDecimal(BALANCE.researchUnlockIntel)}`;
       return;
     }
 
@@ -118,13 +126,7 @@ export class TrainingPanel implements Panel {
     this.unlockHintEl.style.display = 'none';
 
     const available = getAvailableResearch(state)
-      .sort((a, b) => {
-        const costA = getResearchCurrentCost(state, a.id);
-        const costB = getResearchCurrentCost(state, b.id);
-        if (costA < costB) return -1;
-        if (costA > costB) return 1;
-        return a.name.localeCompare(b.name);
-      })
+      .sort((a, b) => a.minLevel - b.minLevel)
       .slice(0, 9);
     const availableIds = new Set(available.map((r) => r.id));
 
@@ -139,57 +141,55 @@ export class TrainingPanel implements Panel {
       let refs = this.researchRows.get(r.id);
       if (!refs) {
         const row = document.createElement('div');
-        row.className = 'panel-row';
-        row.style.fontSize = '0.82rem';
-        row.style.padding = '3px 0';
-        row.style.alignItems = 'flex-start';
+        row.className = 'research-card';
+
+        const header = document.createElement('div');
+        header.className = 'research-card-header';
+
+        const iconWrap = document.createElement('div');
+        iconWrap.className = 'research-card-icon';
+        const iconEl = document.createElement('span');
+        iconEl.innerHTML = emojiHtml(RESEARCH_ICON_BY_ID[r.id]);
+        iconEl.setAttribute('aria-hidden', 'true');
+        iconWrap.appendChild(iconEl);
+        header.appendChild(iconWrap);
 
         const info = document.createElement('div');
-        info.className = 'label';
-        info.style.display = 'flex';
-        info.style.flexDirection = 'column';
-        info.style.gap = '1px';
-        info.style.flex = '1';
-        info.style.minWidth = '0';
+        info.className = 'research-card-info';
         if (r.id.startsWith('algoEfficiency')) {
           setHintTarget(info, 'research.algoEfficiency');
         }
 
         const nameEl = document.createElement('strong');
-        nameEl.style.display = 'inline-flex';
-        nameEl.style.alignItems = 'center';
-        nameEl.style.gap = '6px';
-        nameEl.style.lineHeight = '1.2';
-        const iconEl = document.createElement('span');
-        iconEl.innerHTML = emojiHtml(RESEARCH_ICON_BY_ID[r.id]);
-        iconEl.setAttribute('aria-hidden', 'true');
+        nameEl.className = 'research-card-title';
         const nameTextEl = document.createElement('span');
-        nameTextEl.textContent = r.name;
-        nameEl.appendChild(iconEl);
         nameEl.appendChild(nameTextEl);
 
         const descEl = document.createElement('div');
-        descEl.style.fontSize = '0.72rem';
-        descEl.style.color = 'var(--text-secondary)';
-        descEl.style.lineHeight = '1.25';
+        descEl.className = 'research-card-desc';
         descEl.textContent = r.description;
         const metricEl = document.createElement('div');
-        metricEl.style.fontSize = '0.7rem';
-        metricEl.style.color = 'var(--text-muted)';
-        metricEl.style.lineHeight = '1.2';
-        metricEl.style.marginTop = '2px';
+        metricEl.className = 'research-card-meta';
         info.appendChild(nameEl);
         info.appendChild(descEl);
         info.appendChild(metricEl);
-        row.appendChild(info);
+        header.appendChild(info);
+        row.appendChild(header);
+
+        const footer = document.createElement('div');
+        footer.className = 'research-card-footer';
 
         const btn = document.createElement('button');
         btn.type = 'button';
-        btn.style.fontSize = '0.72rem';
-        btn.style.width = '132px';
-        btn.style.flex = '0 0 132px';
-        btn.style.textAlign = 'center';
-        btn.style.whiteSpace = 'nowrap';
+        btn.className = 'btn-primary research-card-btn';
+        btn.addEventListener('click', () => {
+          const actionResult = dispatchGameAction(this.state, { type: 'purchaseResearch', id: r.id });
+          if (!actionResult.ok) {
+            flashElement(btn);
+            return;
+          }
+          this.update(this.state);
+        });
         const costAmountEl = document.createElement('span');
         const costIconEl = document.createElement('span');
         const costLabelEl = document.createElement('span');
@@ -198,48 +198,121 @@ export class TrainingPanel implements Panel {
         btn.appendChild(costIconEl);
         btn.appendChild(document.createTextNode(' '));
         btn.appendChild(costLabelEl);
-        row.appendChild(btn);
+        footer.appendChild(btn);
+        row.appendChild(footer);
 
         this.researchListEl.appendChild(row);
-        refs = { row, btn, descEl, metricEl, costAmountEl, costIconEl, costLabelEl };
+        refs = { row, btn, titleEl: nameTextEl, descEl, metricEl, costAmountEl, costIconEl, costLabelEl };
         this.researchRows.set(r.id, refs);
       }
 
-      refs.descEl.textContent = r.description;
-      const quantityPreview = getResearchQuantityPreview(state, r.id);
-      const currentLevel = getResearchCurrentLevel(state.researchLevels, r.id);
-      const maxLevel = getResearchMaxLevel(r);
-      const nextLevel = Math.min(currentLevel + 1, maxLevel);
-      const levelText = Number.isFinite(maxLevel)
-        ? `Lv ${currentLevel} -> ${nextLevel}/${maxLevel}`
-        : `Lv ${currentLevel} -> ${currentLevel + 1}`;
-      if (quantityPreview) {
-        refs.metricEl.style.display = '';
-        refs.metricEl.innerHTML =
-          `${levelText} | ${quantityPreview.label}: ` +
-          `${emojiHtml(quantityPreview.emoji)} ${formatNumber(quantityPreview.current)}${quantityPreview.unit} ` +
-          `-> ${emojiHtml(quantityPreview.emoji)} ${formatNumber(quantityPreview.next)}${quantityPreview.unit}`;
-      } else {
-        refs.metricEl.style.display = '';
-        refs.metricEl.textContent = levelText;
-      }
+      const titleText = this.getResearchDisplayTitle(r);
+      if (refs.titleEl.textContent !== titleText) refs.titleEl.textContent = titleText;
+
+      if (refs.descEl.textContent !== r.description) refs.descEl.textContent = r.description;
+
+      const previewHtml = this.getResearchEffectPreviewHtml(state, r.id);
+      const metricDisplay = previewHtml ? '' : 'none';
+      if (refs.metricEl.style.display !== metricDisplay) refs.metricEl.style.display = metricDisplay;
+      if (refs.metricEl.innerHTML !== previewHtml) refs.metricEl.innerHTML = previewHtml;
 
       const currentCost = getResearchCurrentCost(state, r.id);
       const costResource = r.costResource ?? 'science';
       const costLabel = costResource === 'code' ? 'Code' : 'Science';
-      refs.costAmountEl.textContent = formatNumber(currentCost);
-      refs.costIconEl.innerHTML = emojiHtml(costResource);
-      refs.costLabelEl.textContent = costLabel;
-      const rowBtn = refs.btn;
-      refs.btn.onclick = () => {
-        const actionResult = dispatchGameAction(this.state, { type: 'purchaseResearch', id: r.id });
-        if (!actionResult.ok) {
-          flashElement(rowBtn);
-          return;
-        }
-        this.updateResearch(this.state);
-      };
-      refs.btn.disabled = !canPurchaseResearch(state, r.id);
+      const costAmount = formatNumber(currentCost);
+      if (refs.costAmountEl.textContent !== costAmount) refs.costAmountEl.textContent = costAmount;
+      const costIcon = emojiHtml(costResource);
+      if (refs.costIconEl.innerHTML !== costIcon) refs.costIconEl.innerHTML = costIcon;
+      if (refs.costLabelEl.textContent !== costLabel) refs.costLabelEl.textContent = costLabel;
+      const disabled = !canPurchaseResearch(state, r.id);
+      if (refs.btn.disabled !== disabled) refs.btn.disabled = disabled;
+    }
+  }
+
+  private getResearchDisplayTitle(research: ResearchConfig): string {
+    if (
+      research.quantityBase === undefined &&
+      research.quantityLabel === undefined &&
+      research.quantityEmoji === undefined &&
+      research.quantityUnit === undefined
+    ) {
+      return research.name;
+    }
+
+    const deltaPct = this.getResearchDeltaPercent(research.quantityMultiplierPerLevel);
+    if (deltaPct === 0) return research.name;
+    return `${research.name} ${deltaPct > 0 ? '+' : ''}${this.formatSignedPercent(deltaPct)}`;
+  }
+
+  private getResearchDeltaPercent(multiplier: number): number {
+    return Math.round((multiplier - 1) * 1000) / 10;
+  }
+
+  private formatSignedPercent(value: number): string {
+    return `${Number.isInteger(value) ? value.toFixed(0) : value.toFixed(1)}%`;
+  }
+
+  private formatPercentValue(value: number): string {
+    const pct = value * 100;
+    return `${Number.isInteger(pct) ? pct.toFixed(0) : pct.toFixed(1)}%`;
+  }
+
+  private getDataUnitForValue(valueGb: bigint): 'MB' | 'GB' | 'TB' {
+    if (valueGb < toBigInt(1)) return 'MB';
+    if (valueGb >= toBigInt(1000)) return 'TB';
+    return 'GB';
+  }
+
+  private toDataUnitFromGb(valueGb: bigint, unit: 'MB' | 'GB' | 'TB'): bigint {
+    if (unit === 'MB') return mulB(valueGb, toBigInt(1000));
+    if (unit === 'TB') return divB(valueGb, toBigInt(1000));
+    return valueGb;
+  }
+
+  private getResearchEffectPreviewHtml(state: GameState, id: ResearchId): string {
+    const research = BALANCE.research.find((entry) => entry.id === id);
+    if (!research?.effect) return '';
+
+    const multiplier = research.quantityMultiplierPerLevel;
+    const route = ` ${emojiHtml('route')} `;
+    switch (research.effect.type) {
+      case 'algoEfficiency': {
+        const current = state.algoEfficiencyBonus;
+        return `${this.formatPercentValue(current)}${route}${this.formatPercentValue(current * multiplier)}`;
+      }
+      case 'agentsPerGpu': {
+        const current = state.agentsPerGpu;
+        const next = current * BigInt(Math.round(multiplier));
+        return `${formatNumber(current)} agents/GPU${route}${formatNumber(next)} agents/GPU`;
+      }
+      case 'apiUserSynthRate': {
+        const current = state.apiUserSynthRate;
+        const next = current * BigInt(Math.round(multiplier));
+        const unit = this.getDataUnitForValue(next > current ? next : current);
+        const currentDisplay = this.toDataUnitFromGb(current, unit);
+        const nextDisplay = this.toDataUnitFromGb(next, unit);
+        return `${formatNumberOneDecimal(currentDisplay)} ${unit}/user/m${route}${formatNumberOneDecimal(nextDisplay)} ${unit}/user/m`;
+      }
+      case 'gpuFlops': {
+        const current = state.gpuFlopsBonus;
+        return `${this.formatPercentValue(current)}${route}${this.formatPercentValue(current * multiplier)}`;
+      }
+      case 'rocketLoss': {
+        const current = state.rocketLossPct;
+        return `${this.formatPercentValue(current)}${route}${this.formatPercentValue(current * multiplier)}`;
+      }
+      case 'jobProduction': {
+        const sampleJob = research.effect.jobs[0];
+        const current = getJobProductionMultiplier(state.researchLevels, sampleJob);
+        return `${this.formatPercentValue(current)}${route}${this.formatPercentValue(current * multiplier)}`;
+      }
+      case 'facilityProduction': {
+        const sampleFacility = research.effect.facilities[0];
+        const current = getFacilityProductionMultiplier(state.researchLevels, sampleFacility);
+        return `${this.formatPercentValue(current)}${route}${this.formatPercentValue(current * multiplier)}`;
+      }
+      default:
+        return '';
     }
   }
 }

@@ -92,18 +92,19 @@ button:active:not(:disabled) {
 
 button:disabled {
   opacity: 0.5;
-  cursor: not-allowed;
+  cursor: default;
 }
 
 button.btn-primary {
-  background: var(--accent-green);
-  color: #0a0a14;
-  border-color: var(--accent-green);
+  background: rgba(18, 24, 40, 0.9);
+  color: var(--text-primary);
+  border-color: rgba(78, 204, 163, 0.75);
   font-weight: 600;
 }
 
 button.btn-primary:hover:not(:disabled) {
-  background: #5fe0b4;
+  background: rgba(24, 34, 54, 0.96);
+  border-color: var(--accent-green);
 }
 
 button.btn-danger {

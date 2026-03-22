@@ -682,9 +682,7 @@ export class DevOverlay {
       }
 
       if (state.intelligence >= BALANCE.selfHostedUnlockIntel) {
-        const minGpus = BALANCE.models[0].minGpus;
-        const gpuCount = minGpus > state.totalAgents ? minGpus : state.totalAgents;
-        const selfHostedCost = mulB(gpuCount, state.gpuMarketPrice);
+        const selfHostedCost = mulB(BALANCE.selfHostedGpuCount, BALANCE.gpuFixedPrice);
         if (state.funds >= selfHostedCost) {
           actions.push({ type: 'goSelfHosted' });
         }

@@ -302,7 +302,7 @@ export class DatacenterScene implements VisualScene {
 
   sample(state: GameState): void {
     this.sampledPostGpu = state.isPostGpuTransition;
-    this.sampledMicMinis = toWholeCount(state.micMiniCount);
+    this.sampledMicMinis = Math.min(toWholeCount(state.micMiniCount), 8);
     this.sampledGpus = toWholeCount(state.locationResources.earth.gpus);
     this.sampledTotalRacks = this.sampledGpus <= 0 ? 0 : Math.ceil(this.sampledGpus / GPUS_PER_RACK);
 

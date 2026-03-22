@@ -1,4 +1,5 @@
 import { BALANCE } from './Config.ts';
+import { RESEARCH_PRICE_EXPONENT_BY_RESOURCE } from './ResearchConfigs.ts';
 import { ResearchIds, TIER_ORDER } from './Types.ts';
 import type {
   FacilityProductionId,
@@ -66,16 +67,17 @@ export function getApiDemand(
   price: number,
 ): number {
   const API_BASE_AWARENESS = 200_000;
-  const API_AWARENESS_ELASTICITY = 0.9;
+  const API_BASELINE_AWARENESS_DEMAND = Math.pow(API_BASE_AWARENESS, 0.9);
   const INTELLIGENCE_ELASTICITY = 3.0;
   const API_PRICE_ELASTICITY = 3.0;
   const API_DEMAND_SCALE = 3000;
 
-  const effectiveAwareness = Math.max(0, API_BASE_AWARENESS + awareness);
+  const awarenessMultiplier = getApiAwarenessDemandMultiplier(awareness);
   const safeIntelligence = Math.max(0.01, intelligence);
   const safePrice = Math.max(0.1, price);
   const unconstrainedDemand = (
-    Math.pow(effectiveAwareness, API_AWARENESS_ELASTICITY) *
+    awarenessMultiplier *
+    API_BASELINE_AWARENESS_DEMAND *
     (Math.pow(safeIntelligence, INTELLIGENCE_ELASTICITY) /
       Math.pow(safePrice, API_PRICE_ELASTICITY)) *
     API_DEMAND_SCALE
@@ -85,6 +87,33 @@ export function getApiDemand(
   const cap = BALANCE.apiDemandCapUsers;
   const saturatedDemand = (unconstrainedDemand * cap) / (unconstrainedDemand + cap);
   return Math.max(0, Math.min(cap, saturatedDemand));
+}
+
+export function getApiAwarenessDemandMultiplier(awareness: number): number {
+  const API_BASE_AWARENESS = 200_000;
+  return Math.max(0, (API_BASE_AWARENESS + awareness) / API_BASE_AWARENESS);
+}
+
+export function getApiAdPurchaseCount(apiAwareness: number): number {
+  return Math.max(0, Math.floor(apiAwareness / BALANCE.apiAdAwarenessBoost));
+}
+
+export function getApiAdCurrentCost(apiAwareness: number): bigint {
+  const purchaseCount = getApiAdPurchaseCount(apiAwareness);
+  const growth = Math.pow(BALANCE.apiAdCostExponent, purchaseCount);
+  const safeGrowth = Number.isFinite(growth) ? growth : Number.MAX_SAFE_INTEGER;
+  return scaleB(BALANCE.apiAdCost, safeGrowth);
+}
+
+export function getApiImprovePurchaseCount(apiImprovementLevel: number): number {
+  return Math.max(0, apiImprovementLevel + 1);
+}
+
+export function getApiImproveCurrentCost(apiImprovementLevel: number): bigint {
+  const purchaseCount = getApiImprovePurchaseCount(apiImprovementLevel);
+  const growth = Math.pow(BALANCE.apiImproveCostExponent, purchaseCount);
+  const safeGrowth = Number.isFinite(growth) ? growth : Number.MAX_SAFE_INTEGER;
+  return scaleB(BALANCE.apiImproveCodeCost, safeGrowth);
 }
 
 function normalizeApiPriceToStep(price: number): number {
@@ -160,10 +189,14 @@ export function getApiPflopsPerUser(apiEfficiency: number): number {
   return BALANCE.apiPflopsPerUser / apiEfficiency;
 }
 
-export function getAgentsRequiredAllocationPct(totalPflops: bigint, assignedAgents: bigint): number {
+export function getAgentsRequiredAllocationPct(
+  totalPflops: bigint,
+  assignedAgents: bigint,
+  agentsPerGpu: bigint,
+): number {
   if (assignedAgents <= 0n) return 0;
   if (totalPflops <= 0n) return 100;
-  const pflopsPerAgent = toBigInt(BALANCE.pflopsPerGpu);
+  const pflopsPerAgent = divB(toBigInt(BALANCE.pflopsPerGpu), agentsPerGpu);
   for (let pct = 0; pct <= 100; pct++) {
     const allocatedPflops = mulB(totalPflops, toBigInt(pct)) / 100n;
     const activeAgentsAtPct = divB(allocatedPflops, pflopsPerAgent);
@@ -203,32 +236,8 @@ export function getTrainingDataPurchaseCost(amountGB: number): bigint {
 }
 
 export function getGpuTargetPrice(gpuCount: bigint): bigint {
-  const anchors: Array<{ gpus: number; usd: number }> = [
-    { gpus: 1, usd: 3_000 },
-    { gpus: 128, usd: 8_000 },
-    { gpus: 256, usd: 14_000 },
-    { gpus: 4_096, usd: 25_000 },
-    { gpus: 65_536, usd: 32_000 },
-    { gpus: 1_000_000, usd: 36_000 },
-  ];
-
-  const owned = Math.max(0, fromBigInt(gpuCount));
-  if (owned <= anchors[0].gpus) return toBigInt(anchors[0].usd);
-
-  for (let i = 1; i < anchors.length; i++) {
-    const left = anchors[i - 1];
-    const right = anchors[i];
-    if (owned <= right.gpus) {
-      const leftX = Math.log2(left.gpus);
-      const rightX = Math.log2(right.gpus);
-      const x = Math.log2(Math.max(1, owned));
-      const t = rightX > leftX ? (x - leftX) / (rightX - leftX) : 0;
-      const blendedUsd = left.usd + (right.usd - left.usd) * Math.max(0, Math.min(1, t));
-      return toBigInt(blendedUsd);
-    }
-  }
-
-  return toBigInt(anchors[anchors.length - 1].usd);
+  void gpuCount;
+  return BALANCE.gpuFixedPrice;
 }
 
 export function getNextTier(current: SubscriptionTier): SubscriptionTier | null {
@@ -269,14 +278,14 @@ export function getLevelScaledCost(
 ): bigint {
   if (level < minLevel) return 0n;
   const exponent = Math.max(0, level - minLevel);
-  const growth = Math.pow(BALANCE.researchPriceExponentByResource[resource], exponent);
+  const growth = Math.pow(RESEARCH_PRICE_EXPONENT_BY_RESOURCE[resource], exponent);
   const safeGrowth = Number.isFinite(growth) ? growth : Number.MAX_SAFE_INTEGER;
   return scaleB(baseCost, safeGrowth);
 }
 
 export function getResearchMaxLevel(config: ResearchConfig): number {
-  if (config.isInfinite) return config.maxLevel ?? Number.POSITIVE_INFINITY;
-  return config.maxLevel ?? config.minLevel;
+  if (config.isInfinite) return Number.POSITIVE_INFINITY;
+  return config.minLevel + Math.max(0, (config.totalLevels ?? 1) - 1);
 }
 
 export function getResearchCurrentLevel(researchLevels: ResearchLevelState | undefined, id: ResearchId): number {
@@ -408,8 +417,15 @@ export function getGpuFlopsResearchMultiplier(researchLevels: ResearchLevelState
   );
 }
 
+export function getAgentsPerGpuResearchMultiplier(researchLevels: ResearchLevelState | undefined): bigint {
+  return getMatchingResearchBigIntMultiplier(
+    researchLevels,
+    (research) => research.effect?.type === 'agentsPerGpu',
+  );
+}
+
 export function getRocketLossPctFromResearch(researchLevels: ResearchLevelState | undefined): number {
-  return BALANCE.rocketLossNoReuse * getMatchingResearchNumberMultiplier(
+  return getMatchingResearchNumberMultiplier(
     researchLevels,
     (research) => research.effect?.type === 'rocketLoss',
   );

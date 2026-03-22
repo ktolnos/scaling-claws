@@ -1,7 +1,7 @@
 import type { GameState } from '../../game/GameState.ts';
 import { BALANCE, hasCompletedResearch } from '../../game/BalanceConfig.ts';
 import { dispatchGameAction } from '../../game/ActionDispatcher.ts';
-import { formatMW, formatNumber, toBigInt } from '../../game/utils.ts';
+import { formatMW, formatNumber, formatNumberOneDecimal, toBigInt } from '../../game/utils.ts';
 import type { Panel } from '../PanelManager.ts';
 import { createPanelDivider, createPanelScaffold } from '../components/PanelScaffold.ts';
 import { emojiHtml, resourceLabelHtml } from '../emoji.ts';
@@ -100,7 +100,7 @@ export class SpaceEnergyPanel implements Panel {
     const total = state.mercuryMassTotal > 0n ? state.mercuryMassTotal : BALANCE.mercuryBaseMassTotal;
     const minedPctRaw = total > 0n ? (Number(mined) / Number(total)) * 100 : 0;
     const minedPct = Math.max(0, Math.min(100, minedPctRaw));
-    const minedPctText = minedPct >= 1 ? (Math.round(minedPct * 10) / 10).toString() : minedPct >= 0.01 ? minedPct.toFixed(2) : minedPct.toFixed(3);
+    const minedPctText = minedPct >= 1 ? formatNumberOneDecimal(minedPct) : minedPct >= 0.01 ? minedPct.toFixed(2) : minedPct.toFixed(3);
 
     const mercuryMatRate = state.locationProductionPerMin.mercury.material - state.locationConsumptionPerMin.mercury.material;
     this.mercurySwarmEl.innerHTML = `${resourceLabelHtml('gpuSatellites', 'Dyson Swarm')}: ${formatNumber(state.dysonSwarmSatellites)}`;

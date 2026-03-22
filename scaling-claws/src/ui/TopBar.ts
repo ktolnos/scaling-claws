@@ -1,6 +1,6 @@
 import type { GameState } from '../game/GameState.ts';
 import { hasCompletedResearch } from '../game/BalanceConfig.ts';
-import { formatFlops, formatNumber, formatMW } from '../game/utils.ts';
+import { formatFlops, formatNumber, formatMW, formatNumberOneDecimal } from '../game/utils.ts';
 import { deleteSave } from '../game/SaveManager.ts';
 import { emojiHtml, locationLabelHtml, moneyWithEmojiHtml, resourceLabelHtml } from './emoji.ts';
 import { setHintTarget } from './hints/HintUtils.ts';
@@ -177,7 +177,7 @@ export class TopBar {
     this.fundsIncomeEl.innerHTML = state.incomePerMin > 0n ? '+' + moneyWithEmojiHtml(state.incomePerMin, 'funds') + '/m' : '';
     this.fundsExpenseEl.innerHTML = state.expensePerMin > 0n ? '-' + moneyWithEmojiHtml(state.expensePerMin, 'funds') + '/m' : '';
 
-    this.intelValueEl.textContent = (Math.round(state.intelligence * 10) / 10).toString();
+    this.intelValueEl.textContent = formatNumberOneDecimal(state.intelligence);
 
     if (state.isPostGpuTransition) {
       this.flopsItem.classList.remove('hidden');
@@ -269,7 +269,7 @@ export class TopBar {
       html += `<div class="section-title">${resourceLabelHtml('flops', 'Compute Allocation')} (Global Runtime)</div>`;
       for (const item of state.resourceBreakdown.compute) {
         const pflopsNum = typeof item.pflops === 'bigint' ? Number(item.pflops) / 1_000_000 : item.pflops;
-        html += `<div class="breakdown-row"><span class="label">${item.label}</span><span class="value">${(Math.round(pflopsNum * 10) / 10).toString()}</span></div>`;
+        html += `<div class="breakdown-row"><span class="label">${item.label}</span><span class="value">${formatNumberOneDecimal(pflopsNum)}</span></div>`;
       }
       html += '</div>';
     }

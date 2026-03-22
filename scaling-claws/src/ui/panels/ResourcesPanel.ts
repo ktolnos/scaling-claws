@@ -1,7 +1,7 @@
 import type { GameState, LocationId, SupplyResourceId } from '../../game/GameState.ts';
 import type { Panel } from '../PanelManager.ts';
 import { BALANCE, hasCompletedResearch } from '../../game/BalanceConfig.ts';
-import { formatFlops, formatMW, formatMoney, formatNumber } from '../../game/utils.ts';
+import { formatFlops, formatMW, formatMoney, formatNumber, formatNumberOneDecimal } from '../../game/utils.ts';
 import { deleteSave } from '../../game/SaveManager.ts';
 import { createPanelScaffold } from '../components/PanelScaffold.ts';
 import { emojiHtml, locationLabelHtml, resourceLabelHtml } from '../emoji.ts';
@@ -384,7 +384,7 @@ export class ResourcesPanel implements Panel {
     funds.row.style.display = '';
 
     const intel = this.coreRefs.get('intel')!;
-    intel.value.textContent = (Math.round(state.intelligence * 10) / 10).toString();
+    intel.value.textContent = formatNumberOneDecimal(state.intelligence);
     intel.rate.textContent = '';
     intel.row.style.display = '';
 

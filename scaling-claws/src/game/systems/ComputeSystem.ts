@@ -2,7 +2,9 @@ import type { GameState } from '../GameState.ts';
 import { getTotalAssignedAgents } from '../GameState.ts';
 import {
   BALANCE,
+  getApiAdCurrentCost,
   getApiDemand,
+  getApiImproveCurrentCost,
   getApiPflopsPerUser,
   getAgentsRequiredAllocationPct,
   getBestModel,
@@ -34,27 +36,30 @@ function getInstalledGpuCount(state: GameState): bigint {
   return state.installedGpuCount;
 }
 
-function getMaxAgentsByPflops(state: GameState): bigint {
-  return divB(state.totalPflops, toBigInt(BALANCE.pflopsPerGpu));
+function getPflopsPerAgent(state: GameState): bigint {
+  return divB(toBigInt(BALANCE.pflopsPerGpu), state.agentsPerGpu);
 }
 
-function syncAgentsToPflopsCapacity(state: GameState): void {
+export function getMaxAgentsByComputeCapacity(state: GameState): bigint {
+  return divB(state.totalPflops, getPflopsPerAgent(state));
+}
+
+function syncAgentsToComputeCapacity(state: GameState): void {
   if (!state.isPostGpuTransition) return;
 
-  const targetAgents = getMaxAgentsByPflops(state);
+  const targetAgents = getMaxAgentsByComputeCapacity(state);
   if (state.totalAgents >= targetAgents) return;
+  addUnassignedAgents(state, targetAgents - state.totalAgents);
+}
 
+function addUnassignedAgents(state: GameState, amount: bigint): void {
+  if (amount <= 0n) return;
   const unassignedPool = state.agentPools['unassigned'];
-  const toAdd = targetAgents - state.totalAgents;
   const oldCount = unassignedPool.totalCount;
-  unassignedPool.totalCount += toAdd;
-  state.totalAgents = targetAgents;
+  unassignedPool.totalCount += amount;
+  state.totalAgents += amount;
 
-  for (
-    let i = Math.floor(fromBigInt(oldCount));
-    i < Math.min(Math.floor(fromBigInt(unassignedPool.totalCount)), 4);
-    i++
-  ) {
+  for (let i = Math.floor(fromBigInt(oldCount)); i < Math.min(Math.floor(fromBigInt(unassignedPool.totalCount)), 4); i++) {
     unassignedPool.samples.progress[i] = 0;
     unassignedPool.samples.stuck[i] = false;
   }
@@ -131,7 +136,7 @@ function tickGpuEra(state: GameState, dtMs: number): void {
 
   // Gameplay allocations use total compute across all locations.
   state.totalPflops = state.earthPflops + state.moonPflops + state.mercuryPflops + state.orbitalPflops;
-  syncAgentsToPflopsCapacity(state);
+  syncAgentsToComputeCapacity(state);
 
   // Only set intelligence from model if no training has been done yet
   if (state.completedFineTunes.length === 0 && state.ariesModelIndex === -1 && state.currentFineTuneIndex === -1) {
@@ -180,9 +185,9 @@ function tickGpuEra(state: GameState, dtMs: number): void {
   allocateGpuSlots(state, agentsAllocatedPflops);
 
   // Agent Efficiency
-  // 1 Agent requires 1 GPU worth of compute (pflopsPerGpu) to run at 100% efficiency
+  // Agent density research reduces the compute needed per active agent.
   const assignedAgents = getTotalAssignedAgents(state);
-  const pflopsNeeded = scaleB(assignedAgents, BALANCE.pflopsPerGpu);
+  const pflopsNeeded = mulB(assignedAgents, getPflopsPerAgent(state));
   
   let computeEfficiency = 1.0;
   if (pflopsNeeded > 0n) {
@@ -258,15 +263,14 @@ function tickGpuMarketPrice(state: GameState, dtMs: number): void {
 
 function allocateCores(state: GameState): void {
   const totalCores = state.cpuCoresTotal; // assumed scaled
-  const coresPerAgent = toBigInt(BALANCE.tiers[state.subscriptionTier].coresPerAgent);
-  const maxAgents = divB(totalCores, coresPerAgent);
+  const maxAgents = totalCores;
 
   const allocatedAgents = allocateActiveSlots(state, maxAgents);
-  state.usedCores = mulB(allocatedAgents, coresPerAgent);
+  state.usedCores = allocatedAgents;
 }
 
 function allocateGpuSlots(state: GameState, agentsAllocatedPflops: bigint): void {
-  const maxActiveAgents = divB(agentsAllocatedPflops, toBigInt(BALANCE.pflopsPerGpu));
+  const maxActiveAgents = divB(agentsAllocatedPflops, getPflopsPerAgent(state));
   allocateActiveSlots(state, maxActiveAgents);
 }
 
@@ -305,44 +309,29 @@ function allocateActiveSlots(state: GameState, maxActiveAgents: bigint): bigint 
 // --- Actions ---
 
 export function hireAgent(state: GameState): boolean {
-  const tierConfig = BALANCE.tiers[state.subscriptionTier];
-
   if (!state.isPostGpuTransition) {
-    if (mulB(state.totalAgents + scaleBigInt(1n), toBigInt(tierConfig.coresPerAgent)) > state.cpuCoresTotal) {
+    if (state.totalAgents + scaleBigInt(1n) > state.cpuCoresTotal) {
       return false;
     }
   } else {
-    if (state.totalAgents >= getMaxAgentsByPflops(state)) {
+    if (state.totalAgents >= getMaxAgentsByComputeCapacity(state)) {
       return false;
     }
   }
 
-  if (state.funds < tierConfig.cost) {
+  if (state.funds < BALANCE.agentHireCost) {
     return false;
   }
 
-  state.funds -= tierConfig.cost;
-
-  const unassignedPool = state.agentPools['unassigned'];
-  unassignedPool.totalCount += scaleBigInt(1n);
-  state.totalAgents += scaleBigInt(1n);
-
-  if (unassignedPool.totalCount <= scaleBigInt(4n)) {
-    const idx = Math.floor(fromBigInt(unassignedPool.totalCount)) - 1;
-    unassignedPool.samples.progress[idx] = 0;
-    unassignedPool.samples.stuck[idx] = false;
-  }
+  state.funds -= BALANCE.agentHireCost;
+  addUnassignedAgents(state, scaleBigInt(1n));
 
   return true;
 }
 
 export function upgradeTier(state: GameState, tier: SubscriptionTier): boolean {
-  const currentConfig = BALANCE.tiers[state.subscriptionTier];
   const nextConfig = BALANCE.tiers[tier];
-  const deltaCostPerAgent = nextConfig.cost - currentConfig.cost;
-  if (deltaCostPerAgent <= 0n) return false;
-
-  const upgradeCost = mulB(deltaCostPerAgent, state.totalAgents);
+  const upgradeCost = nextConfig.cost;
 
   if (state.funds < upgradeCost) {
     return false;
@@ -366,10 +355,8 @@ export function buyMicMini(state: GameState): boolean {
 }
 
 export function goSelfHosted(state: GameState): boolean {
-  const minGpus = BALANCE.models[0].minGpus;
-  const agentCount = state.totalAgents;
-  const earthGpuCount = minGpus > agentCount ? minGpus : agentCount;
-  const totalCost = mulB(earthGpuCount, state.gpuMarketPrice);
+  const earthGpuCount = BALANCE.selfHostedGpuCount;
+  const totalCost = mulB(earthGpuCount, BALANCE.gpuFixedPrice);
 
   if (state.funds < totalCost) return false;
 
@@ -378,11 +365,15 @@ export function goSelfHosted(state: GameState): boolean {
   state.isPostGpuTransition = true;
   reconcileEarthGpuInstallation(state);
 
-  // Free starting energy: cover the datacenter threshold
-  const powerReqMW = mulB(BALANCE.datacenterThreshold, toBigInt(BALANCE.gpuPowerMW)); 
+  // Free starting energy: cover twice the base datacenter threshold before grid contracts matter.
+  const powerReqMW = mulB(BALANCE.datacenterThreshold * 2n, toBigInt(BALANCE.gpuPowerMW)); 
   state.gridPowerKW = toBigInt(Math.max(0, Math.ceil(fromBigInt(powerReqMW) * 1000)));
 
   state.subscriptionTier = 'basic';
+  state.gpuMarketPrice = BALANCE.gpuFixedPrice;
+  if (state.totalAgents < BALANCE.selfHostedAgentGrant) {
+    addUnassignedAgents(state, BALANCE.selfHostedAgentGrant - state.totalAgents);
+  }
 
   return true;
 }
@@ -393,7 +384,7 @@ export function buyGpu(state: GameState, amount: number): boolean {
   if (earthGpuCount >= state.gpuCapacity) return false;
   if (earthGpuCount + amountB > state.gpuCapacity) return false;
 
-  const cost = mulB(amountB, state.gpuMarketPrice);
+  const cost = mulB(amountB, BALANCE.gpuFixedPrice);
   if (state.funds < cost) return false;
 
   state.funds -= cost;
@@ -409,7 +400,10 @@ export function upgradeModel(state: GameState, modelIndex: number): boolean {
 
   const model = BALANCE.models[modelIndex];
   if (getInstalledGpuCount(state) < model.minGpus) return false;
+  const codeRequirement = model.codeRequirement ?? 0n;
+  if (state.code < codeRequirement) return false;
 
+  state.code -= codeRequirement;
   state.currentModelIndex = modelIndex;
   return true;
 }
@@ -543,7 +537,7 @@ function autoAdjustComputeAllocations(state: GameState): void {
   }
 
   const assignedAgents = getTotalAssignedAgents(state);
-  let agentsPct = getAgentsRequiredAllocationPct(totalPflops, assignedAgents);
+  let agentsPct = getAgentsRequiredAllocationPct(totalPflops, assignedAgents, state.agentsPerGpu);
 
   let inferencePct = 0;
   if (state.apiUnlocked) {
@@ -598,12 +592,11 @@ export function setComputeAutoAllocationEnabled(state: GameState, enabled: boole
   return true;
 }
 
-export function buyAds(state: GameState, amount: number = 1): boolean {
-  const amountB = toBigInt(amount);
-  const totalCost = mulB(amountB, BALANCE.apiAdCost);
-  if (state.funds < totalCost) return false;
-  state.funds -= totalCost;
-  state.apiAwareness += amount * BALANCE.apiAdAwarenessBoost;
+export function buyAds(state: GameState): boolean {
+  const cost = getApiAdCurrentCost(state.apiAwareness);
+  if (state.funds < cost) return false;
+  state.funds -= cost;
+  state.apiAwareness += BALANCE.apiAdAwarenessBoost;
   return true;
 }
 
@@ -621,19 +614,18 @@ export function setComputeAllocations(state: GameState, trainingPct: number, inf
   return true;
 }
 
-export function improveApi(state: GameState, amount: number = 1): boolean {
+export function improveApi(state: GameState): boolean {
   const purchased = state.apiImprovementLevel + 1;
   const remaining = BALANCE.apiImprovePurchaseLimit - purchased;
-  if (remaining <= 0 || amount > remaining) return false;
+  if (remaining <= 0) return false;
 
-  const amountB = toBigInt(amount);
-  const totalCost = mulB(amountB, BALANCE.apiImproveCodeCost);
-  if (state.code < totalCost) return false;
+  const cost = getApiImproveCurrentCost(state.apiImprovementLevel);
+  if (state.code < cost) return false;
 
-  state.code -= totalCost;
-  state.apiImprovementLevel += amount;
-  state.apiQuality += amount * BALANCE.apiImproveEfficiencyBoost;
-  
+  state.code -= cost;
+  state.apiImprovementLevel += 1;
+  state.apiQuality += BALANCE.apiImproveEfficiencyBoost;
+
   return true;
 }
 
@@ -644,6 +636,6 @@ export function unlockApi(state: GameState): boolean {
 
   state.code -= BALANCE.apiUnlockCode;
   state.apiUnlocked = true;
-  state.apiInferenceAllocationPct = 5;
+  state.apiInferenceAllocationPct = 0;
   return true;
 }

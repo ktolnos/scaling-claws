@@ -1,5 +1,5 @@
 import type { GameState, FacilityId, LocationId, TransportPayloadId, TransportRouteId } from './GameState.ts';
-import { BALANCE, getHumanWorkforceRemaining } from './BalanceConfig.ts';
+import { BALANCE, getApiAdCurrentCost, getApiImproveCurrentCost, getHumanWorkforceRemaining } from './BalanceConfig.ts';
 import type { JobType, ResearchId, SubscriptionTier } from './BalanceConfig.ts';
 import {
   hireAgent,
@@ -15,6 +15,7 @@ import {
   buyAds,
   setComputeAllocations,
   improveApi,
+  getMaxAgentsByComputeCapacity,
   unlockApi,
 } from './systems/ComputeSystem.ts';
 import {
@@ -41,7 +42,7 @@ import {
   launchVonNeumannProbe,
 } from './systems/SpaceSystem.ts';
 import { canBuildFacility, buildFacility } from './systems/SupplySystem.ts';
-import { toBigInt, mulB, divB } from './utils.ts';
+import { toBigInt, mulB } from './utils.ts';
 
 export interface ActionDispatchResult {
   ok: boolean;
@@ -130,14 +131,11 @@ function dispatchGameActionCore(state: GameState, action: GameAction): ActionDis
   switch (action.type) {
     case 'hireAgent': {
       const { performed, requested } = runRepeated(action.amount ?? 1, () => hireAgent(state));
-      const tier = BALANCE.tiers[state.subscriptionTier];
       const nextAgent = state.totalAgents + toBigInt(1);
-      const blockedByCpu = !state.isPostGpuTransition && mulB(nextAgent, toBigInt(tier.coresPerAgent)) > state.cpuCoresTotal;
-      const maxAgentsByPflops = state.isPostGpuTransition
-        ? divB(state.totalPflops, toBigInt(BALANCE.pflopsPerGpu))
-        : 0n;
-      const blockedByGpuSlots = state.isPostGpuTransition && state.totalAgents >= maxAgentsByPflops;
-      const blockedByFunds = state.funds < tier.cost;
+      const blockedByCpu = !state.isPostGpuTransition && nextAgent > state.cpuCoresTotal;
+      const maxAgentsByCompute = state.isPostGpuTransition ? getMaxAgentsByComputeCapacity(state) : 0n;
+      const blockedByGpuSlots = state.isPostGpuTransition && state.totalAgents >= maxAgentsByCompute;
+      const blockedByFunds = state.funds < BALANCE.agentHireCost;
       return result(performed > 0, {
         performed,
         requested,
@@ -147,15 +145,14 @@ function dispatchGameActionCore(state: GameState, action: GameAction): ActionDis
       });
     }
     case 'upgradeTier': {
+      const nextConfig = BALANCE.tiers[action.tier];
+      const upgradeCost = nextConfig.cost;
       const ok = upgradeTier(state, action.tier);
       const nudged = ok ? nudgeAllAgents(state) : 0;
-      const currentConfig = BALANCE.tiers[state.subscriptionTier];
-      const nextConfig = BALANCE.tiers[action.tier];
-      const deltaCostPerAgent = nextConfig.cost - currentConfig.cost;
       return result(ok, {
         nudged,
         reason: ok ? undefined : 'failed',
-        try_later: deltaCostPerAgent > 0n && state.funds < mulB(deltaCostPerAgent, state.totalAgents),
+        try_later: state.funds < upgradeCost,
       });
     }
     case 'buyMicMini': {
@@ -172,9 +169,7 @@ function dispatchGameActionCore(state: GameState, action: GameAction): ActionDis
     }
     case 'goSelfHosted': {
       const ok = goSelfHosted(state);
-      const minGpus = BALANCE.models[0].minGpus;
-      const gpuCount = minGpus > state.totalAgents ? minGpus : state.totalAgents;
-      const cost = mulB(gpuCount, state.gpuMarketPrice);
+      const cost = mulB(BALANCE.selfHostedGpuCount, BALANCE.gpuFixedPrice);
       return result(ok, { reason: ok ? undefined : 'failed', try_later: state.funds < cost });
     }
     case 'buyGpu': {
@@ -185,14 +180,16 @@ function dispatchGameActionCore(state: GameState, action: GameAction): ActionDis
         performed: ok ? amount : 0,
         requested: amount,
         reason: ok ? undefined : 'failed',
-        try_later: state.funds < toBigInt(amount) * state.gpuMarketPrice,
+        try_later: state.funds < mulB(toBigInt(amount), BALANCE.gpuFixedPrice),
       });
     }
     case 'upgradeModel': {
       const ok = upgradeModel(state, action.modelIndex);
       const invalidIndex = action.modelIndex <= state.currentModelIndex || action.modelIndex >= BALANCE.models.length;
       const missingGpuReq = !invalidIndex && state.installedGpuCount < BALANCE.models[action.modelIndex].minGpus;
-      return result(ok, { reason: ok ? undefined : 'failed', try_later: missingGpuReq && !invalidIndex });
+      const codeRequirement = !invalidIndex ? (BALANCE.models[action.modelIndex].codeRequirement ?? 0n) : 0n;
+      const missingCodeReq = !invalidIndex && state.code < codeRequirement;
+      return result(ok, { reason: ok ? undefined : 'failed', try_later: !invalidIndex && (missingGpuReq || missingCodeReq) });
     }
     case 'buyDatacenter': {
       const { performed, requested } = runRepeated(action.amount ?? 1, () => buyDatacenter(state, action.tier));
@@ -233,14 +230,16 @@ function dispatchGameActionCore(state: GameState, action: GameAction): ActionDis
       });
     }
     case 'buyAds': {
-      const amount = getRequestedAmount(action.amount ?? 1);
-      if (amount <= 0) return result(false, { performed: 0, requested: 0, reason: 'invalid_amount', try_later: false });
-      const ok = buyAds(state, amount);
-      return result(ok, {
-        performed: ok ? amount : 0,
-        requested: amount,
-        reason: ok ? undefined : 'failed',
-        try_later: state.funds < toBigInt(amount) * BALANCE.apiAdCost,
+      const requested = getRequestedAmount(action.amount ?? 1);
+      if (requested <= 0) return result(false, { performed: 0, requested: 0, reason: 'invalid_amount', try_later: false });
+      const { performed } = runRepeated(requested, () => buyAds(state));
+      const nextCost = getApiAdCurrentCost(state.apiAwareness);
+      return result(performed > 0, {
+        performed,
+        requested,
+        partial: performed < requested,
+        reason: performed > 0 ? undefined : 'failed',
+        try_later: state.funds < nextCost,
       });
     }
     case 'setComputeAllocations': {
@@ -252,16 +251,18 @@ function dispatchGameActionCore(state: GameState, action: GameAction): ActionDis
       });
     }
     case 'improveApi': {
-      const amount = getRequestedAmount(action.amount ?? 1);
-      if (amount <= 0) return result(false, { performed: 0, requested: 0, reason: 'invalid_amount', try_later: false });
-      const ok = improveApi(state, amount);
+      const requested = getRequestedAmount(action.amount ?? 1);
+      if (requested <= 0) return result(false, { performed: 0, requested: 0, reason: 'invalid_amount', try_later: false });
+      const { performed } = runRepeated(requested, () => improveApi(state));
       const purchased = state.apiImprovementLevel + 1;
       const atLimit = purchased >= BALANCE.apiImprovePurchaseLimit;
-      return result(ok, {
-        performed: ok ? amount : 0,
-        requested: amount,
-        reason: ok ? undefined : 'failed',
-        try_later: atLimit ? false : state.code < toBigInt(amount) * BALANCE.apiImproveCodeCost,
+      const nextCost = getApiImproveCurrentCost(state.apiImprovementLevel);
+      return result(performed > 0, {
+        performed,
+        requested,
+        partial: performed < requested,
+        reason: performed > 0 ? undefined : 'failed',
+        try_later: atLimit ? false : state.code < nextCost,
       });
     }
     case 'unlockApi': {

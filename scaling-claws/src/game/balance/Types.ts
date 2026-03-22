@@ -1,5 +1,6 @@
 export const SubscriptionTiers = {
   basic: 'basic',
+  plus: 'plus',
   pro: 'pro',
   ultra: 'ultra',
   ultraMax: 'ultraMax',
@@ -9,7 +10,7 @@ export const SubscriptionTiers = {
 export type SubscriptionTier = typeof SubscriptionTiers[keyof typeof SubscriptionTiers];
 
 export const TIER_ORDER: SubscriptionTier[] = [
-  'ultraProMax', 'ultraMax', 'ultra', 'pro', 'basic',
+  'ultraProMax', 'ultraMax', 'ultra', 'pro', 'plus', 'basic',
 ];
 
 export const ResourceTypes = {
@@ -60,6 +61,7 @@ export const JOB_ORDER: JobType[] = [
 
 export const ResearchIds = {
   algoEfficiency1: 'algoEfficiency1',
+  agentMultiplexing1: 'agentMultiplexing1',
   algoEfficiency2: 'algoEfficiency2',
   algoEfficiency3: 'algoEfficiency3',
   algoEfficiency4: 'algoEfficiency4',
@@ -75,6 +77,7 @@ export const ResearchIds = {
   gpuArch3: 'gpuArch3',
   solarTechnology: 'solarTechnology',
   chipManufacturing: 'chipManufacturing',
+  codeProductivity1: 'codeProductivity1',
   robotics1: 'robotics1',
   robotFactoryEngineering1: 'robotFactoryEngineering1',
   moonRobotics: 'moonRobotics',
@@ -85,6 +88,7 @@ export const ResearchIds = {
   moonMineEngineering: 'moonMineEngineering',
   moonChipManufacturing: 'moonChipManufacturing',
   moonMassDrivers: 'moonMassDrivers',
+  researchProductivity1: 'researchProductivity1',
   reusableRockets1: 'reusableRockets1',
   reusableRockets2: 'reusableRockets2',
   reusableRockets3: 'reusableRockets3',
@@ -104,6 +108,7 @@ export type ResearchLevelState = Partial<Record<ResearchId, number>>;
 
 export type ResearchEffect =
   | { type: 'algoEfficiency' }
+  | { type: 'agentsPerGpu' }
   | { type: 'apiUserSynthRate' }
   | { type: 'gpuFlops' }
   | { type: 'rocketLoss' }
@@ -113,11 +118,10 @@ export type ResearchEffect =
 export interface ResearchConfig {
   id: ResearchId;
   name: string;
-  cost: bigint;
   costResource?: ResearchCostResource;
   minLevel: number;
   isInfinite: boolean;
-  maxLevel?: number;
+  totalLevels?: number;
   quantityMultiplierPerLevel: number;
   quantityLabel?: string;
   quantityBase?: number;
@@ -131,8 +135,8 @@ export interface ResearchConfig {
 export interface TierConfig {
   cost: bigint;
   intel: number;
-  coresPerAgent: number;
   displayName: string;
+  unlockDescription: string;
 }
 
 export interface JobConfig {
@@ -146,13 +150,14 @@ export interface JobConfig {
   salaryPerMin?: bigint;
   hireCost?: bigint;
   stuckProbability?: number;
-  obsoleteAtIntel?: number;
 }
 
 export interface ModelConfig {
   name: string;
   intel: number;
   minGpus: bigint;
+  codeRequirement?: bigint;
+  unlockDescription?: string;
 }
 
 export interface DatacenterConfig {

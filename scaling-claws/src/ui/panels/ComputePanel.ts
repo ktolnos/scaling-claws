@@ -3,21 +3,26 @@ import { getTotalAssignedAgents } from '../../game/GameState.ts';
 import type { Panel } from '../PanelManager.ts';
 import {
   BALANCE,
+  getApiAdCurrentCost,
+  getApiAwarenessDemandMultiplier,
   getApiOptimalPrice,
   getApiPflopsPerUser,
+  getApiImproveCurrentCost,
+  getApiImprovePurchaseCount,
   getAgentsRequiredAllocationPct,
   getTrainingModelResourceRequirements,
   isApiAutoPricingUnlocked,
   isComputeAutoAllocationUnlocked,
 } from '../../game/BalanceConfig.ts';
 import type { TrainingModelConfig, TrainingResourceRequirement } from '../../game/BalanceConfig.ts';
-import { formatNumber, formatMoney, fromBigInt, toBigInt, divB, scaleB, mulB, scaleBigInt } from '../../game/utils.ts';
+import { formatNumber, formatMoney, formatNumberOneDecimal, fromBigInt, toBigInt, divB, scaleB, mulB, scaleBigInt } from '../../game/utils.ts';
 import { dispatchGameAction } from '../../game/ActionDispatcher.ts';
 import { BulkBuyGroup, getVisibleBuyTiers } from '../components/BulkBuyGroup.ts';
 import { CountBulkBuyControls } from '../components/CountBulkBuyControls.ts';
 import { createPanelDivider, createPanelScaffold } from '../components/PanelScaffold.ts';
 import { UI_EMOJI, emojiHtml, moneyWithEmojiHtml, resourceLabelHtml } from '../emoji.ts';
-import { setHintTarget } from '../hints/HintUtils.ts';
+import type { UiEmojiKey } from '../emoji.ts';
+import { setHintTarget, wrapHintTargetHtml } from '../hints/HintUtils.ts';
 import { flashElement } from '../UIUtils.ts';
 
 interface TrainingProgressRefs {
@@ -36,13 +41,23 @@ interface TrainingNextRefs {
   btn: HTMLButtonElement;
 }
 
+interface ApiUpgradeCardRefs {
+  row: HTMLDivElement;
+  descEl: HTMLDivElement;
+  metaEl: HTMLDivElement;
+  btn: HTMLButtonElement;
+  costAmountEl: HTMLSpanElement;
+  costIconEl: HTMLSpanElement;
+  costLabelEl: HTMLSpanElement;
+}
+
 export class ComputePanel implements Panel {
   readonly el: HTMLElement;
   private state: GameState;
 
   private modelNameEl!: HTMLSpanElement;
-  private modelDescEl!: HTMLDivElement;
   private gpuStatusEl!: HTMLSpanElement;
+  private gpuStockBar!: HTMLDivElement;
   private gpuStockBarFill!: HTMLDivElement;
   private computeAllocationWrap!: HTMLDivElement;
   private allocAgentsPctEl!: HTMLSpanElement;
@@ -77,12 +92,16 @@ export class ComputePanel implements Panel {
   private trainingAllocHint!: HTMLDivElement;
   private trainingAllocHintMsg!: HTMLSpanElement;
   private trainingAllocHintBtn!: HTMLButtonElement;
+  private inferenceAllocHint!: HTMLDivElement;
+  private inferenceAllocHintMsg!: HTMLSpanElement;
+  private inferenceAllocHintBtn!: HTMLButtonElement;
   private nextTrainingType: 'ft' | 'aries' | null = null;
   private nextTrainingIdx: number = -1;
 
   private upgradeBtn?: HTMLButtonElement;
-  private upgradeBtnReq?: HTMLSpanElement;
-  private upgradeInfo?: HTMLElement;
+  private upgradeBtnTitle?: HTMLDivElement;
+  private upgradeBtnReq?: HTMLDivElement;
+  private upgradeDesc?: HTMLDivElement;
   private datacenterRows: {
     row: HTMLElement;
     info: HTMLSpanElement;
@@ -97,6 +116,8 @@ export class ComputePanel implements Panel {
   private apiLockedRow!: HTMLDivElement;
   private apiUnlockBtn!: HTMLButtonElement;
   private apiUnlockBtnReq!: HTMLSpanElement;
+  private apiDataRow!: HTMLDivElement;
+  private apiDataDivider!: HTMLHRElement;
   private apiUnlockedContainer!: HTMLDivElement;
   private apiInfoEl!: HTMLSpanElement;
   private apiDataInfoEl!: HTMLSpanElement;
@@ -110,14 +131,9 @@ export class ComputePanel implements Panel {
   private apiDemandBarFill!: HTMLDivElement;
   private apiDemandText!: HTMLDivElement;
 
-  private apiAdInfo!: HTMLSpanElement;
-  private apiAdCostEl!: HTMLSpanElement;
-  private apiAdBtnGroup!: BulkBuyGroup;
-
-  private apiImproveRow!: HTMLDivElement;
-  private apiImproveBtnGroup!: BulkBuyGroup;
-  private apiImproveInfo!: HTMLSpanElement;
-  private apiImproveCostEl!: HTMLSpanElement;
+  private apiUpgradeList!: HTMLDivElement;
+  private apiAdCard!: ApiUpgradeCardRefs;
+  private apiImproveCard!: ApiUpgradeCardRefs;
 
   constructor(state: GameState) {
     this.state = state;
@@ -143,12 +159,29 @@ export class ComputePanel implements Panel {
     modelRow.appendChild(this.modelNameEl);
     body.appendChild(modelRow);
 
-    this.modelDescEl = document.createElement('div');
-    this.modelDescEl.style.fontSize = '0.72rem';
-    this.modelDescEl.style.color = 'var(--text-secondary)';
-    this.modelDescEl.style.marginTop = '-2px';
-    this.modelDescEl.style.marginBottom = '4px';
-    body.appendChild(this.modelDescEl);
+    this.trainingSection = document.createElement('div');
+    this.trainingSection.className = 'panel-section hidden';
+
+    this.trainingProgressRefs = this.buildTrainingProgressView(this.trainingSection);
+    this.trainingNextRefs = this.buildTrainingNextView(this.trainingSection);
+    this.buildTrainingAllocationHint(this.trainingSection);
+
+    body.appendChild(this.trainingSection);
+
+    this.apiDataRow = document.createElement('div');
+    this.apiDataRow.className = 'panel-row';
+    this.apiDataRow.style.fontSize = '0.82rem';
+    this.apiDataRow.style.display = 'none';
+    this.apiDataInfoEl = document.createElement('span');
+    this.apiDataInfoEl.className = 'label';
+    this.apiDataRow.appendChild(this.apiDataInfoEl);
+    body.appendChild(this.apiDataRow);
+
+    this.apiDataDivider = createPanelDivider();
+    this.apiDataDivider.style.display = 'none';
+    body.appendChild(this.apiDataDivider);
+
+    this.buildInferenceAllocationHint(body);
 
     // Unified compute allocation slider
     this.computeAllocationWrap = document.createElement('div');
@@ -245,6 +278,42 @@ export class ComputePanel implements Panel {
     this.computeAllocationWrap.appendChild(this.computeAutoAllocRow);
     body.appendChild(this.computeAllocationWrap);
 
+    // Model upgrade section
+    this.upgradeSection = document.createElement('div');
+    this.upgradeSection.className = 'panel-section';
+    body.appendChild(this.upgradeSection);
+
+    const upgradeWrap = document.createElement('div');
+    upgradeWrap.style.padding = '4px 0';
+    this.upgradeBtn = document.createElement('button');
+    this.upgradeBtn.className = 'btn-primary';
+    this.upgradeBtn.style.width = '100%';
+    this.upgradeBtnTitle = document.createElement('div');
+    this.upgradeBtnTitle.style.fontWeight = '600';
+    this.upgradeBtnReq = document.createElement('div');
+    this.upgradeBtnReq.style.fontSize = '0.82em';
+    this.upgradeBtnReq.style.marginTop = '2px';
+    this.upgradeBtnReq.style.opacity = '0.92';
+    this.upgradeBtn.appendChild(this.upgradeBtnTitle);
+    this.upgradeBtn.appendChild(this.upgradeBtnReq);
+
+    this.upgradeBtn.addEventListener('click', () => {
+      const nextIdx = this.state.currentModelIndex + 1;
+      if (nextIdx < BALANCE.models.length) {
+        dispatchGameAction(this.state, { type: 'upgradeModel', modelIndex: nextIdx });
+      }
+    });
+    upgradeWrap.appendChild(this.upgradeBtn);
+
+    this.upgradeDesc = document.createElement('div');
+    this.upgradeDesc.style.fontSize = '0.74rem';
+    this.upgradeDesc.style.color = 'var(--text-secondary)';
+    this.upgradeDesc.style.marginTop = '6px';
+    this.upgradeDesc.style.lineHeight = '1.3';
+    upgradeWrap.appendChild(this.upgradeDesc);
+
+    this.upgradeSection.appendChild(upgradeWrap);
+
     this.datacenterDivider = createPanelDivider();
     body.appendChild(this.datacenterDivider);
 
@@ -289,15 +358,15 @@ export class ComputePanel implements Panel {
       flashElement(this.gpuStatusEl);
     });
 
-    const gpuStockBar = document.createElement('div');
-    gpuStockBar.className = 'progress-bar';
-    gpuStockBar.style.width = '100%';
-    gpuStockBar.style.height = '10px';
+    this.gpuStockBar = document.createElement('div');
+    this.gpuStockBar.className = 'progress-bar';
+    this.gpuStockBar.style.width = '100%';
+    this.gpuStockBar.style.height = '10px';
     this.gpuStockBarFill = document.createElement('div');
     this.gpuStockBarFill.className = 'progress-bar-fill';
     this.gpuStockBarFill.style.background = 'var(--accent-blue)';
-    gpuStockBar.appendChild(this.gpuStockBarFill);
-    body.appendChild(gpuStockBar);
+    this.gpuStockBar.appendChild(this.gpuStockBarFill);
+    body.appendChild(this.gpuStockBar);
 
     // Datacenter warnings: keep directly under stock/capacity bar to reduce eye travel.
     // Reserve vertical space even when no warning is active to avoid layout jumps.
@@ -307,32 +376,6 @@ export class ComputePanel implements Panel {
     this.datacenterHintEl.style.visibility = 'hidden';
     this.datacenterHintEl.textContent = '\u00a0';
     body.appendChild(this.datacenterHintEl);
-
-    // Model upgrade section
-    this.upgradeSection = document.createElement('div');
-    this.upgradeSection.className = 'panel-section';
-    body.appendChild(this.upgradeSection);
-
-    // PRE-BUILD UPGRADE ROW
-    const uRow = document.createElement('div');
-    uRow.className = 'panel-row';
-    uRow.style.padding = '4px 0';
-    this.upgradeInfo = document.createElement('span');
-    this.upgradeInfo.className = 'label';
-    uRow.appendChild(this.upgradeInfo);
-    this.upgradeBtn = document.createElement('button');
-    this.upgradeBtn.appendChild(document.createTextNode('Upgrade '));
-    this.upgradeBtnReq = document.createElement('span');
-    this.upgradeBtn.appendChild(this.upgradeBtnReq);
-
-    this.upgradeBtn.addEventListener('click', () => {
-      const nextIdx = this.state.currentModelIndex + 1;
-      if (nextIdx < BALANCE.models.length) {
-        dispatchGameAction(this.state, { type: 'upgradeModel', modelIndex: nextIdx });
-      }
-    });
-    uRow.appendChild(this.upgradeBtn);
-    this.upgradeSection.appendChild(uRow);
 
     body.appendChild(createPanelDivider());
 
@@ -363,6 +406,7 @@ export class ComputePanel implements Panel {
         costInfo.style.color = 'var(--text-muted)';
         const costMoney = document.createElement('span');
         const costLabor = document.createElement('span');
+        setHintTarget(costLabor, 'resource.labor');
         costInfo.appendChild(costMoney);
         costInfo.appendChild(document.createTextNode(' + '));
         costInfo.appendChild(costLabor);
@@ -378,22 +422,6 @@ export class ComputePanel implements Panel {
         this.datacenterSection.appendChild(row);
         this.datacenterRows[i] = { row, info, costMoney, costLabor, count: controls.countEl, bulk: controls.bulk };
     }
-
-    body.appendChild(createPanelDivider());
-
-    this.trainingSection = document.createElement('div');
-    this.trainingSection.className = 'panel-section hidden';
-
-    const trainingTitle = document.createElement('div');
-    trainingTitle.className = 'panel-section-title';
-    trainingTitle.textContent = 'TRAINING';
-    this.trainingSection.appendChild(trainingTitle);
-
-    this.trainingProgressRefs = this.buildTrainingProgressView(this.trainingSection);
-    this.trainingNextRefs = this.buildTrainingNextView(this.trainingSection);
-    this.buildTrainingAllocationHint(this.trainingSection);
-
-    body.appendChild(this.trainingSection);
 
     // API Services section
     this.apiSection = document.createElement('div');
@@ -424,12 +452,18 @@ export class ComputePanel implements Panel {
     const apiUnlockMainText = document.createElement('span');
     apiUnlockMainText.textContent = 'Launch API Service ';
     this.apiUnlockBtn.appendChild(apiUnlockMainText);
-    
+
     this.apiUnlockBtnReq = document.createElement('span');
+    setHintTarget(this.apiUnlockBtnReq, 'resource.code');
     this.apiUnlockBtn.appendChild(this.apiUnlockBtnReq);
     
     this.apiUnlockBtn.addEventListener('click', () => {
-      dispatchGameAction(this.state, { type: 'unlockApi' });
+      const actionResult = dispatchGameAction(this.state, { type: 'unlockApi' });
+      if (!actionResult.ok) {
+        flashElement(this.apiUnlockBtn);
+        return;
+      }
+      this.updateApiServices(this.state);
     });
     this.apiSection.appendChild(this.apiUnlockBtn);
 
@@ -445,14 +479,6 @@ export class ComputePanel implements Panel {
     this.apiInfoEl.className = 'label';
     userRow.appendChild(this.apiInfoEl);
     this.apiUnlockedContainer.appendChild(userRow);
-
-    const dataRow = document.createElement('div');
-    dataRow.className = 'panel-row';
-    dataRow.style.fontSize = '0.82rem';
-    this.apiDataInfoEl = document.createElement('span');
-    this.apiDataInfoEl.className = 'label';
-    dataRow.appendChild(this.apiDataInfoEl);
-    this.apiUnlockedContainer.appendChild(dataRow);
 
     // Demand Progress Bar
     const demandContainer = document.createElement('div');
@@ -535,71 +561,41 @@ export class ComputePanel implements Panel {
     this.apiAutoPriceRow.appendChild(this.apiAutoPriceBtn);
     this.apiUnlockedContainer.appendChild(this.apiAutoPriceRow);
 
-    // Optimize API
-    this.apiImproveRow = document.createElement('div');
-    this.apiImproveRow.className = 'panel-row';
-    this.apiImproveRow.style.fontSize = '0.82rem';
-    
-    this.apiImproveInfo = document.createElement('span');
-    this.apiImproveInfo.className = 'label';
-    this.apiImproveRow.appendChild(this.apiImproveInfo);
+    this.apiUpgradeList = document.createElement('div');
+    this.apiUpgradeList.className = 'research-card-list';
+    this.apiUpgradeList.style.marginTop = '10px';
 
-    const improveControls = document.createElement('span');
-    improveControls.style.display = 'flex';
-    improveControls.style.gap = '4px';
-    improveControls.style.alignItems = 'center';
-
-    const improveLabel = document.createElement('span');
-    improveLabel.textContent = 'Optimization ';
-    this.apiImproveCostEl = document.createElement('span');
-    this.apiImproveCostEl.style.color = 'var(--text-secondary)';
-    this.apiImproveCostEl.style.fontSize = '0.8em';
-    this.apiImproveCostEl.innerHTML = `(${formatNumber(BALANCE.apiImproveCodeCost)} ${emojiHtml('code')} Code)`;
-    improveLabel.appendChild(this.apiImproveCostEl);
-    improveLabel.appendChild(document.createTextNode(':'));
-    improveControls.appendChild(improveLabel);
-
-    this.apiImproveBtnGroup = new BulkBuyGroup((amt) => {
-      dispatchGameAction(this.state, { type: 'improveApi', amount: amt });
+    this.apiImproveCard = this.buildApiUpgradeCard({
+      icon: 'flops',
+      title: 'Inference Optimization',
+      costHintId: 'resource.code',
+      onClick: () => {
+        const actionResult = dispatchGameAction(this.state, { type: 'improveApi', amount: 1 });
+        if (!actionResult.ok) {
+          flashElement(this.apiImproveCard.btn);
+          return;
+        }
+        this.updateApiServices(this.state);
+      },
     });
-    improveControls.appendChild(this.apiImproveBtnGroup.el);
+    this.apiUpgradeList.appendChild(this.apiImproveCard.row);
 
-    this.apiImproveRow.appendChild(improveControls);
-
-    this.apiUnlockedContainer.appendChild(this.apiImproveRow);
-
-    // Buy ads
-    const adRow = document.createElement('div');
-    adRow.className = 'panel-row';
-    adRow.style.fontSize = '0.82rem';
-
-    this.apiAdInfo = document.createElement('span');
-    this.apiAdInfo.className = 'label';
-    adRow.appendChild(this.apiAdInfo);
-
-    const adControls = document.createElement('span');
-    adControls.style.display = 'flex';
-    adControls.style.gap = '4px';
-    adControls.style.alignItems = 'center';
-
-    const marketingLabel = document.createElement('span');
-    marketingLabel.textContent = 'Marketing ';
-    this.apiAdCostEl = document.createElement('span');
-    this.apiAdCostEl.style.color = 'var(--text-secondary)';
-    this.apiAdCostEl.style.fontSize = '0.8em';
-    this.apiAdCostEl.innerHTML = moneyWithEmojiHtml(BALANCE.apiAdCost, 'funds');
-    marketingLabel.appendChild(this.apiAdCostEl);
-    marketingLabel.appendChild(document.createTextNode(':'));
-    adControls.appendChild(marketingLabel);
-
-    this.apiAdBtnGroup = new BulkBuyGroup((amt) => {
-      dispatchGameAction(this.state, { type: 'buyAds', amount: amt });
+    this.apiAdCard = this.buildApiUpgradeCard({
+      icon: 'users',
+      title: 'Awareness',
+      costHintId: 'resource.funds',
+      onClick: () => {
+        const actionResult = dispatchGameAction(this.state, { type: 'buyAds', amount: 1 });
+        if (!actionResult.ok) {
+          flashElement(this.apiAdCard.btn);
+          return;
+        }
+        this.updateApiServices(this.state);
+      },
     });
-    adControls.appendChild(this.apiAdBtnGroup.el);
+    this.apiUpgradeList.appendChild(this.apiAdCard.row);
 
-    adRow.appendChild(adControls);
-
-    this.apiUnlockedContainer.appendChild(adRow);
+    this.apiUnlockedContainer.appendChild(this.apiUpgradeList);
     this.apiSection.appendChild(this.apiUnlockedContainer);
 
     body.appendChild(this.apiSection);
@@ -649,18 +645,19 @@ export class ComputePanel implements Panel {
     return Math.max(0, Math.min(10000, hundredths));
   }
 
-  private updateActiveTrainingProgress(name: string, progress: bigint, required: bigint): void {
+  private updateActiveTrainingProgress(mode: 'Train' | 'Finetune', name: string, progress: bigint, required: bigint): void {
     const totalHundredths = this.getTrainingProgressHundredths(progress, required);
     const wholePct = Math.floor(totalHundredths / 100);
     const batchPct = wholePct >= 100 ? 100 : (totalHundredths % 100);
 
     this.trainingProgressRefs.container.style.display = '';
     this.trainingNextRefs.container.style.display = 'none';
-    this.trainingProgressRefs.label.textContent = `Training: ${name} ${wholePct}%`;
+    this.trainingProgressRefs.label.innerHTML =
+      `<span style="color: var(--text-primary)">${mode} ${name}</span> ${wholePct}%`;
     this.trainingProgressRefs.barFill.style.width = `${wholePct}%`;
     this.trainingProgressRefs.batchBarFill.style.width = `${batchPct}%`;
     this.trainingProgressRefs.detail.innerHTML =
-      `${formatNumber(progress)} ${emojiHtml('flops')} / ${formatNumber(required)} PFLOPS-hrs`;
+      `${formatNumberOneDecimal(progress)} ${emojiHtml('flops')} / ${formatNumberOneDecimal(required)} PFLOPS-hrs`;
   }
 
   private getCurrentTrainingModel(state: GameState): TrainingModelConfig | null {
@@ -693,13 +690,15 @@ export class ComputePanel implements Panel {
   private formatTrainingRequirement(req: TrainingResourceRequirement, state: GameState): string {
     const blocking = state[req.resource] < req.cost;
     const resourceLabel = req.resource === 'code' ? 'Code' : 'Science';
-    return `<span style="${blocking ? 'color: var(--accent-red);' : ''}">L${req.level} ${emojiHtml(req.resource)} ${resourceLabel} (${formatNumber(req.cost)})</span>`;
+    const content = `${emojiHtml(req.resource)} ${resourceLabel} (${formatNumber(req.cost)})`;
+    const html = `<span style="${blocking ? 'color: var(--accent-red);' : ''}">${content}</span>`;
+    return req.resource === 'code' ? wrapHintTargetHtml(html, 'resource.code') : html;
   }
 
   private buildTrainingRequirementsHtml(state: GameState, model: TrainingModelConfig): string {
     const dataBlocking = state.trainingData < model.dataGB;
     const parts = [
-      `${formatNumber(model.pflopsHrs)} ${emojiHtml('flops')} PFLOPS-hrs`,
+      `${formatNumberOneDecimal(model.pflopsHrs)} ${emojiHtml('flops')} PFLOPS-hrs`,
       `<span style="${dataBlocking ? 'color: var(--accent-red);' : ''}">${formatNumber(model.dataGB)} ${emojiHtml('data')} GB data</span>`,
     ];
     for (const requirement of getTrainingModelResourceRequirements(model)) {
@@ -751,6 +750,95 @@ export class ComputePanel implements Panel {
     return { container, info, desc, reqs, btn };
   }
 
+  private buildApiUpgradeCard(config: {
+    icon: UiEmojiKey;
+    title: string;
+    costHintId: 'resource.code' | 'resource.funds';
+    onClick: () => void;
+  }): ApiUpgradeCardRefs {
+    const row = document.createElement('div');
+    row.className = 'research-card';
+
+    const header = document.createElement('div');
+    header.className = 'research-card-header';
+
+    const iconWrap = document.createElement('div');
+    iconWrap.className = 'research-card-icon';
+    const iconEl = document.createElement('span');
+    iconEl.innerHTML = emojiHtml(config.icon);
+    iconEl.setAttribute('aria-hidden', 'true');
+    iconWrap.appendChild(iconEl);
+    header.appendChild(iconWrap);
+
+    const info = document.createElement('div');
+    info.className = 'research-card-info';
+    setHintTarget(info, 'mechanic.apiServices');
+
+    const title = document.createElement('strong');
+    title.className = 'research-card-title';
+    title.textContent = config.title;
+    info.appendChild(title);
+
+    const desc = document.createElement('div');
+    desc.className = 'research-card-desc';
+    info.appendChild(desc);
+
+    const metaEl = document.createElement('div');
+    metaEl.className = 'research-card-meta';
+    info.appendChild(metaEl);
+
+    header.appendChild(info);
+    row.appendChild(header);
+
+    const footer = document.createElement('div');
+    footer.className = 'research-card-footer';
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn-primary research-card-btn';
+    btn.addEventListener('click', config.onClick);
+
+    const costAmountEl = document.createElement('span');
+    const costIconEl = document.createElement('span');
+    const costLabelEl = document.createElement('span');
+    btn.appendChild(costAmountEl);
+    btn.appendChild(document.createTextNode(' '));
+    btn.appendChild(costIconEl);
+    btn.appendChild(document.createTextNode(' '));
+    btn.appendChild(costLabelEl);
+    footer.appendChild(btn);
+
+    row.appendChild(footer);
+
+    return { row, descEl: desc, metaEl, btn, costAmountEl, costIconEl, costLabelEl };
+  }
+
+  private setApiUpgradeCardCost(
+    refs: ApiUpgradeCardRefs,
+    amountLabel: string,
+    icon: UiEmojiKey | null,
+    resourceLabel: string,
+    useHtml = false,
+  ): void {
+    if (useHtml) {
+      refs.costAmountEl.innerHTML = amountLabel;
+    } else {
+      refs.costAmountEl.textContent = amountLabel;
+    }
+    refs.costIconEl.innerHTML = icon ? emojiHtml(icon) : '';
+    refs.costIconEl.style.display = icon ? '' : 'none';
+    refs.costLabelEl.textContent = resourceLabel;
+    refs.costLabelEl.style.display = resourceLabel ? '' : 'none';
+  }
+
+  private formatCardMultiplier(multiplier: number): string {
+    const decimals = multiplier < 2 ? 3 : multiplier < 10 ? 2 : 1;
+    return multiplier
+      .toFixed(decimals)
+      .replace(/(\.\d*?[1-9])0+$/, '$1')
+      .replace(/\.0+$/, '');
+  }
+
   private buildTrainingAllocationHint(parent: HTMLElement): void {
     this.trainingAllocHint = document.createElement('div');
     this.trainingAllocHint.className = 'warning-text';
@@ -760,7 +848,7 @@ export class ComputePanel implements Panel {
     this.trainingAllocHint.style.gap = '8px';
 
     this.trainingAllocHintMsg = document.createElement('span');
-    this.trainingAllocHintMsg.textContent = 'Set training allocation above 0% to train!';
+    this.trainingAllocHintMsg.textContent = 'Training allocation is 0%. Set it to 50% to start training.';
     this.trainingAllocHint.appendChild(this.trainingAllocHintMsg);
 
     this.trainingAllocHintBtn = document.createElement('button');
@@ -768,10 +856,10 @@ export class ComputePanel implements Panel {
     this.trainingAllocHintBtn.className = 'btn-primary';
     this.trainingAllocHintBtn.style.fontSize = '0.68rem';
     this.trainingAllocHintBtn.style.padding = '1px 6px';
-    this.trainingAllocHintBtn.textContent = 'Set 10%';
+    this.trainingAllocHintBtn.textContent = 'Set 50%';
     this.trainingAllocHintBtn.addEventListener('click', () => {
       const currentInference = this.state.apiUnlocked ? this.state.apiInferenceAllocationPct : 0;
-      const targetTraining = Math.max(1, Math.min(10, 100 - currentInference));
+      const targetTraining = 50;
       const targetInference = Math.max(0, Math.min(currentInference, 100 - targetTraining));
       this.setUnifiedAllocations(targetTraining, targetInference);
       this.updateUnifiedAllocationUi(this.state);
@@ -779,6 +867,36 @@ export class ComputePanel implements Panel {
     this.trainingAllocHint.appendChild(this.trainingAllocHintBtn);
 
     parent.appendChild(this.trainingAllocHint);
+  }
+
+  private buildInferenceAllocationHint(parent: HTMLElement): void {
+    this.inferenceAllocHint = document.createElement('div');
+    this.inferenceAllocHint.className = 'warning-text';
+    this.inferenceAllocHint.style.fontSize = '0.72rem';
+    this.inferenceAllocHint.style.display = 'none';
+    this.inferenceAllocHint.style.alignItems = 'center';
+    this.inferenceAllocHint.style.gap = '8px';
+
+    this.inferenceAllocHintMsg = document.createElement('span');
+    this.inferenceAllocHintMsg.textContent = 'Inference allocation is 0%. Set it to 50% to serve API users.';
+    this.inferenceAllocHint.appendChild(this.inferenceAllocHintMsg);
+
+    this.inferenceAllocHintBtn = document.createElement('button');
+    this.inferenceAllocHintBtn.type = 'button';
+    this.inferenceAllocHintBtn.className = 'btn-primary';
+    this.inferenceAllocHintBtn.style.fontSize = '0.68rem';
+    this.inferenceAllocHintBtn.style.padding = '1px 6px';
+    this.inferenceAllocHintBtn.textContent = 'Set 50%';
+    this.inferenceAllocHintBtn.addEventListener('click', () => {
+      const currentTraining = this.isTrainingAllocationUnlocked(this.state) ? this.state.trainingAllocationPct : 0;
+      const targetInference = 50;
+      const targetTraining = Math.max(0, Math.min(currentTraining, 100 - targetInference));
+      this.setUnifiedAllocations(targetTraining, targetInference);
+      this.updateUnifiedAllocationUi(this.state);
+    });
+    this.inferenceAllocHint.appendChild(this.inferenceAllocHintBtn);
+
+    parent.appendChild(this.inferenceAllocHint);
   }
 
   private isTrainingAllocationUnlocked(state: GameState): boolean {
@@ -794,7 +912,7 @@ export class ComputePanel implements Panel {
   }
 
   private getAgentsRequiredPct(state: GameState): number {
-    return getAgentsRequiredAllocationPct(state.totalPflops, getTotalAssignedAgents(state));
+    return getAgentsRequiredAllocationPct(state.totalPflops, getTotalAssignedAgents(state), state.agentsPerGpu);
   }
 
   private getLoadRatio(used: bigint, capacity: bigint): number {
@@ -1002,18 +1120,18 @@ export class ComputePanel implements Panel {
 
     if (state.currentFineTuneIndex >= 0) {
       const ft = BALANCE.fineTunes[state.currentFineTuneIndex];
-      this.updateActiveTrainingProgress(ft.name, state.fineTuneProgress, ft.pflopsHrs);
+      this.updateActiveTrainingProgress('Finetune', ft.name, state.fineTuneProgress, ft.pflopsHrs);
     } else if (state.ariesModelIndex >= 0) {
       const am = BALANCE.ariesModels[state.ariesModelIndex];
-      this.updateActiveTrainingProgress(am.name, state.ariesProgress, am.pflopsHrs);
+      this.updateActiveTrainingProgress('Train', am.name, state.ariesProgress, am.pflopsHrs);
     } else {
       this.trainingProgressRefs.container.style.display = 'none';
       const nextFT = this.getNextFineTune(state);
       if (nextFT !== null) {
         const ft = BALANCE.fineTunes[nextFT];
         this.trainingNextRefs.container.style.display = '';
-        this.trainingNextRefs.info.innerHTML = `${ft.name} (${resourceLabelHtml('intel')} ${ft.intel})`;
-        this.trainingNextRefs.info.style.color = 'var(--accent-green)';
+        this.trainingNextRefs.info.innerHTML = `Finetune ${ft.name} (${resourceLabelHtml('intel')} ${ft.intel})`;
+        this.trainingNextRefs.info.style.color = 'var(--text-primary)';
         this.trainingNextRefs.info.style.fontWeight = 'bold';
         this.setTrainingDescription(this.trainingNextRefs.desc, ft.unlockDescription);
         this.trainingNextRefs.reqs.innerHTML = this.buildTrainingRequirementsHtml(state, ft);
@@ -1027,8 +1145,8 @@ export class ComputePanel implements Panel {
         if (nextAries !== null) {
           const am = BALANCE.ariesModels[nextAries];
           this.trainingNextRefs.container.style.display = '';
-          this.trainingNextRefs.info.innerHTML = `${am.name} (${resourceLabelHtml('intel')} ~${am.intel})`;
-          this.trainingNextRefs.info.style.color = 'var(--accent-purple)';
+          this.trainingNextRefs.info.innerHTML = `Train ${am.name} (${resourceLabelHtml('intel')} ~${am.intel})`;
+          this.trainingNextRefs.info.style.color = 'var(--text-primary)';
           this.trainingNextRefs.info.style.fontWeight = 'bold';
           this.setTrainingDescription(this.trainingNextRefs.desc, am.unlockDescription);
           this.trainingNextRefs.reqs.innerHTML = this.buildTrainingRequirementsHtml(state, am);
@@ -1053,12 +1171,7 @@ export class ComputePanel implements Panel {
     this.state = state;
     const earthGpuCount = state.locationResources.earth.gpus;
     const modelName = this.getCurrentModelName(state);
-    this.modelNameEl.innerHTML = `${modelName} (${resourceLabelHtml('intel')} ${(Math.round(state.intelligence * 10) / 10).toString()})`;
-    const currentModel = this.getCurrentTrainingModel(state);
-    this.setTrainingDescription(
-      this.modelDescEl,
-      currentModel?.unlockDescription ?? 'Scale up compute and training to reach the first research-capable model.',
-    );
+    this.modelNameEl.innerHTML = `${modelName} (${resourceLabelHtml('intel')} ${formatNumberOneDecimal(state.intelligence)})`;
     this.buyGpuControls.setCount(earthGpuCount);
     this.gpuPricePart.textContent = `Cost: ${formatMoney(state.gpuMarketPrice)} each`;
 
@@ -1073,13 +1186,17 @@ export class ComputePanel implements Panel {
     const installedPctColor = installedPctLow ? 'var(--accent-red)' : '';
     this.gpuStockBarFill.style.width = `${Math.min(100, Math.max(0, stockLoadRatio * 100))}%`;
     this.gpuStockBarFill.style.background = stockColor;
+    const hasAnyDatacenter = state.datacenters.some((count) => count > 0n);
+    const shouldHideGpuStatus = !hasAnyDatacenter && earthGpuCount < state.gpuCapacity / 2n;
+    this.gpuStockBar.style.display = shouldHideGpuStatus ? 'none' : '';
     const installedSegment = installedPct >= 100
       ? ''
       : ` | Installed ${formatNumber(shownInstalled)} (` +
         `<span style="color:${installedPctColor}">${installedPct}%</span>)`;
-    this.gpuStatusEl.innerHTML =
-      `Stock ${formatNumber(earthGpuCount)} / Capacity ${formatNumber(state.gpuCapacity)} ` +
-      `(<span style="color:${stockPctColor}">${stockPct}</span>)${installedSegment}`;
+    this.gpuStatusEl.innerHTML = shouldHideGpuStatus
+      ? ''
+      : `Stock ${formatNumber(earthGpuCount)} / Capacity ${formatNumber(state.gpuCapacity)} ` +
+        `(<span style="color:${stockPctColor}">${stockPct}</span>)${installedSegment}`;
 
     this.updateUnifiedAllocationUi(state);
 
@@ -1104,17 +1221,21 @@ export class ComputePanel implements Panel {
     if (nextModelIdx < BALANCE.models.length) {
       this.upgradeSection.style.display = 'block';
       const nextModel = BALANCE.models[nextModelIdx];
-      if (this.upgradeInfo) {
-          this.upgradeInfo.innerHTML = 'Upgrade: <strong style="color:var(--accent-green)">' + nextModel.name +
-            '</strong> (' + resourceLabelHtml('intel') + ' ' + (Math.round(nextModel.intel * 10) / 10).toString() + ')';
-      }
-      if (this.upgradeBtn && this.upgradeBtnReq) {
-          // Model upgrades are gated by installed GPUs (not stock).
-          const gpuMet = state.installedGpuCount >= nextModel.minGpus;
-          const gpuColor = gpuMet ? '' : 'var(--accent-red)';
-      this.upgradeBtnReq.innerHTML = `(Requires ${formatNumber(nextModel.minGpus)} installed ${emojiHtml('gpus')} GPUs)`;
-          this.upgradeBtnReq.style.color = gpuColor;
-          this.upgradeBtn.disabled = !gpuMet;
+      if (this.upgradeBtn && this.upgradeBtnTitle && this.upgradeBtnReq && this.upgradeDesc) {
+        const gpuMet = state.installedGpuCount >= nextModel.minGpus;
+        const codeRequirement = nextModel.codeRequirement ?? 0n;
+        const codeMet = state.code >= codeRequirement;
+        this.upgradeBtnTitle.innerHTML =
+          `Upgrade to ${nextModel.name} (${resourceLabelHtml('intel')} ${formatNumberOneDecimal(nextModel.intel)})`;
+        let requirementsHtml =
+          `Requires <span style="${gpuMet ? '' : 'color: var(--accent-red);'}">${formatNumber(nextModel.minGpus)} installed ${emojiHtml('gpus')} GPUs</span>`;
+        if (codeRequirement > 0n) {
+          requirementsHtml += ` and <span style="${codeMet ? '' : 'color: var(--accent-red);'}">${formatNumber(codeRequirement)} ${resourceLabelHtml('code')}</span>`;
+        }
+        this.upgradeBtnReq.innerHTML = requirementsHtml;
+        this.upgradeBtn.style.display = '';
+        this.upgradeBtn.disabled = !gpuMet || !codeMet;
+        this.setTrainingDescription(this.upgradeDesc, nextModel.unlockDescription);
       }
     } else {
       this.upgradeSection.style.display = 'none';
@@ -1181,7 +1302,7 @@ export class ComputePanel implements Panel {
               const laborMet = earthLabor >= laborNeed;
               const moneyMet = state.funds >= moneyNeed;
 
-              refs.info.innerHTML = `${dc.name} (${formatNumber(dc.gpuCapacity)} ${emojiHtml('gpus')})`;
+              refs.info.innerHTML = `${dc.name} (can host ${formatNumber(dc.gpuCapacity)} ${emojiHtml('gpus')})`;
               refs.count.textContent = 'x' + formatNumber(state.datacenters[i]);
 
               const moneyColor = moneyMet ? 'var(--text-muted)' : 'var(--accent-red)';
@@ -1217,10 +1338,12 @@ export class ComputePanel implements Panel {
   }
 
   private updateApiServices(state: GameState): void {
-    // Show preview if near unlock or unlocked
-    const shouldShowPreview = state.intelligence >= BALANCE.apiUnlockIntel * 0.5; 
+    const shouldShowPreview = state.intelligence >= BALANCE.apiUnlockIntel;
     
     if (!shouldShowPreview) {
+      this.apiDataRow.style.display = 'none';
+      this.apiDataDivider.style.display = 'none';
+      this.inferenceAllocHint.style.display = 'none';
       this.apiSection.classList.add('hidden');
       return;
     }
@@ -1228,37 +1351,26 @@ export class ComputePanel implements Panel {
     this.apiSection.classList.remove('hidden');
 
     if (!state.apiUnlocked) {
-      // Show locked preview
+      this.apiDataRow.style.display = 'none';
+      this.apiDataDivider.style.display = 'none';
+      this.inferenceAllocHint.style.display = 'none';
       this.apiLockedRow.style.display = '';
       this.apiUnlockedContainer.style.display = 'none';
 
-      const intelMet = state.intelligence >= BALANCE.apiUnlockIntel;
       const codeMet = state.code >= BALANCE.apiUnlockCode;
-
-      let html = `Sell API access to monetize your model.<br><br>` +
-        `<span style="color: ${intelMet ? 'var(--accent-green)' : 'var(--accent-red)'}">` +
-        `Intelligence ${(Math.round(BALANCE.apiUnlockIntel * 10) / 10).toString()}+</span> ` +
-        `(${(Math.round(state.intelligence * 10) / 10).toString()})`;
-
-      if (intelMet) {
-        this.apiUnlockBtn.style.display = 'block';
-        this.apiUnlockBtn.disabled = !codeMet;
-        const color = codeMet ? 'var(--accent-green)' : 'var(--accent-red)';
-        this.apiUnlockBtnReq.innerHTML = `(${formatNumber(BALANCE.apiUnlockCode)} ${emojiHtml('code')} Code)`;
-        this.apiUnlockBtnReq.style.color = color;
-      } else {
-        // Only show code requirement text if button is hidden (i.e. if Intelligence not met)
-        html += `<br><span style="color: ${codeMet ? 'var(--accent-green)' : 'var(--accent-red)'}">` +
-        `${formatNumber(BALANCE.apiUnlockCode)} ${emojiHtml('code')} Code</span> ` +
-        `(${formatNumber(state.code)})`;
-        this.apiUnlockBtn.style.display = 'none';
-      }
-      
-      this.apiLockedRow.innerHTML = html;
+      this.apiLockedRow.innerHTML = 'Sell API access to monetize your model.';
+      this.apiUnlockBtn.style.display = 'block';
+      this.apiUnlockBtn.disabled = !codeMet;
+      const color = codeMet ? 'var(--accent-green)' : 'var(--accent-red)';
+      this.apiUnlockBtnReq.innerHTML = `(${formatNumber(BALANCE.apiUnlockCode)} ${emojiHtml('code')} Code)`;
+      this.apiUnlockBtnReq.style.color = color;
       return;
     }
 
     // Unlocked
+    this.apiDataRow.style.display = '';
+    this.apiDataDivider.style.display = '';
+    this.inferenceAllocHint.style.display = state.apiInferenceAllocationPct === 0 ? 'flex' : 'none';
     this.apiLockedRow.style.display = 'none';
     this.apiUnlockBtn.style.display = 'none';
     this.apiUnlockedContainer.style.display = '';
@@ -1277,13 +1389,16 @@ export class ComputePanel implements Panel {
     const dataPerMin = this.toDataUnitFromGb(apiDataPerMin, dataPerMinUnit);
     const dataPerUserUnit = this.getDataUnitForValue(state.apiUserSynthRate);
     const dataPerUser = this.toDataUnitFromGb(state.apiUserSynthRate, dataPerUserUnit);
-    const aiSynthDataPerMinUnit = this.getDataUnitForValue(aiSynthDataPerMin);
-    const aiSynthDataPerMinDisplay = this.toDataUnitFromGb(aiSynthDataPerMin, aiSynthDataPerMinUnit);
+    let detailHtml = `${formatNumber(state.apiUserCount)} API Users x ${formatNumberOneDecimal(dataPerUser)} ${dataPerUserUnit}/m`;
+    if (aiSynthDataPerMin > 0n) {
+      const aiSynthDataPerMinUnit = this.getDataUnitForValue(aiSynthDataPerMin);
+      const aiSynthDataPerMinDisplay = this.toDataUnitFromGb(aiSynthDataPerMin, aiSynthDataPerMinUnit);
+      detailHtml += ` + ${formatNumberOneDecimal(aiSynthDataPerMinDisplay)} ${aiSynthDataPerMinUnit}/m AI Data Synthesizers`;
+    }
     this.apiDataInfoEl.innerHTML =
-      `${emojiHtml('data')} Data <b>${formatNumber(dataQty)}</b> ${dataQtyUnit} ` +
-      `+${formatNumber(dataPerMin)} ${dataPerMinUnit} / m ` +
-      `(${formatNumber(state.apiUserCount)} Users x ${formatNumber(dataPerUser)} ${dataPerUserUnit}/m` +
-      ` + ${formatNumber(aiSynthDataPerMinDisplay)} ${aiSynthDataPerMinUnit}/m AI Data Synthesizers)`;
+      `${emojiHtml('data')} Data <b>${formatNumberOneDecimal(dataQty)}</b> ${dataQtyUnit} ` +
+      `+${formatNumberOneDecimal(dataPerMin)} ${dataPerMinUnit} / m ` +
+      `<span style="font-size:0.92em;color:var(--text-secondary);opacity:0.82">(${detailHtml})</span>`;
 
     // Demand Bar
     const pflopsPerUser = getApiPflopsPerUser(state.apiQuality);
@@ -1298,9 +1413,12 @@ export class ComputePanel implements Panel {
     const demandLoadRatio = this.getLoadRatio(state.apiDemand, capacity);
     const demandColor = nearOptimalPrice ? 'var(--accent-green)' : this.getLoadColor(demandLoadRatio);
     const demandPctColor = demandLoadRatio > 1 ? demandColor : 'var(--text-secondary)';
+    const demandLoadText = Number.isFinite(demandLoadRatio)
+      ? ` (<span style="color:${demandPctColor}">${this.getLoadPctLabel(demandLoadRatio)}</span>)`
+      : '';
     this.apiDemandText.innerHTML =
       `Demand: ${formatNumber(state.apiDemand)} / ${resourceLabelHtml('users', 'Capacity')}: ${formatNumber(capacity)} Users ` +
-      `(<span style="color:${demandPctColor}">${this.getLoadPctLabel(demandLoadRatio)}</span>)`;
+      demandLoadText;
 
     this.apiDemandBarFill.style.width = `${Math.min(100, Math.max(0, demandLoadRatio * 100))}%`;
     this.apiDemandBarFill.style.background = demandColor;
@@ -1327,22 +1445,44 @@ export class ComputePanel implements Panel {
     this.apiAutoPriceBtn.setAttribute('aria-pressed', autoPricingEnabled ? 'true' : 'false');
 
     // Ads
-    this.apiAdInfo.innerHTML = `Awareness: ${formatNumber(state.apiAwareness)}`;
-    this.apiAdBtnGroup.update(state.apiAwareness, (amt) => state.funds >= BigInt(amt) * BALANCE.apiAdCost, null, () => {
-      flashElement(this.apiAdCostEl);
-    });
+    const nextAdCost = getApiAdCurrentCost(state.apiAwareness);
+    const currentAwarenessMultiplier = getApiAwarenessDemandMultiplier(state.apiAwareness);
+    const nextAwarenessMultiplier = getApiAwarenessDemandMultiplier(
+      state.apiAwareness + BALANCE.apiAdAwarenessBoost,
+    );
+    this.apiAdCard.descEl.innerHTML =
+      `${this.formatCardMultiplier(currentAwarenessMultiplier)}x ${emojiHtml('route')} ` +
+      `${this.formatCardMultiplier(nextAwarenessMultiplier)}x Awareness`;
+    this.apiAdCard.metaEl.textContent = '';
+    this.apiAdCard.metaEl.style.display = 'none';
+    this.setApiUpgradeCardCost(
+      this.apiAdCard,
+      moneyWithEmojiHtml(nextAdCost, 'funds'),
+      null,
+      '',
+      true,
+    );
+    this.apiAdCard.btn.disabled = state.funds < nextAdCost;
 
     // Improvements
-    this.apiImproveInfo.innerHTML =
-      `Inference Cost: ${formatNumber(pflopsPerUser)} PFLOPS/user` +
-      `<br><span style="color:var(--text-muted);font-size:0.8em">${(Math.round(state.apiQuality * 10) / 10).toString()}x efficiency</span>`;
-    this.apiImproveBtnGroup.update(
-      state.apiImprovementLevel,
-      (amt) => state.code >= BigInt(amt) * BALANCE.apiImproveCodeCost,
-      BALANCE.apiImprovePurchaseLimit - 1,
-      () => {
-        flashElement(this.apiImproveCostEl);
-      },
+    const nextImproveCost = getApiImproveCurrentCost(state.apiImprovementLevel);
+    const optimizationCount = getApiImprovePurchaseCount(state.apiImprovementLevel);
+    const optimizationMaxed = optimizationCount >= BALANCE.apiImprovePurchaseLimit;
+    const nextQuality = state.apiQuality + BALANCE.apiImproveEfficiencyBoost;
+    const currentEfficiencyText = `${this.formatCardMultiplier(state.apiQuality)}x`;
+    const nextEfficiencyText = `${this.formatCardMultiplier(
+      optimizationMaxed ? state.apiQuality : nextQuality,
+    )}x`;
+    this.apiImproveCard.descEl.innerHTML =
+      `${currentEfficiencyText} ${emojiHtml('route')} ${nextEfficiencyText} Efficiency`;
+    this.apiImproveCard.metaEl.textContent = '';
+    this.apiImproveCard.metaEl.style.display = 'none';
+    this.setApiUpgradeCardCost(
+      this.apiImproveCard,
+      optimizationMaxed ? 'MAXED' : formatNumber(nextImproveCost),
+      optimizationMaxed ? null : 'code',
+      optimizationMaxed ? '' : 'Code',
     );
+    this.apiImproveCard.btn.disabled = optimizationMaxed || state.code < nextImproveCost;
   }
 }

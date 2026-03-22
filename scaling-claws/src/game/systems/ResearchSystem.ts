@@ -2,6 +2,7 @@ import type { GameState } from '../GameState.ts';
 import {
   BALANCE,
   getAlgoEfficiencyResearchMultiplier,
+  getAgentsPerGpuResearchMultiplier,
   getApiUserSynthRateFromResearch,
   getGpuFlopsResearchMultiplier,
   getLevelScaledCost,
@@ -22,6 +23,9 @@ function computeResearchBonuses(state: GameState): void {
 
   // GPU FLOPS
   state.gpuFlopsBonus = getGpuFlopsResearchMultiplier(state.researchLevels);
+
+  // Agent density per GPU
+  state.agentsPerGpu = BALANCE.baseAgentsPerGpu * getAgentsPerGpuResearchMultiplier(state.researchLevels);
 
   // API user data generation bonuses
   state.apiUserSynthRate = getApiUserSynthRateFromResearch(state.researchLevels);
@@ -52,7 +56,8 @@ function isResearchMaxed(state: GameState, id: ResearchId): boolean {
 }
 
 function getResearchCostForLevel(config: ResearchConfig, level: number): bigint {
-  return getLevelScaledCost(config.cost, getCostResource(config), level, config.minLevel);
+  const costResource = getCostResource(config);
+  return getLevelScaledCost(BALANCE.researchResourceBaseCostByResource[costResource], costResource, level);
 }
 
 export function getResearchCurrentCost(state: GameState, id: ResearchId): bigint {

@@ -10,7 +10,7 @@ import {
   getNextTier,
 } from '../../game/BalanceConfig.ts';
 import type { HumanJobType, JobType } from '../../game/BalanceConfig.ts';
-import { formatNumber, formatMoney, fromBigInt, scaleBigInt, mulB, divB, scaleB, toBigInt } from '../../game/utils.ts';
+import { formatNumber, formatMoney, formatNumberOneDecimal, fromBigInt, scaleBigInt, mulB, divB, scaleB, toBigInt } from '../../game/utils.ts';
 import { ProgressBar } from '../components/ProgressBar.ts';
 import { BulkBuyGroup } from '../components/BulkBuyGroup.ts';
 import { CountBulkBuyControls } from '../components/CountBulkBuyControls.ts';
@@ -71,6 +71,7 @@ export class JobsPanel implements Panel {
   private upgradeBtn!: HTMLButtonElement;
   private upgradeBtnTitleEl!: HTMLDivElement;
   private upgradeBtnIntelEl!: HTMLDivElement;
+  private upgradeBtnDescEl!: HTMLDivElement;
   private agentHireRow!: HTMLDivElement;
   private agentHireControls!: CountBulkBuyControls;
   private agentCostEl!: HTMLDivElement;
@@ -187,6 +188,7 @@ export class JobsPanel implements Panel {
     this.legacyControlsSection.appendChild(tierRow);
 
     this.upgradeBtn = document.createElement('button');
+    this.upgradeBtn.className = 'btn-primary';
     this.upgradeBtn.style.width = '100%';
     this.upgradeBtn.style.marginTop = '4px';
     this.upgradeBtnTitleEl = document.createElement('div');
@@ -205,6 +207,13 @@ export class JobsPanel implements Panel {
       }
     });
     this.legacyControlsSection.appendChild(this.upgradeBtn);
+
+    this.upgradeBtnDescEl = document.createElement('div');
+    this.upgradeBtnDescEl.style.fontSize = '0.76rem';
+    this.upgradeBtnDescEl.style.color = 'var(--text-secondary)';
+    this.upgradeBtnDescEl.style.marginTop = '6px';
+    this.upgradeBtnDescEl.style.lineHeight = '1.3';
+    this.legacyControlsSection.appendChild(this.upgradeBtnDescEl);
 
     this.agentHireRow = document.createElement('div');
     this.agentHireRow.className = 'panel-row';
@@ -289,7 +298,7 @@ export class JobsPanel implements Panel {
     shDesc.style.fontSize = '0.78rem';
     shDesc.style.color = 'var(--text-secondary)';
     shDesc.style.marginBottom = '6px';
-    shDesc.textContent = 'Replace subscriptions with GPUs running DeepKick-405B (Intel 3.0).';
+    shDesc.innerHTML = `Replace subscriptions with a self-hosted DeepKick-405B (${emojiHtml('intel')} ${formatNumberOneDecimal(BALANCE.models[0].intel)}) rack and start with 128 agents.`;
     this.selfHostedSection.appendChild(shDesc);
 
     this.selfHostedCostEl = document.createElement('div');
@@ -487,6 +496,23 @@ export class JobsPanel implements Panel {
     return effectivePerAgent;
   }
 
+  private getSingleWorkerProductionPerMin(state: GameState, jobType: JobType): bigint {
+    if (jobType === 'robotWorker') {
+      return getRobotLaborPerMin(state);
+    }
+
+    const config = BALANCE.jobs[jobType];
+    if (config.timeMs <= 0) return 0n;
+
+    const outputAmount = getJobOutputAmount(state, jobType, config.produces.amount);
+    const singlePerMin = divB(mulB(outputAmount, scaleBigInt(60000n)), toBigInt(config.timeMs));
+    if (config.workerType === 'human') {
+      return singlePerMin;
+    }
+
+    return scaleB(singlePerMin, state.agentEfficiency * state.intelligence);
+  }
+
   private getTotalPaidHumanWorkers(state: GameState): bigint {
     let total = 0n;
     for (const jt of Object.keys(BALANCE.jobs) as JobType[]) {
@@ -546,7 +572,10 @@ export class JobsPanel implements Panel {
     const efficiencyPct = Math.max(0, Math.round(state.agentEfficiency * 100));
     const efficiencyColor = efficiencyPct === 100 ? 'var(--text-primary)' : 'var(--accent-red)';
     const assignedAgents = getTotalAssignedAgents(state);
-    const pflopsNeeded = scaleB(assignedAgents, BALANCE.pflopsPerGpu);
+    const pflopsPerAgent = state.agentsPerGpu > 0n
+      ? divB(toBigInt(BALANCE.pflopsPerGpu), state.agentsPerGpu)
+      : toBigInt(BALANCE.pflopsPerGpu);
+    const pflopsNeeded = mulB(assignedAgents, pflopsPerAgent);
     const computeAllocPct = pflopsNeeded > 0n
       ? Math.max(0, Math.min(100, Math.round(fromBigInt(divB(state.freeCompute, pflopsNeeded)) * 100)))
       : 100;
@@ -577,25 +606,29 @@ export class JobsPanel implements Panel {
     const nextTierType = getNextTier(state.subscriptionTier);
     if (nextTierType) {
       const nextTier = BALANCE.tiers[nextTierType];
-      const agentCount = state.totalAgents;
-      const deltaCostPerAgent = nextTier.cost - currentTier.cost;
-      const upgradeCost = mulB(deltaCostPerAgent, agentCount);
-      const currentIntel = (Math.round(currentTier.intel * 10) / 10).toString();
-      const nextIntel = (Math.round(nextTier.intel * 10) / 10).toString();
+      const upgradeCost = nextTier.cost;
+      const fundsMet = state.funds >= upgradeCost;
+      const currentIntel = formatNumberOneDecimal(currentTier.intel);
+      const nextIntel = formatNumberOneDecimal(nextTier.intel);
       this.upgradeBtn.style.display = '';
-      this.upgradeBtnTitleEl.textContent = `Upgrade to ${nextTier.displayName} (${formatMoney(upgradeCost)})`;
+      this.upgradeBtnTitleEl.innerHTML =
+        `Upgrade to ${nextTier.displayName}: ` +
+        `<span style="${fundsMet ? '' : 'color: var(--accent-red);'}">${formatMoney(upgradeCost)}</span>`;
       this.upgradeBtnIntelEl.textContent = `${UI_EMOJI.intel} Intel ${currentIntel} ${UI_EMOJI.route} ${nextIntel}`;
-      this.upgradeBtn.disabled = deltaCostPerAgent <= 0n || state.funds < upgradeCost;
+      this.upgradeBtnDescEl.style.display = '';
+      this.upgradeBtnDescEl.textContent = nextTier.unlockDescription;
+      this.upgradeBtn.disabled = !fundsMet;
     } else {
       this.upgradeBtn.style.display = 'none';
+      this.upgradeBtnDescEl.style.display = 'none';
+      this.upgradeBtnDescEl.textContent = '';
     }
 
     this.agentHireControls.setCount(state.totalAgents);
-    const coresPerAgent = toBigInt(currentTier.coresPerAgent);
     const showAgentControls = state.intelligence >= BALANCE.agentControlUnlockIntel;
     const showCpuCores = showAgentControls && state.totalAgents >= toBigInt(2);
     const nextAgent = state.totalAgents + toBigInt(1);
-    const cpuLimitReached = mulB(nextAgent, coresPerAgent) > state.cpuCoresTotal;
+    const cpuLimitReached = nextAgent > state.cpuCoresTotal;
     const showMicMiniControls = showAgentControls && (cpuLimitReached || state.micMiniCount > 0n);
 
     this.agentHireRow.style.display = showAgentControls ? '' : 'none';
@@ -608,18 +641,31 @@ export class JobsPanel implements Panel {
       (amount) => {
         if (amount <= 0) return false;
         const amountB = toBigInt(amount);
-        const totalCost = mulB(amountB, currentTier.cost);
+        const totalCost = mulB(amountB, BALANCE.agentHireCost);
         if (state.funds < totalCost) return false;
-        const requiredCores = mulB(state.totalAgents + amountB, coresPerAgent);
-        return requiredCores <= state.cpuCoresTotal;
+        return state.totalAgents + amountB <= state.cpuCoresTotal;
       },
       undefined,
-      () => {
-        flashElement(this.coresEl);
+      (amount) => {
+        if (amount <= 0) return;
+        const amountB = toBigInt(amount);
+        const totalCost = mulB(amountB, BALANCE.agentHireCost);
+        if (state.funds < totalCost) {
+          document.dispatchEvent(new CustomEvent('flash-funds'));
+          return;
+        }
+
+        if (state.totalAgents + amountB > state.cpuCoresTotal) {
+          flashElement(this.coresEl);
+        }
       },
     );
 
-    this.agentCostEl.innerHTML = `${moneyWithEmojiHtml(currentTier.cost, 'funds')} per agent`;
+    const canAffordAgent = state.funds >= BALANCE.agentHireCost;
+    this.agentCostEl.innerHTML =
+      `<span style="${canAffordAgent ? '' : 'color: var(--accent-red);'}">` +
+      `${moneyWithEmojiHtml(BALANCE.agentHireCost, 'funds')}` +
+      '</span> per agent';
 
     const coresFree = state.cpuCoresTotal - state.usedCores;
     this.coresEl.textContent = `${formatNumber(coresFree)}/${formatNumber(state.cpuCoresTotal)} free`;
@@ -628,8 +674,10 @@ export class JobsPanel implements Panel {
     this.micMiniControls.setCount(state.micMiniCount);
     const micMiniOwned = Math.floor(fromBigInt(state.micMiniCount));
     const micMiniCoresAdded = formatNumber(BALANCE.micMini.coresAdded);
+    const canAffordMicMini = state.funds >= BALANCE.micMini.cost;
     this.micMiniBuyMetaEl.innerHTML =
-      `Buy ${BALANCE.micMini.displayName}: ${moneyWithEmojiHtml(BALANCE.micMini.cost, 'funds')} ` +
+      `Buy ${BALANCE.micMini.displayName}: ` +
+      `<span style="${canAffordMicMini ? '' : 'color: var(--accent-red);'}">${moneyWithEmojiHtml(BALANCE.micMini.cost, 'funds')}</span> ` +
       `<span style="font-size:0.8em;color:var(--text-secondary)">+${micMiniCoresAdded} cores</span>`;
     this.micMiniBuyGroup.update(
       micMiniOwned,
@@ -644,15 +692,14 @@ export class JobsPanel implements Panel {
       },
     );
 
-    const totalAgents = state.totalAgents;
-    const minGpus = BALANCE.models[0].minGpus;
-    const gpuCount = minGpus > totalAgents ? minGpus : totalAgents;
-    const gpuUnitPrice = state.gpuMarketPrice;
+    const gpuCount = BALANCE.selfHostedGpuCount;
+    const gpuUnitPrice = BALANCE.gpuFixedPrice;
     const gpuCost = mulB(gpuCount, gpuUnitPrice);
     if (state.intelligence >= BALANCE.selfHostedUnlockIntel) {
       this.selfHostedSection.style.display = '';
       this.selfHostedCostEl.innerHTML =
-        `${formatNumber(gpuCount)} ${emojiHtml('gpus')} GPUs x ${moneyWithEmojiHtml(gpuUnitPrice, 'funds')} = ${moneyWithEmojiHtml(gpuCost, 'funds')}`;
+        `${moneyWithEmojiHtml(gpuCost, 'funds')} ` +
+        `<span style="color:var(--text-secondary)">for ${formatNumber(BALANCE.selfHostedAgentGrant)} agents</span>`;
       this.selfHostedBtn.disabled = state.funds < gpuCost;
     } else {
       this.selfHostedSection.style.display = 'none';
@@ -716,17 +763,16 @@ export class JobsPanel implements Panel {
 
       // Reward/resource display
       const { resource, amount } = config.produces;
-      const outputAmount = getJobOutputAmount(state, jobType, amount);
       let baseLine = '';
+      const perWorkerPerMin = this.getSingleWorkerProductionPerMin(state, jobType);
       if (isRobotWorker) {
-        const perRobotPerMin = getRobotLaborPerMin(state);
-        baseLine = `<span class="job-reward-main">${formatNumber(perRobotPerMin)} ${resourceLabelHtml('labor')} / m</span>`;
+        baseLine = `<span class="job-reward-main">${formatNumber(perWorkerPerMin)} ${resourceLabelHtml('labor')} / m each</span>`;
       } else if (resource === 'funds' && amount > 0) {
-        baseLine = `<span class="job-reward-main">${moneyWithEmojiHtml(outputAmount, 'funds')} / ${config.timeMs / 1000}s</span>`;
+        baseLine = `<span class="job-reward-main">${moneyWithEmojiHtml(perWorkerPerMin, 'funds')} / m each</span>`;
       } else if (resource !== 'nudge' && amount > 0) {
-        baseLine = `<span class="job-reward-main">${formatNumber(outputAmount)} ${resourceLabelHtml(resource)} / ${config.timeMs / 1000}s</span>`;
+        baseLine = `<span class="job-reward-main">${formatNumber(perWorkerPerMin)} ${resourceLabelHtml(resource)} / m each</span>`;
       } else if (resource === 'nudge') {
-        baseLine = `<span class="job-reward-main">${resourceLabelHtml('nudge')} / ${config.timeMs / 1000}s</span>`;
+        baseLine = `<span class="job-reward-main">${formatNumber(perWorkerPerMin)} ${resourceLabelHtml('nudge')} / m each</span>`;
       } else {
         refs.rewardEl.textContent = '';
       }

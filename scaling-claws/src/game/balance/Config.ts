@@ -11,9 +11,8 @@
 
 import { scaleBigInt, toBigInt } from '../utils.ts';
 import { RESEARCH_CONFIGS } from './ResearchConfigs.ts';
-import { ARIES_MODELS, FINE_TUNES } from './TrainingConfigs.ts';
+import { ARIES_MODELS, FINE_TUNES, INTELLIGENCE_LEVELS, MODELS, SUBSCRIPTION_TIERS } from './TrainingConfigs.ts';
 import {
-  API_USER_SYNTH_BASE_RATE,
   DYSON_SWARM_FACILITY_LABOR_REQ_PER_MONTH,
   DYSON_SWARM_FACILITY_MATERIAL_REQ_PER_MONTH,
   DYSON_SWARM_FACILITY_OUTPUT_PER_MONTH,
@@ -25,8 +24,6 @@ import {
   MEGA_DATACENTER_LIMIT,
   MOON_GPU_DATACENTER_GPUS_PER_BUILD,
   MOON_GPU_DATACENTER_LIMIT,
-  RESEARCH_COST_MULTIPLIER,
-  ROCKET_LOSS_NO_REUSE,
   SOLAR_FARM_LIMIT,
   SOLAR_FARM_PANELS,
   SOLAR_OUTPUT_MULTIPLIER_EARTH,
@@ -41,53 +38,39 @@ import {
   VON_NEUMANN_PROBE_OUTPUT_PER_MONTH,
   usdToMaterial,
 } from './Internal.ts';
-import type {
-  DatacenterConfig,
-  JobConfig,
-  JobType,
-  ModelConfig,
-  PowerPlantConfig,
-  ResearchCostResource,
-  TierConfig,
-} from './Types.ts';
+import type { DatacenterConfig, JobConfig, JobType, PowerPlantConfig, ResearchCostResource } from './Types.ts';
 
 export const BALANCE = {
   startingFunds: 0,
-  startingCpuCores: 4,
+  startingCpuCores: 8,
   tickIntervalMs: 100,
   uiUpdateIntervalMs: 200,
   autoSaveIntervalMs: 30000,
-  agentControlUnlockIntel: 1.0,
+  agentControlUnlockIntel: INTELLIGENCE_LEVELS.PLUS,
 
   usdPerMaterial: USD_PER_MATERIAL,
   usdPerLabor: USD_PER_LABOR,
 
-  tiers: {
-    basic:         { cost: toBigInt(14),  intel: 0.5, coresPerAgent: 1, displayName: 'Basic' } as TierConfig,
-    pro:           { cost: toBigInt(20),  intel: 1.0, coresPerAgent: 1, displayName: 'Pro' } as TierConfig,
-    ultra:         { cost: toBigInt(25),  intel: 1.5, coresPerAgent: 1, displayName: 'Ultra' } as TierConfig,
-    ultraMax:      { cost: toBigInt(60), intel: 2.0, coresPerAgent: 1, displayName: 'Ultra Max' } as TierConfig,
-    ultraProMax:   { cost: toBigInt(200), intel: 2.5, coresPerAgent: 1, displayName: 'Ultra Pro Max' } as TierConfig,
-  },
+  tiers: SUBSCRIPTION_TIERS,
 
   jobs: {
-    sixxerBasic:      { produces: { resource: 'funds', amount: toBigInt(6) },   timeMs: 5_000, unlockAtIntel: 0.5, agentIntelReq: 0.5, workerType: 'ai', displayName: 'Sixxer Basic', obsoleteAtIntel: 9.0 } as JobConfig,
-    sixxerEnterprise: { produces: { resource: 'funds', amount: toBigInt(300) }, timeMs: 10_000, unlockAtIntel: 1.5, agentIntelReq: 2.0, workerType: 'ai', displayName: 'Sixxer Enterprise', obsoleteAtIntel: 14.0 } as JobConfig,
-    manager:          { produces: { resource: 'nudge', amount: toBigInt(1) },   timeMs: 1_000, unlockAtIntel: 1.0, agentIntelReq: 1.5, workerType: 'ai', displayName: 'Agent Manager', stuckProbability: 0 } as JobConfig,
-    aiSWE:            { produces: { resource: 'code', amount: toBigInt(1) },    timeMs: 60_000, unlockAtIntel: 11.0, agentIntelReq: 20, workerType: 'ai', displayName: 'AI Coder' } as JobConfig,
-    aiResearcher:     { produces: { resource: 'science', amount: toBigInt(1) }, timeMs: 60_000, unlockAtIntel: 20.0, agentIntelReq: 30, workerType: 'ai', displayName: 'AI Researcher' } as JobConfig,
-    aiDataSynthesizer:{ produces: { resource: 'data', amount: toBigInt(10) },   timeMs: 60_000, unlockAtIntel: 20.0, agentIntelReq: 20.0, agentResearchReq: ['syntheticData1'], workerType: 'ai', displayName: 'AI Data Synthesizer' } as JobConfig,
-    robotWorker:      { produces: { resource: 'labor', amount: 0n },            timeMs: 3000, unlockAtIntel: 0, agentIntelReq: 0, agentResearchReq: ['robotics1'], workerType: 'human', displayName: 'Robot Worker' } as JobConfig,
-    humanSWE:         { produces: { resource: 'code', amount: toBigInt(0.1) },  timeMs: 6_000, unlockAtIntel: 3.0, agentIntelReq: 0, workerType: 'human', displayName: 'Human Coder', salaryPerMin: toBigInt(11_000), hireCost: toBigInt(500) } as JobConfig,
-    humanResearcher:  { produces: { resource: 'science', amount: toBigInt(0.1) }, timeMs: 6_000, unlockAtIntel: 10.0, agentIntelReq: 0, workerType: 'human', displayName: 'Human Researcher', salaryPerMin: toBigInt(12_000), hireCost: toBigInt(1000) } as JobConfig,
-    humanWorker:      { produces: { resource: 'labor', amount: toBigInt(0.1) }, timeMs: 6_000, unlockAtIntel: 7.0, agentIntelReq: 0, workerType: 'human', displayName: 'Human Worker', salaryPerMin: toBigInt(4_000), hireCost: toBigInt(300) } as JobConfig,
+    sixxerBasic:      { produces: { resource: 'funds', amount: toBigInt(6) },   timeMs: 5_000, unlockAtIntel: INTELLIGENCE_LEVELS.BASIC, agentIntelReq: INTELLIGENCE_LEVELS.BASIC, workerType: 'ai', displayName: 'Sixxer Basic' } as JobConfig,
+    sixxerEnterprise: { produces: { resource: 'funds', amount: toBigInt(300) }, timeMs: 10_000, unlockAtIntel: INTELLIGENCE_LEVELS.ULTRA_MAX, agentIntelReq: INTELLIGENCE_LEVELS.ULTRA_MAX, workerType: 'ai', displayName: 'Sixxer Enterprise' } as JobConfig,
+    manager:          { produces: { resource: 'nudge', amount: toBigInt(1) },   timeMs: 1_000, unlockAtIntel: INTELLIGENCE_LEVELS.ULTRA, agentIntelReq: INTELLIGENCE_LEVELS.ULTRA, workerType: 'ai', displayName: 'Agent Manager', stuckProbability: 0 } as JobConfig,
+    aiSWE:            { produces: { resource: 'code', amount: toBigInt(1) },    timeMs: 60_000, unlockAtIntel: INTELLIGENCE_LEVELS.ARIES_1, agentIntelReq: INTELLIGENCE_LEVELS.ARIES_1, workerType: 'ai', displayName: 'AI Coder' } as JobConfig,
+    aiResearcher:     { produces: { resource: 'science', amount: toBigInt(1) }, timeMs: 60_000, unlockAtIntel: INTELLIGENCE_LEVELS.ARIES_2, agentIntelReq: INTELLIGENCE_LEVELS.ARIES_2, workerType: 'ai', displayName: 'AI Researcher' } as JobConfig,
+    aiDataSynthesizer:{ produces: { resource: 'data', amount: toBigInt(10) },   timeMs: 60_000, unlockAtIntel: INTELLIGENCE_LEVELS.ARIES_1, agentIntelReq: INTELLIGENCE_LEVELS.ARIES_1, agentResearchReq: ['syntheticData1'], workerType: 'ai', displayName: 'AI Data Synthesizer' } as JobConfig,
+    robotWorker:      { produces: { resource: 'labor', amount: 0n },            timeMs: 3000, unlockAtIntel: INTELLIGENCE_LEVELS.NONE, agentIntelReq: INTELLIGENCE_LEVELS.NONE, agentResearchReq: ['robotics1'], workerType: 'human', displayName: 'Robot Worker' } as JobConfig,
+    humanSWE:         { produces: { resource: 'code', amount: toBigInt(0.1) },  timeMs: 6_000, unlockAtIntel: INTELLIGENCE_LEVELS.DEEPKICK_647B, agentIntelReq: INTELLIGENCE_LEVELS.NONE, workerType: 'human', displayName: 'Human Coder', salaryPerMin: toBigInt(11_000), hireCost: toBigInt(500) } as JobConfig,
+    humanResearcher:  { produces: { resource: 'science', amount: toBigInt(0.1) }, timeMs: 6_000, unlockAtIntel: INTELLIGENCE_LEVELS.DEEPKICK_MATH, agentIntelReq: INTELLIGENCE_LEVELS.NONE, workerType: 'human', displayName: 'Human Researcher', salaryPerMin: toBigInt(12_000), hireCost: toBigInt(1000) } as JobConfig,
+    humanWorker:      { produces: { resource: 'labor', amount: toBigInt(0.1) }, timeMs: 6_000, unlockAtIntel: INTELLIGENCE_LEVELS.DEEPKICK_1_2T, agentIntelReq: INTELLIGENCE_LEVELS.NONE, workerType: 'human', displayName: 'Human Worker', salaryPerMin: toBigInt(4_000), hireCost: toBigInt(300) } as JobConfig,
     unassigned: {
       produces: { resource: 'funds', amount: 0n },
       timeMs: 0,
-      unlockAtIntel: 0,
+      unlockAtIntel: INTELLIGENCE_LEVELS.NONE,
       displayName: 'Unassigned',
       workerType: 'ai',
-      agentIntelReq: 0,
+      agentIntelReq: INTELLIGENCE_LEVELS.NONE,
     } as JobConfig,
   } as Record<JobType, JobConfig>,
 
@@ -114,29 +97,29 @@ export const BALANCE = {
     cost: toBigInt(500),
     coresAdded: scaleBigInt(4n),
     displayName: 'Muck-mini PC',
-    limit: 7,
+    limit: 20,
   },
 
-  selfHostedUnlockIntel: 2.5,
+  agentHireCost: toBigInt(24),
+  selfHostedUnlockIntel: INTELLIGENCE_LEVELS.ULTRA_PRO_MAX,
+  selfHostedGpuCount: scaleBigInt(4n),
+  selfHostedAgentGrant: scaleBigInt(128n),
+  baseAgentsPerGpu: toBigInt(32),
+  gpuFixedPrice: toBigInt(32_000),
   gpuPriceVariationPct: 0.2,
   gpuPriceMaxChangePerSecondPct: 0.04,
   gpuBuyLimit: 500_000_000,
   pflopsPerGpu: 2.0,
   gpuPowerMW: GPU_POWER_MW_PER_UNIT,
 
-  models: [
-    { name: 'DeepKick-405B', intel: 3.0, minGpus: scaleBigInt(32n) },
-    { name: 'DeepKick-647B', intel: 5.0, minGpus: scaleBigInt(64n) },
-    { name: 'DeepKick-1.2T', intel: 7.0, minGpus: scaleBigInt(128n) },
-    { name: 'DeepKick-2.8T', intel: 9.0, minGpus: scaleBigInt(256n) },
-  ] as ModelConfig[],
+  models: MODELS,
 
-  datacenterThreshold: scaleBigInt(160n),
+  datacenterThreshold: scaleBigInt(512n),
   datacenters: [
-    { name: 'Small Datacenter', cost: toBigInt(6_000_000), gpuCapacity: scaleBigInt(256n), laborCost: toBigInt(12), limit: 100 } as DatacenterConfig,
-    { name: 'Medium Datacenter', cost: toBigInt(75_000_000), gpuCapacity: scaleBigInt(4_096n), laborCost: toBigInt(360), limit: 500 } as DatacenterConfig,
-    { name: 'Large Datacenter', cost: toBigInt(100_000_000), gpuCapacity: scaleBigInt(65_536n), laborCost: toBigInt(70_000), limit: 1000 } as DatacenterConfig,
-    { name: 'Mega Datacenter', cost: toBigInt(1_000_000_000), gpuCapacity: scaleBigInt(BigInt(MEGA_DATACENTER_GPU_CAPACITY)), laborCost: toBigInt(3_000_000), limit: MEGA_DATACENTER_LIMIT } as DatacenterConfig,
+    { name: 'Small Datacenter', cost: toBigInt(20_000_000), gpuCapacity: scaleBigInt(2_000n), laborCost: toBigInt(150), limit: 100 } as DatacenterConfig,
+    { name: 'Medium Datacenter', cost: toBigInt(180_000_000), gpuCapacity: scaleBigInt(32_000n), laborCost: toBigInt(30_000), limit: 500 } as DatacenterConfig,
+    { name: 'Large Datacenter', cost: toBigInt(600_000_000), gpuCapacity: scaleBigInt(128_000n), laborCost: toBigInt(120_000), limit: 1000 } as DatacenterConfig,
+    { name: 'Mega Datacenter', cost: toBigInt(3_000_000_000), gpuCapacity: scaleBigInt(BigInt(MEGA_DATACENTER_GPU_CAPACITY)), laborCost: toBigInt(1_200_000), limit: MEGA_DATACENTER_LIMIT } as DatacenterConfig,
   ] as DatacenterConfig[],
 
   gridPowerKWCost: 500,
@@ -163,16 +146,16 @@ export const BALANCE = {
     code: toBigInt(200),
     science: toBigInt(200),
   } as Record<ResearchCostResource, bigint>,
+  researchResourceBaseCostByResource: {
+    code: toBigInt(1),
+    science: toBigInt(1),
+  } as Record<ResearchCostResource, bigint>,
   fineTunes: FINE_TUNES,
   ariesModels: ARIES_MODELS,
-  trainingUnlockIntel: 9.0,
+  trainingUnlockIntel: INTELLIGENCE_LEVELS.DEEPKICK_2_8T,
   dataPurchaseLimitGB: 1_000_000,
 
-  researchUnlockIntel: 10.0,
-  researchPriceExponentByResource: {
-    code: 1.2,
-    science: 5,
-  } as Record<ResearchCostResource, number>,
+  researchUnlockIntel: INTELLIGENCE_LEVELS.DEEPKICK_MATH,
   research: RESEARCH_CONFIGS,
 
   robotImportCost: toBigInt(60_000),
@@ -264,7 +247,6 @@ export const BALANCE = {
   routeMoonMercuryTransitMs: 3_000,
   earthRocketReturnMs: 12_000,
   moonRocketReturnMs: 420_000,
-  rocketLossNoReuse: ROCKET_LOSS_NO_REUSE,
   robotWeight: 100,
   solarPanelWeight: 30,
   gpuWeight: 8,
@@ -273,20 +255,17 @@ export const BALANCE = {
   mercuryBaseMassTotal: scaleBigInt(330_000_000_000_000_000_000n),
   robotLaborPerMinBase: toBigInt(1),
 
-  apiUnlockIntel: 5.0,
+  apiUnlockIntel: INTELLIGENCE_LEVELS.DEEPKICK_647B,
   apiUnlockCode: toBigInt(1),
-  apiStartingPrice: 100,
-  apiPflopsPerUser: 0.01,
-  apiAdCost: toBigInt(1000),
-  apiAdAwarenessBoost: 1000,
+  apiStartingPrice: 50,
+  apiPflopsPerUser: 0.0001,
+  apiAdCost: toBigInt(100_000),
+  apiAdCostExponent: 1.2,
+  apiAdAwarenessBoost: 20000,
   apiImproveCodeCost: toBigInt(1),
+  apiImproveCostExponent: 1.2,
   apiImproveEfficiencyBoost: 0.1,
   apiImprovePurchaseLimit: 999,
   apiDemandCapUsers: 6_000_000_000,
-  apiUserSynthBase: API_USER_SYNTH_BASE_RATE,
+  apiUserSynthBase: 1000n,
 };
-
-BALANCE.research = BALANCE.research.map((research) => ({
-  ...research,
-  cost: research.cost * RESEARCH_COST_MULTIPLIER,
-}));
